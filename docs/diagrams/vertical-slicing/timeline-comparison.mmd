@@ -1,0 +1,12 @@
+flowchart LR
+    subgraph Horizontal["Horizontal (all-layers-first)"]
+        direction LR
+        H1[Backend logic] --> H2[Config params] --> H3[Docs] --> H4[Tests] --> H5[Single PR]
+    end
+
+    subgraph Vertical["Vertical (slice-by-slice)"]
+        direction LR
+        V1[Slice A<br/>impl+test+docs] --> PR1((PR A<br/>merged))
+        PR1 --> V2[Slice B<br/>impl+test+docs] --> PR2((PR B<br/>merged))
+        PR2 --> V3[Slice C<br/>impl+test+docs] --> PR3((PR C<br/>merged))
+    end

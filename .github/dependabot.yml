@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Only /docker/shared is monitored to enforce the luigi pin.
+  # Other directories are intentionally excluded to avoid noisy PRs.
+  - package-ecosystem: "pip"
+    directory: "/docker/shared"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # luigi > 3.5.2 has a packaging bug that drops luigi.contrib
+      # sub-packages (including mrrunner). The alternative is building
+      # from source. See https://github.com/spotify/luigi/issues/3398
+      - dependency-name: "luigi"
+        versions: ["> 3.5.2"]
+    open-pull-requests-limit: 5

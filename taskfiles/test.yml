@@ -1,0 +1,219 @@
+version: '3'
+
+env:
+  PYTHONPATH: "{{.ROOT_DIR}}:{{.ROOT_DIR}}/src"
+
+tasks:
+  all:
+    desc: Run all deterministic tests (excludes skills — those require API keys)
+    deps: [purge-envs]
+    cmds:
+      - task: brownfield_ai
+      - task: scripts
+      - task: dashboard
+      - task: integration
+
+  purge-envs:
+    desc: Force-purge dead or conflicting mock containers (like Moto/LocalStack) left behind by pytest-docker
+    cmds:
+      - docker ps -a -q --filter "name=localstack" | xargs -r docker rm -f
+      - docker ps -a -q --filter "name=aws" | xargs -r docker rm -f
+
+  setup:
+    desc: Create .venv/ with Python 3.12 and test dependencies via uv
+    cmds:
+      - |
+        if ! command -v uv >/dev/null 2>&1; then
+          echo "ERROR: 'uv' is not installed." >&2
+          echo "uv is required by 'task test:setup' for local host-run tests." >&2
+          echo "Install options:" >&2
+          echo "  - task setup:env                                    (interactive; brew install on macOS)" >&2
+          echo "  - brew install uv                                   (macOS)" >&2
+          echo "  - pip install uv                                    (any platform with pip)" >&2
+          echo "  - curl -LsSf https://astral.sh/uv/install.sh | sh   (any platform)" >&2
+          exit 1
+        fi
+      - rm -rf .venv
+      - uv venv --seed --python 3.12 .venv
+      # Dashboard runtime deps (fastapi/uvicorn) are installed alongside
+      # the core test deps so the skills test runner — which invokes
+      # ``pytest tests/`` under the .venv — can collect
+      # ``tests/services/dashboard/conftest.py`` without hitting
+      # ``ModuleNotFoundError: fastapi`` at module import time. Without
+      # this, ``task test:skills:changed`` fails during collection whenever
+      # a skills-routed diff causes the broad ``tests/`` collection path
+      # (see ci/test_changed.sh).
+      - uv pip install --python .venv/bin/python -r requirements.txt -r tests/requirements.txt -r services/dashboard/requirements.txt
+      - touch .venv/.setup-complete
+    status:
+      - test -x .venv/bin/pytest
+      - test -f .venv/.setup-complete
+      - .venv/bin/python --version 2>&1 | grep -q "Python 3.12"
+
+  brownfield_ai:
+    desc: Run tests for src/brownfield_ai
+    deps: [purge-envs]
+    cmds:
+      - ./docker/shared/python-security-gate.sh test tests/src/brownfield_ai/
+      - defer: rm -f tmp/.python-gate-pass
+      - docker compose build pytest-cli
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli pytest tests/src/brownfield_ai/ {{.CLI_ARGS}}
+        -o cache_dir=/app/tmp/.pytest_cache
+        -s --junitxml=tmp/junit_brownfield_ai.xml
+
+  brownfield_ai:changed:
+    desc: Run tests only for changed src/brownfield_ai
+    deps: [purge-envs]
+    cmds:
+      - ./ci/test_changed.sh brownfield_ai
+
+  skills:
+    desc: Run tests for all skills
+    deps: [setup]
+    env:
+      COPILOT_GITHUB_TOKEN:
+        sh: >-
+          echo "${COPILOT_GITHUB_TOKEN:-$(gh auth token 2>/dev/null)}"
+      ANTHROPIC_API_KEY:
+        sh: 'echo "${ANTHROPIC_API_KEY:-}"'
+      GEMINI_API_KEY:
+        sh: 'echo "${GEMINI_API_KEY:-}"'
+      OPENAI_API_KEY:
+        sh: 'echo "${OPENAI_API_KEY:-}"'
+      # Runner configuration env vars (optional):
+      #   EVAL_RUNNER        - Override auto-detection (claude|copilot|gemini|codex)
+      #   EVAL_RUNNER_TIMEOUT - Subprocess timeout in seconds (default: 300)
+      #   GEMINI_MODEL       - Override Gemini model (omit to use CLI default)
+      #   CODEX_MODEL        - Override Codex model (omit to use CLI default)
+      #   CLAUDE_MAX_TURNS   - Max turns for Claude Code (default: 25)
+    preconditions:
+      - sh: >-
+          command -v claude >/dev/null ||
+          test -n "$ANTHROPIC_API_KEY" ||
+          test -n "$COPILOT_GITHUB_TOKEN" ||
+          test -n "$GEMINI_API_KEY" ||
+          test -n "$OPENAI_API_KEY"
+        msg: >-
+          No agent CLI or API key found. Claude CLI (with OAuth) or
+          an API key is required for headless evals. Skipping
+          test:skills. AWS evals also require allowLocalBinding in
+          ~/.claude/settings.json — see docs/learnings.md.
+    cmds:
+      - >-
+        .venv/bin/pytest tests/skills/test_evals.py
+        tests/workflows/*/test_*evals*.py {{.CLI_ARGS}}
+        -s --junitxml=tmp/junit.xml
+
+  scripts:
+    desc: Run tests for scripts (Docker-based)
+    cmds:
+      - ./docker/shared/python-security-gate.sh test tests/ci/ tests/scripts/ tests/hooks/ tests/helpers/
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli pytest tests/ci/ tests/scripts/ tests/hooks/ tests/helpers/
+        tests/skills/*/scripts/
+        tests/workflows/*/skills/*/scripts/
+        {{.CLI_ARGS}}
+        -o cache_dir=/app/tmp/.pytest_cache
+        -s --junitxml=tmp/junit.xml
+
+  scripts:changed:
+    desc: Run tests only for changed scripts (Docker-based)
+    cmds:
+      - ./ci/test_changed.sh scripts
+
+  skills:changed:
+    desc: Run tests only for changed skills
+    deps: [setup]
+    cmds:
+      - ./ci/test_changed.sh skills
+
+  scripts:staged:
+    desc: Run tests for staged scripts (Docker-based)
+    cmds:
+      - ./ci/test_staged.sh scripts
+
+  skills:staged:
+    desc: Run tests mostly natively only for staged skills
+    deps: [setup]
+    cmds:
+      - ./ci/test_staged.sh skills
+
+  brownfield_ai:staged:
+    desc: Run tests for python src code only for staged
+    deps: [purge-envs]
+    cmds:
+      - ./ci/test_staged.sh brownfield_ai
+
+  dashboard:
+    desc: Run all dashboard tests (containerized)
+    cmds:
+      - >-
+        docker compose run --rm --entrypoint ""
+        pytest-cli
+        sh -c 'pip install --quiet -r services/dashboard/requirements-dev.txt &&
+        pytest tests/services/dashboard/ -v'
+
+  dashboard:staged:
+    desc: Run dashboard tests for staged files
+    cmds:
+      - ./ci/test_staged.sh dashboard
+
+  dashboard:changed:
+    desc: Run dashboard tests for changed files only
+    cmds:
+      - ./ci/test_changed.sh dashboard
+
+  integration:
+    desc: Run integration tests against real Docker containers (containerized)
+    preconditions:
+      - sh: docker info > /dev/null 2>&1
+        msg: Docker daemon must be running for integration tests.
+    cmds:
+      - ./docker/shared/python-security-gate.sh test tests/integration/
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD={{.ROOT_DIR}}
+        -e HOST_HOME=$HOME
+        pytest-cli pytest tests/integration/ -v
+        -m integration
+        -o cache_dir=/app/tmp/.pytest_cache
+        --junitxml=tmp/junit_integration.xml
+        {{.CLI_ARGS}}
+
+  container-integration:
+    desc: Run container integration tests host-side (bypasses pytest-cli skip for INSIDE_CONTAINER detection)
+    deps: [setup]
+    preconditions:
+      - sh: test ! -f /.dockerenv
+        msg: >-
+          test:container-integration must run on the host, not inside a
+          Docker container (the test auto-skips when INSIDE_CONTAINER
+          would produce a false-green).
+      - sh: docker info > /dev/null 2>&1
+        msg: Docker daemon must be running for container integration tests.
+    cmds:
+      - defer: rm -f tmp/.python-gate-pass
+      - ./docker/shared/python-security-gate.sh test tests/scripts/test_agent_cli_container_review.py
+      - >-
+        .venv/bin/pytest tests/scripts/test_agent_cli_container_review.py -v
+        -m integration
+        -o cache_dir=tmp/.pytest_cache
+        --junitxml=tmp/junit_container_integration.xml
+        {{.CLI_ARGS}}
+
+  staged:
+    desc: Run tests natively only for staged files
+    deps: [purge-envs]
+    cmds:
+      - task: scripts:staged
+      - task: skills:staged
+      - task: brownfield_ai:staged
+      - task: dashboard:staged

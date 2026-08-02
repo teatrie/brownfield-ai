@@ -1,0 +1,42 @@
+FROM hashicorp/terraform:1.5.6
+
+# Install useful tools for plan analysis and scripting
+RUN apk add --no-cache git bash jq curl sudo
+
+# Set workdir
+WORKDIR /workspace
+
+# Hide the real terraform binary and lock permissions to root-only
+RUN mv /bin/terraform /bin/_tf_exec_internal \
+    && chmod 0700 /bin/_tf_exec_internal
+
+# Create non-root user; scoped sudoers for tf-safe only.
+# The wildcard entries (e.g., "init *") are argument-pass-through — they allow
+# any flags after the subcommand (e.g., "plan -out=tfplan") but do NOT permit
+# unlisted subcommands (e.g., "apply"). Sudoers matches argv positionally,
+# so "sudo /bin/_tf_exec_internal apply" has no matching rule and is denied.
+RUN addgroup -S agent && adduser -S agent -G agent \
+    && printf '%s\n' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal init' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal init *' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal fmt' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal fmt *' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal plan' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal plan *' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal show' \
+       'agent ALL=(root) NOPASSWD: /bin/_tf_exec_internal show *' \
+       > /etc/sudoers.d/tf-safe \
+    && chmod 0440 /etc/sudoers.d/tf-safe
+
+# Workspace must be writable for .terraform/, lock files, plan output
+RUN chown agent:agent /workspace
+
+# Restricted terraform wrapper (init, fmt, plan, show only)
+# Explicitly lock ownership to root and set 0755 to prevent agent from
+# overwriting the wrapper script and bypassing the allowlist.
+COPY tf-safe.sh /usr/local/bin/tf-safe
+RUN chown root:root /usr/local/bin/tf-safe \
+    && chmod 0755 /usr/local/bin/tf-safe
+
+USER agent
+ENTRYPOINT ["/usr/local/bin/tf-safe"]

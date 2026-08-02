@@ -1,0 +1,13 @@
+[profiles.reviewer]
+model = "gpt-5.3-codex"
+model_reasoning_effort = "high"
+
+# Criteria live in .claude/prompts/reviewer/_invariants.md
+# (INVARIANT:criteria + INVARIANT:adversarial-rigor blocks).
+# For default `codex review --base` usage, the codex-reviewer
+# wrapper passes the `diff.md` template via stdin.
+# Raw `codex exec -p reviewer` invocations (bypassing the task
+# wrapper) are NOT a supported path — the task wrapper is the
+# single source of criteria since criteria live in the templates.
+# Do not duplicate criteria here — the template-lint fails if
+# this block is re-introduced.

@@ -1,0 +1,45 @@
+skill_name: execution-ledger
+evals:
+- case: validate-artifact-type
+  setup: ""
+  user_prompt: >
+    Call validate_artifact_type with the type "bad_type" and report what error it produces.
+  agent_prompt: >
+    Run the validate_artifact_type function from the chromadb_ledger.py script directly
+    (do NOT use Docker). Do NOT attempt to connect to ChromaDB or SQLite.
+    Call validate_artifact_type("bad_type"), capture the printed output before SystemExit,
+    and report what was printed.
+  expected_output: |-
+    assert "bad_type" in output.lower() or "bad_type" in output
+    assert "invalid" in output.lower() or "must be one of" in output.lower()
+- case: generate-composite-id
+  setup: ""
+  user_prompt: >
+    Call generate_id with epic_id="ACME-9999", artifact_type="plan_snapshot",
+    agent_model="claude-opus-4", wave="1", step="design", timestamp="2026-01-01T00:00:00"
+    and report the resulting ID.
+  agent_prompt: >
+    Run the generate_id function from the chromadb_ledger.py script directly
+    (do NOT use Docker). Do NOT attempt to connect to ChromaDB or SQLite.
+    Call generate_id with the fields: epic_id="ACME-9999", timestamp="2026-01-01T00:00:00",
+    artifact_type="plan_snapshot", agent_model="claude-opus-4", wave="1", step="design".
+    Print the returned string.
+  expected_output: |-
+    assert "ACME-9999" in output
+    assert "|" in output
+- case: sanitize-step-result-content
+  setup: |-
+    import os
+    os.makedirs('tmp', exist_ok=True)
+    with open('tmp/test_secret_content.txt', 'w') as f:
+        f.write("User email: agent@example.com\nKey: AKIAIOSFODNN7EXAMPLE1234\nSome normal text here.")
+  user_prompt: >
+    Call sanitize_content on the file tmp/test_secret_content.txt using artifact_type
+    "step_result" and report what was redacted.
+  agent_prompt: >
+    Run the sanitize_content function from the chromadb_ledger.py script directly
+    (do NOT use Docker). Do NOT attempt to connect to ChromaDB or SQLite.
+    Read the file tmp/test_secret_content.txt, call sanitize_content(content, "step_result"),
+    and print the result so we can see what was redacted.
+  expected_output: |-
+    assert "[REDACTED]" in output

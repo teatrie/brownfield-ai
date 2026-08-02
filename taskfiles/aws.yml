@@ -1,0 +1,12 @@
+version: '3'
+
+tasks:
+  auth:
+    desc: >-
+      Extract AWS temporary credentials and write them to isolated .env files.
+      The profile is user-supplied with no default — pass it inline
+      (task aws:auth PROFILE=my-profile) or export AWS_PROFILE.
+    vars:
+      PROFILE: '{{.PROFILE | default ""}}'
+    cmds:
+      - ./scripts/aws_vault_auth.sh {{.PROFILE}} > tmp/.aws.env

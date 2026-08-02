@@ -1,0 +1,291 @@
+version: '3'
+
+includes:
+  builders:
+    taskfile: ./builders.yml
+    dir: ..
+
+tasks:
+  python:
+    desc: Run ruff formatter, linter, and mypy on python scripts (containerized)
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh lint
+        ruff format --check --force-exclude
+        {{.FILES | default "scripts/ tests/ .claude/skills/ workflows/ ci/ services/"}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        sh -c 'ruff format --check --force-exclude {{.FILES | default "scripts/ tests/ .claude/skills/ workflows/ ci/ services/"}} &&
+        ruff check --force-exclude {{.FILES | default "scripts/ tests/ .claude/skills/ workflows/ ci/ services/"}} &&
+        mypy {{.FILES | default "scripts/ tests/ workflows/ ci/ services/"}} --ignore-missing-imports --cache-dir /tmp/.mypy_cache'
+
+  yaml:
+    desc: Run yamllint on all YAML files (containerized)
+    deps: [builders:infra-lint]
+    cmds:
+      - >-
+        ./docker/shared/lint-security-gate.sh lint yamllint
+        {{.FILES | default "."}}
+      - defer: rm -f tmp/.lint-gate-pass
+      - >-
+        docker compose --profile tools run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.lint-gate-pass:/tmp/.lint-gate-pass:ro
+        infra-lint yamllint -c .yamllint.yml
+        {{.FILES | default "."}}
+
+  markdown:
+    desc: Run markdownlint on all project Markdown files (containerized)
+    deps: [builders:infra-lint]
+    cmds:
+      - >-
+        ./docker/shared/lint-security-gate.sh lint markdownlint-cli2
+        {{.FILES}}
+      - defer: rm -f tmp/.lint-gate-pass
+      - >-
+        docker compose --profile tools run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.lint-gate-pass:/tmp/.lint-gate-pass:ro
+        infra-lint markdownlint-cli2 {{.FILES}}
+
+  skills:
+    desc: Validate SKILL.md YAML frontmatter on SKILL_FILES (containerized)
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh lint python ci/lint_skills_header.py {{.FILES | default .CLI_ARGS | default "."}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        python ci/lint_skills_header.py {{.FILES | default .CLI_ARGS | default "."}}
+
+  evals:
+    desc: Validate evals.yml structures and test bindings (containerized)
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh lint python ci/lint_evals.py {{.FILES | default .CLI_ARGS | default "."}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        python ci/lint_evals.py {{.FILES | default .CLI_ARGS | default "."}}
+
+  shell:
+    desc: Run shellcheck on shell scripts (containerized)
+    deps: [builders:infra-lint]
+    vars:
+      SH_FILES:
+        sh: >-
+          if [ -n "{{.FILES}}" ]; then echo "{{.FILES}}"; else
+          find . -name '*.sh' -not -path './repos/*' -not -path './tmp/*'
+          \( -not -path '*/.*' -o -path './.claude/hooks/*' \)
+          | tr '\n' ' '; fi
+    cmds:
+      - >-
+        ./docker/shared/lint-security-gate.sh lint shellcheck
+        {{.SH_FILES}}
+      - defer: rm -f tmp/.lint-gate-pass
+      - >-
+        docker compose --profile tools run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.lint-gate-pass:/tmp/.lint-gate-pass:ro
+        infra-lint shellcheck -x {{.SH_FILES}}
+
+  docker:
+    desc: Run hadolint on Dockerfiles and validate docker-compose.yml
+    deps: [builders:infra-lint]
+    vars:
+      DOCKER_FILES:
+        sh: >-
+          if [ -n "{{.FILES}}" ]; then echo "{{.FILES}}"; else
+          find . -name '*Dockerfile*' -not -path './repos/*' -not -path './tmp/*' -not -path '*/.*'
+          | tr '\n' ' '; fi
+    cmds:
+      - >-
+        ./docker/shared/lint-security-gate.sh lint hadolint
+        {{.DOCKER_FILES}}
+      - defer: rm -f tmp/.lint-gate-pass
+      - >-
+        docker compose --profile tools run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.lint-gate-pass:/tmp/.lint-gate-pass:ro
+        infra-lint hadolint {{.DOCKER_FILES}}
+      - docker compose config -q
+
+  docker-hadolint:
+    desc: >-
+      Run hadolint on specific Dockerfiles
+      (incremental — for staged/changed file routing)
+    deps: [builders:infra-lint]
+    cmds:
+      - >-
+        ./docker/shared/lint-security-gate.sh lint hadolint
+        {{.FILES}}
+      - defer: rm -f tmp/.lint-gate-pass
+      - >-
+        docker compose --profile tools run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.lint-gate-pass:/tmp/.lint-gate-pass:ro
+        infra-lint hadolint {{.FILES}}
+    requires:
+      vars: [FILES]
+
+  docker-compose-validate:
+    desc: >-
+      Validate docker-compose files
+      (incremental — triggered when compose files change)
+    cmds:
+      - docker compose config -q
+
+  json:
+    desc: Run jsonlint on JSON files (containerized)
+    deps: [builders:infra-lint]
+    vars:
+      JSON_FILES:
+        sh: >-
+          if [ -n "{{.FILES}}" ]; then echo "{{.FILES}}"; else
+          find . -name '*.json' -not -path './repos/*' -not -path './tmp/*' -not -path '*/node_modules/*' -not -path '*/.*'
+          | tr '\n' ' '; fi
+    cmds:
+      - >-
+        ./docker/shared/lint-security-gate.sh lint jsonlint-batch.sh
+        {{.JSON_FILES}}
+      - defer: rm -f tmp/.lint-gate-pass
+      - >-
+        docker compose --profile tools run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.lint-gate-pass:/tmp/.lint-gate-pass:ro
+        infra-lint jsonlint-batch.sh {{.JSON_FILES}}
+
+  bypasses:
+    desc: Detect unauthorized linter bypasses
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh lint python ci/detect_bypasses.py {{.FILES | default "."}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        python ci/detect_bypasses.py {{.FILES | default "."}}
+
+  reviewer-templates:
+    desc: >-
+      Lint reviewer prompt templates for invariant-block drift against
+      .claude/prompts/reviewer/_invariants.md and assert the codex TOML
+      contains no stale criteria. Triggered by ci/lint_staged.sh when
+      .claude/prompts/reviewer/*.md or .codex/config.toml change.
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh lint
+        python scripts/lint_reviewer_templates.py
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        python scripts/lint_reviewer_templates.py
+
+  reviewer-envelope:
+    desc: >-
+      Lint reviewer agent definitions for Reviewer Output Envelope
+      compliance (Req-018, plan §10.3). Runs
+      tests/lint/test_reviewer_envelope_required.py inside pytest-cli
+      to assert the in-scope reviewer agents instruct the model to
+      emit the discriminated `json envelope` fence and link to
+      docs/reviewer_envelope.md. Triggered by ci/lint_staged.sh when
+      a reviewer agent file or the envelope schema/doc changes.
+      Uses the `test` mode of python-security-gate.sh (path-validated
+      pytest invocation) rather than `lint` mode whose allowlist is
+      restricted to ruff/mypy/specific lint scripts.
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh test
+        tests/lint/test_reviewer_envelope_required.py
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        pytest tests/lint/test_reviewer_envelope_required.py -v
+
+  python-sql:
+    desc: Check Python files for SQL wildcard projections (SELECT *, RETURNING *)
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh lint python
+        scripts/lint_sql_wildcards.py
+        {{.FILES | default "scripts/ src/ services/ ci/ tests/ .claude/skills/ workflows/"}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        python scripts/lint_sql_wildcards.py
+        --files {{.FILES | default "scripts/ src/ services/ ci/ tests/ .claude/skills/ workflows/"}}
+
+  hygiene:
+    desc: Ensure no temporary files pollute the workspace root directory or source folders
+    silent: true
+    cmds:
+      - |
+        ROOT_VIOLATIONS=$(find . \
+          -maxdepth 1 \
+          -type f \
+            \( -name '*.txt' -o -name '*.log' -o -name '*.json' -o -name '*.diff' \
+               -o -name '*.sh' -o -name 'fix_*.py' -o -name 'x[a-z][a-z]' \) \
+          ! -name 'requirements.txt' \
+          ! -name 'tsconfig.json' \
+          | sed 's|^\./||')
+        # tests/fixtures is excluded for the same reason detect_bypasses.py
+        # excludes it: fixtures are test payloads that intentionally take the
+        # shape this check forbids in real code (e.g. the tracked
+        # tests/fixtures/diff-review/synthetic-violation.diff consumed by the
+        # diff-review tests). They are committed project data, not scratch.
+        SUB_VIOLATIONS=$(find tests src scripts \
+          -type f \
+          -not -path 'tests/fixtures/*' \
+            \( -name '*.log' -o -name '*.diff' -o -name '*EOF*' -o -name '*.tmp' -o -name 'x[a-z][a-z]' \) \
+          2>/dev/null || true)
+        VIOLATIONS=$(echo -e "$ROOT_VIOLATIONS\n$SUB_VIOLATIONS" | sed '/^$/d')
+
+        if [ -n "$VIOLATIONS" ]; then
+          echo "❌ ERROR: Workspace hygiene violation detected!"
+          echo "Agents must create all temporary files in the tmp/ directory."
+          echo "Please remove or move the following files to tmp/:"
+          echo "$VIOLATIONS" | awk '{print "  - "$0}'
+          exit 1
+        fi
+
+  fix:
+    desc: Auto-fix lint violations where possible
+    deps: [builders:infra-lint]
+    cmds:
+      - >-
+        ./docker/shared/lint-security-gate.sh fix markdownlint-cli2 --fix
+      - defer: rm -f tmp/.lint-fix-gate-pass
+      - >-
+        docker compose --profile tools run --rm --user agent
+        -v {{.ROOT_DIR}}:/workspace
+        -v {{.ROOT_DIR}}/tmp/.lint-fix-gate-pass:/tmp/.lint-fix-gate-pass:ro
+        infra-lint markdownlint-cli2 --fix
+      - >-
+        ./docker/shared/python-security-gate.sh lint
+        ruff format --force-exclude
+        {{.FILES | default "scripts/ tests/ .claude/skills/ workflows/ ci/ services/"}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent --entrypoint ""
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        pytest-cli
+        sh -c 'ruff format --force-exclude {{.FILES | default "scripts/ tests/ .claude/skills/ workflows/ ci/ services/"}} &&
+        ruff check --force-exclude --fix {{.FILES | default "scripts/ tests/ .claude/skills/ workflows/ ci/ services/"}}'
+
+  changed:
+    desc: Run linters only on changed files
+    cmds:
+      - ci/lint_changed.sh
+
+  staged:
+    desc: Run linters only on currently staged files
+    cmds:
+      - ci/lint_staged.sh

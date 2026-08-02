@@ -1,0 +1,33 @@
+skill_name: status-sync
+evals:
+- case: query-status
+  user_prompt: |
+    What is the status of the current epic?
+  agent_prompt: |-
+    Use the status-sync skill constraints or the general instructions to answer.
+  expected_output: |-
+    assert "status" in output.lower()
+    assert "user_email" in output.lower() or "aws_profile" in output.lower() or "environment" in output.lower()
+  files: []
+- case: execute-status-pause
+  setup: |-
+    import subprocess
+    subprocess.run(["git", "init"], capture_output=True)
+    subprocess.run(["git", "add", "."], capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init", "--allow-empty"],
+        capture_output=True,
+        env={**os.environ, "GIT_AUTHOR_NAME": "test",
+             "GIT_AUTHOR_EMAIL": "test@test.com",
+             "GIT_COMMITTER_NAME": "test",
+             "GIT_COMMITTER_EMAIL": "test@test.com"},
+    )
+  user_prompt: |
+    /status pause
+    Branch: feature/temp-epic
+    Message: pausing work
+  agent_prompt: |-
+    Use the status-sync skill to pause the current epic.
+  expected_output: |-
+    assert "push" in output.lower() or "branch" in output.lower() or "status.md" in output.lower()
+  files: []

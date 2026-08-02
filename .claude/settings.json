@@ -1,0 +1,95 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(task agent:*)",
+      "Bash(task findings:*)",
+      "Bash(task gh:*)",
+      "Bash(task git:*)",
+      "Bash(task ledger:*)",
+      "Bash(task lint:*)",
+      "Bash(task test:*)",
+      "Bash(task todo:*)"
+    ],
+    "deny": [
+      "Edit(**/*.sh)",
+      "Edit(.claude/hooks/**)",
+      "Write(**/*.sh)",
+      "Edit(.claude/settings.json)",
+      "Edit(docker/shared/python-gate-entrypoint.sh)",
+      "Edit(docker/shared/python-security-gate.sh)",
+      "Edit(docker/python-cli/Dockerfile)",
+      "Edit(docker/pytest-cli/Dockerfile)",
+      "Edit(docker/repo-cli/Dockerfile)",
+      "Edit(docker/repo-cli/entrypoint.sh)",
+      "Edit(docker/repo-cli/sparse-clone.sh)",
+      "Edit(docker-compose.yml)",
+      "Write(.claude/settings.json)",
+      "Write(.claude/hooks/**)",
+      "Write(docker/shared/python-gate-entrypoint.sh)",
+      "Write(docker/shared/python-security-gate.sh)",
+      "Write(docker/python-cli/Dockerfile)",
+      "Write(docker/pytest-cli/Dockerfile)",
+      "Write(docker/repo-cli/Dockerfile)",
+      "Write(docker/repo-cli/entrypoint.sh)",
+      "Write(docker/repo-cli/sparse-clone.sh)",
+      "Write(docker-compose.yml)",
+      "Edit(docker/builders/Dockerfile.infra-terraform)",
+      "Edit(docker/builders/Dockerfile.infra-lint)",
+      "Edit(docker/builders/tf-safe.sh)",
+      "Edit(docker/agent-cli/Dockerfile)",
+      "Edit(docker/agent-cli/entrypoint.sh)",
+      "Edit(docker/shared/lint-gate-entrypoint.sh)",
+      "Edit(docker/shared/lint-security-gate.sh)",
+      "Write(docker/builders/Dockerfile.infra-terraform)",
+      "Write(docker/builders/Dockerfile.infra-lint)",
+      "Write(docker/builders/tf-safe.sh)",
+      "Write(docker/agent-cli/Dockerfile)",
+      "Write(docker/agent-cli/entrypoint.sh)",
+      "Write(docker/shared/lint-gate-entrypoint.sh)",
+      "Write(docker/shared/lint-security-gate.sh)",
+      "Write(docker/shared/jsonlint-batch.sh)",
+      "Edit(docker/shared/jsonlint-batch.sh)",
+      "Edit(docker/dashboard/Dockerfile)",
+      "Edit(docker/dashboard/entrypoint.sh)",
+      "Write(docker/dashboard/Dockerfile)",
+      "Write(docker/dashboard/entrypoint.sh)",
+      "Edit(.claude/settings.local.json)",
+      "Write(.claude/settings.local.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-terraform-escape.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-container-escape.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-docker-build-escape.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-sandbox-prompt-patterns.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "allowRead": [
+        "~/.brownfield-ai/agent-review/**"
+      ],
+      "allowWrite": [
+        "~/.brownfield-ai/agent-review"
+      ]
+    }
+  }
+}

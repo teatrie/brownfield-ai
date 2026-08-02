@@ -1,0 +1,25 @@
+FROM python:3.12-slim
+ARG TARGETARCH
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates gnupg shellcheck && \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir yamllint sqlfluff
+RUN npm install -g markdownlint-cli2 @probelabs/maid jsonlint
+RUN curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-${TARGETARCH}.tar.gz | tar xz -C /usr/local/bin/
+RUN curl -sSL https://get.helm.sh/helm-v4.1.1-linux-${TARGETARCH}.tar.gz | tar xz --strip-components=1 -C /usr/local/bin/ linux-${TARGETARCH}/helm
+RUN HADOLINT_ARCH=$(if [ "$TARGETARCH" = "amd64" ]; then echo "x86_64"; else echo "arm64"; fi) && \
+    curl -sSL "https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-${HADOLINT_ARCH}" -o /usr/local/bin/hadolint && \
+    chmod +x /usr/local/bin/hadolint
+
+# Security hardening: entrypoint allowlist and batch wrapper
+COPY docker/shared/lint-gate-entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY docker/shared/jsonlint-batch.sh /usr/local/bin/jsonlint-batch.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/jsonlint-batch.sh
+
+# Non-root user
+RUN groupadd -r agent && useradd -r -g agent -m agent
+WORKDIR /workspace
+USER agent
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -1,0 +1,80 @@
+version: '3'
+
+tasks:
+  clone:
+    desc: >-
+      Clone (or fetch) the repositories listed in BROWNFIELD_REPOS from the
+      BROWNFIELD_ORG GitHub org into repos/. Both are user-supplied config with no
+      default — set them in .envrc/.env, or pass inline:
+      task repos:clone BROWNFIELD_ORG=acme BROWNFIELD_REPOS="api web".
+      Pass DRY_RUN=1 to print the plan without touching the network.
+    vars:
+      ORG: '{{.BROWNFIELD_ORG | default ""}}'
+      REPO_LIST: '{{.BROWNFIELD_REPOS | default ""}}'
+      DRY_RUN: '{{.DRY_RUN | default ""}}'
+    cmds:
+      - |
+        if [ -z "{{.ORG}}" ] || [ -z "{{.REPO_LIST}}" ]; then
+          echo "ERROR: BROWNFIELD_ORG and BROWNFIELD_REPOS must both be set." >&2
+          echo "" >&2
+          echo "  Inline:     task repos:clone BROWNFIELD_ORG=acme BROWNFIELD_REPOS=\"api web\"" >&2
+          echo "  Persistent: export them in .envrc or .env, then re-run." >&2
+          echo "" >&2
+          echo "This harness ships with no repository list on purpose — it works" >&2
+          echo "against whatever repos you point it at. See repos/README.md." >&2
+          exit 1
+        fi
+        mkdir -p repos
+        for repo in {{.REPO_LIST}}; do
+          if [ -n "{{.DRY_RUN}}" ]; then
+            if [ -d "repos/$repo/.git" ]; then
+              echo "would fetch  repos/$repo"
+            else
+              echo "would clone  https://github.com/{{.ORG}}/$repo.git -> repos/$repo"
+            fi
+            continue
+          fi
+          if [ -d "repos/$repo/.git" ]; then
+            echo "Fetching $repo..."
+            ( cd "repos/$repo" && git fetch origin )
+          else
+            echo "Cloning {{.ORG}}/$repo..."
+            git clone "https://github.com/{{.ORG}}/$repo.git" "repos/$repo"
+          fi
+        done
+
+  clean:
+    desc: Remove all locally cloned repositories from repos/
+    cmds:
+      - for repo in repos/*/; do [ -d "$repo" ] && rm -rf "$repo"; done
+
+  reset:
+    desc: Reset all repositories in repos/ to origin/{default_branch}
+    cmds:
+      - |
+        for repo in repos/*/; do
+          if [ -d "$repo/.git" ]; then
+            echo "Resetting $(basename "$repo")..."
+            (
+              cd "$repo"
+              # Detect default branch (main or master)
+              branch=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+              if [ -z "$branch" ]; then
+                echo "Could not detect default branch for $repo"
+                continue
+              fi
+              echo "Default branch is $branch"
+              git fetch origin
+              git checkout "$branch"
+              git reset --hard "origin/$branch"
+              git clean -fdx
+
+              # Delete all other local branches to avoid conflicts
+              branches=$(git for-each-ref --format='%(refname:short)' refs/heads/ | grep -v "^$branch$" || true)
+              if [ -n "$branches" ]; then
+                echo "Deleting local branches: $branches"
+                echo "$branches" | xargs git branch -D
+              fi
+            )
+          fi
+        done

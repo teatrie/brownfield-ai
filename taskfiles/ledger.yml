@@ -1,0 +1,242 @@
+version: '3'
+
+vars:
+  LEDGER_SCRIPT: >-
+    workflows/agent-memory/skills/execution-ledger/scripts/chromadb_ledger.py
+
+tasks:
+  index:
+    desc: List all epics in the execution ledger
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} index-epics {{.CLI_ARGS}}
+
+  resume:
+    desc: Load full context for an epic (plan, decisions, verdicts)
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} resume {{.CLI_ARGS}}
+
+  timeline:
+    desc: Show chronological artifact history for an epic
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} timeline {{.CLI_ARGS}}
+
+  save:
+    desc: Save an artifact to the ledger
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} save {{.CLI_ARGS}}
+
+  query:
+    desc: Semantic search across ledger artifacts
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} query {{.CLI_ARGS}}
+
+  search-epics:
+    desc: Search epics collection by semantic similarity
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} search-epics-cli {{.CLI_ARGS}}
+
+  filter:
+    desc: Deterministic metadata filter across ledger artifacts
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} filter-cli {{.CLI_ARGS}}
+
+  get:
+    desc: Retrieve a single artifact by ID
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} get {{.CLI_ARGS}}
+
+  next:
+    desc: Claim the next eligible plan (ACID-safe)
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} next-plan {{.CLI_ARGS}}
+
+  release:
+    desc: Release a claimed plan back to available pool
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} release {{.CLI_ARGS}}
+
+  status:
+    desc: Update an epic's lifecycle status
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} status {{.CLI_ARGS}}
+
+  create:
+    desc: Create a new backlog epic
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} create {{.CLI_ARGS}}
+
+  touch:
+    desc: Touch an epic's last_updated_at timestamp (heartbeat)
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} touch {{.CLI_ARGS}}
+
+  set-prs:
+    desc: Set current PR refs for an epic
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} set-prs-cli {{.CLI_ARGS}}
+
+  check-reviews:
+    desc: Check PR status for in_review epics and process transitions
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+      - sh: command -v gh >/dev/null 2>&1
+        msg: "gh CLI is not installed"
+      - sh: command -v jq >/dev/null 2>&1
+        msg: "jq is not installed"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.LEDGER_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      # Step 1: Get in_review epics from ledger
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} check-reviews-cli
+        > tmp/check-reviews-epics.json
+      # Step 2: Fetch PR states via gh CLI on host
+      - ci/check_reviews.sh tmp/check-reviews-epics.json tmp/check-reviews-input.json
+      # Step 3: Process reviews and transition epics
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        {{.LEDGER_SCRIPT}} process-reviews-cli
+        --reviews-file tmp/check-reviews-input.json
+        > tmp/check-reviews-output.json
+      # Step 4: Close PRs that need closing (from processed results)
+      - >-
+        jq -r '.processed[]? | select(.prs_to_close | length > 0) |
+        .prs_to_close[]' tmp/check-reviews-output.json 2>/dev/null |
+        while IFS= read -r ref; do
+          repo="${ref%%#*}";
+          number="${ref##*#}";
+          echo "Closing PR $ref...";
+          gh pr close "$number" --repo "$repo" --delete-branch || true;
+        done

@@ -1,0 +1,12 @@
+{
+  "disableAllHooks": true,
+  "sandbox": {
+    "enableWeakerNetworkIsolation": true,
+    "network": {
+      "allowedDomains": [
+        "127.0.0.1",
+        "localhost"
+      ]
+    }
+  }
+}

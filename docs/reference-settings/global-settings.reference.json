@@ -1,0 +1,152 @@
+{
+  "_comment": "REFERENCE ONLY — adapt paths and domains to your environment before copying to ~/.claude/settings.json",
+
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+
+  "enableAllProjectMcpServers": false,
+
+  "permissions": {
+    "_comment_allow": "Bash allowlist entries use permission-rule syntax (Bash(...)) — prefix match with trailing *. The tools.bash.allowList field below is deprecated/ineffective; real bash allowlisting is expressed here.",
+    "allow": [
+      "Bash(ls *)",
+      "Bash(tree *)",
+      "Bash(wc *)",
+      "Bash(mkdir *)",
+      "Bash(git status)",
+      "Bash(git add)",
+      "Bash(git commit)",
+      "Bash(git push)",
+      "Bash(git checkout)",
+      "Bash(git branch)",
+      "Bash(git merge)",
+      "Bash(git log)",
+      "Bash(git diff)",
+      "Bash(git format-patch)",
+      "Bash(git rev-parse)",
+      "Bash(git stash)",
+      "Bash(gh pr create)",
+      "Bash(gh search *)",
+      "Bash(gh repo view *)",
+      "Bash(gh api *)",
+      "Bash(docker info *)",
+      "Bash(docker ps *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose build *)",
+      "Bash(docker compose up *)",
+      "Bash(docker compose down *)",
+      "Bash(claude --help *)",
+      "Bash(claude --version *)",
+      "Bash(gemini --help *)",
+      "Bash(gemini --version *)",
+      "Bash(codex --help *)",
+      "Bash(codex --version *)"
+    ],
+    "_comment_deny": "Neither Edit(~/.codex/**) nor Edit(~/.gemini/**) nor Write(~/.codex/**) nor Write(~/.gemini/**) are denied here. Per the sandbox schema, Edit(...) AND Write(...) deny rules both merge into sandbox filesystem denyWrite. Denying either would block the codex/gemini CLIs from writing their own session/cache files under ~/.codex and ~/.gemini. Credential-file protection is handled by the explicit Read(...) deny rules on auth.json, oauth_creds.json, google_accounts.json, and history/**.",
+    "deny": [
+      "Read(~/.claude/sessions/**)",
+      "Read(~/.claude/history.jsonl)",
+      "Read(~/.claude/ide/**)",
+      "Read(~/.claude/mcp-env/**)",
+      "Read(~/.codex/auth.json)",
+      "Read(~/.gemini/oauth_creds.json)",
+      "Read(~/.gemini/google_accounts.json)",
+      "Read(~/.gemini/history/**)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude/sessions/**)",
+      "Edit(~/.claude/history.jsonl)",
+      "Edit(~/.claude/ide/**)",
+      "Edit(~/.claude/mcp-env/**)",
+      "Write(~/.claude/settings.json)",
+      "Write(~/.claude/sessions/**)",
+      "Write(~/.claude/history.jsonl)",
+      "Write(~/.claude/ide/**)",
+      "Write(~/.claude/mcp-env/**)"
+    ]
+  },
+
+  "filesystem": {
+    "denyList": [
+      "**/.git/**",
+      "~/.ssh/**",
+      "**/.env",
+      "**/.env.*",
+      "**/.DS_Store",
+      "**/node_modules/**",
+      "**/.terraform/**",
+      "**/*.tfstate",
+      "**/*.tfstate.backup"
+    ]
+  },
+
+  "tools": {
+    "docker": {
+      "allowSocketBinding": true,
+      "connectionMode": "local"
+    }
+  },
+
+  "sandbox": {
+    "enabled": true,
+    "enforceReadOnlyRoot": true,
+    "preventSelfModification": true,
+    "enableWeakerNetworkIsolation": true,
+    "network": {
+      "allowUnixSockets": [
+        "~/.orbstack/run/docker.sock",
+        "/var/run/docker.sock"
+      ],
+      "_comment_allowedDomains": "Docker Hub domains enable public image pulls (supply-chain risk). For air-gapped environments, replace with your private registry URL.",
+      "_comment_allowedDomains_2": "Cross-family reviewer domains: Codex CLI (chatgpt.com, api.openai.com) and Gemini CLI (oauth2.googleapis.com, generativelanguage.googleapis.com, cloudcode-pa.googleapis.com, play.googleapis.com). Remove them if you do not use cross-family reviews.",
+      "allowedDomains": [
+        "127.0.0.1",
+        "localhost",
+        "auth.docker.io",
+        "registry-1.docker.io",
+        "production.cloudflare.docker.com",
+        "chatgpt.com",
+        "ab.chatgpt.com",
+        "api.openai.com",
+        "api.github.com",
+        "oauth2.googleapis.com",
+        "generativelanguage.googleapis.com",
+        "www.googleapis.com",
+        "cloudcode-pa.googleapis.com",
+        "play.googleapis.com"
+      ]
+    },
+    "filesystem": {
+      "_comment_filesystem": "~/.gemini and ~/.codex are broadly allowed for read+write so the gemini and codex CLIs can manage their own OAuth tokens, session files, and caches. Credential-file protection is handled by permissions.deny entries for the specific sensitive files (auth.json, oauth_creds.json, google_accounts.json, history/**).",
+      "denyRead": [
+        "~/.claude"
+      ],
+      "allowRead": [
+        "~/.claude/projects",
+        "~/.claude/chroma_db",
+        "~/.claude/debug",
+        "~/.gemini",
+        "~/.codex"
+      ],
+      "allowWrite": [
+        "~/.claude/projects",
+        "~/.orbstack/",
+        "~/.docker/buildx/",
+        "~/.codex",
+        "~/.gemini"
+      ]
+    },
+    "_comment_restrictedCommands": "Exfiltration vectors (curl, wget, nc) are not listed here because network.allowedDomains already restricts outbound connections. If you weaken network isolation, add exfiltration commands to this list.",
+    "restrictedCommands": [
+      "rm -rf /",
+      "rm -rf /*",
+      "rm -rf ~",
+      "rm -rf $HOME",
+      "sudo *",
+      "mkfs *",
+      "format *",
+      "fdisk *"
+    ]
+  }
+}

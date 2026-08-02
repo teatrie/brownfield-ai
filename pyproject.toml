@@ -1,0 +1,50 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 140
+preview = true
+exclude = [
+    ".venv",
+    "**/third-party/**",
+    "**/analytics/src/datalake/dist/**",
+    "**/analytics/src/datalake/libs/**"
+]
+
+[tool.ruff.format]
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "S", "UP", "TID251"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["brownfield_ai", "scripts", "src", "tests"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"docker".msg = "Dynamic container creation is prohibited in runtime code. Use docker-compose.yml or Taskfile services. See coding_standards.md."
+"docker.from_env".msg = "Dynamic container creation is prohibited in runtime code. Use docker-compose.yml or Taskfile services."
+"docker.DockerClient".msg = "Dynamic container creation is prohibited in runtime code. Use docker-compose.yml or Taskfile services."
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_configs = true
+explicit_package_bases = true
+disable_error_code = ["import-untyped"]
+exclude = '(?x)(.venv/.*|.*/third-party/.*)'
+
+[[tool.mypy.overrides]]
+module = "docker.*"
+follow_imports = "skip"
+
+[tool.ruff.lint.per-file-ignores]
+"**/brownfield_ai/ledger/todo/mutations.py" = ["S608"]  # dynamic UPDATE SET clause is controlled
+"**/services/dashboard/routers/todos.py" = ["S608"]  # sort/order interpolation is whitelist-validated
+"**/redshift-table-schema/scripts/get_redshift_table_schema.py" = ["S608"]  # f-string SQL is validated by _IDENTIFIER_RE regex
+"**/scripts/ledger/ralph_runner.py" = ["S404", "S603", "S607"]  # claude CLI has no Python SDK
+"**/service-db-schema/scripts/get_service_db_schema.py" = ["S404", "S603", "S607", "TID251"]  # Atlas CLI has no Python SDK; dynamic container creation is tech debt
+"**/tests/**/*.py" = ["S", "E402", "E501"]
+"**/tools/ralph/client.py" = ["S404", "S603", "S607"]  # task CLI has no Python SDK
+"**/tools/ralph/pr.py" = ["S404", "S603", "S607"]  # task CLI has no Python SDK
+"**/tools/ralph/templates.py" = ["S701"]  # Jinja2 renders Markdown, not HTML — autoescape would corrupt output
+"**/services/dashboard/app.py" = ["S104"]  # Dashboard server must bind 0.0.0.0 inside Docker

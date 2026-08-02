@@ -1,0 +1,127 @@
+skill_name: glue-catalog-schema
+evals:
+- case: basic_success
+  setup: |-
+    setup_glue_catalog(
+      database_name='datalake_prod',
+      table_name='writer_labels',
+      columns=[
+        {'Name': 'writer_id',  'Type': 'bigint'},
+        {'Name': 'label_name', 'Type': 'string'}
+      ],
+      partition_keys=[
+        {'Name': 'ds',         'Type': 'string'}
+      ]
+    )
+  user_prompt: |-
+    Get me the glue catalog schema for the writer_labels table in the datalake_prod database
+    as a markdown table.
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+  expected_output: |-
+    assert "writer_id" in output
+    assert "label_name" in output
+    assert "writer_labels" in output
+  files: []
+- case: missing_resource
+  setup: |-
+    setup_glue_catalog(
+      database_name='datalake_staging',
+      table_name='events',
+      columns=[
+        {'Name': 'event_id',  'Type': 'string'},
+        {'Name': 'timestamp', 'Type': 'bigint'}
+      ]
+    )
+  user_prompt: |-
+    Can you show me the glue catalog schema of datalake_staging's events
+    table as a mermaid diagram?
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+  expected_output: |-
+    assert "erDiagram" in output
+    assert "events" in output
+  files: []
+- case: invalid_arguments
+  user_prompt: |-
+    Fetch the glue catalog structure of missing_table from missing_db.
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+  expected_output: |-
+    assert "error" in output.lower() or "not found" in output.lower()
+  files: []
+- case: ddl_output_formatsuccess
+  setup: |-
+    setup_glue_catalog(
+      database_name='datalake_prod',
+      table_name='writer_labels_ddl',
+      columns=[
+        {'Name': 'writer_id',  'Type': 'bigint'},
+        {'Name': 'label_name', 'Type': 'string'}
+      ],
+      partition_keys=[
+        {'Name': 'ds',         'Type': 'string'}
+      ]
+    )
+  user_prompt: |-
+    Get the schema for the writer_labels_ddl table in the datalake_prod database as a DDL statement.
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+  expected_output: |-
+    assert "CREATE EXTERNAL TABLE" in output
+    assert "writer_id" in output
+    assert "label_name" in output
+    assert "writer_labels_ddl" in output
+  files: []
+- case: default_db_curated
+  setup: |-
+    setup_glue_catalog(
+      database_name='example_curated',
+      table_name='writer_silver_data',
+      columns=[
+        {'Name': 'id', 'Type': 'int'}
+      ]
+    )
+  user_prompt: Get the glue schema for writer_silver_data. These are silver quality tables.
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+  expected_output: |-
+    assert "int" in output
+    assert "id" in output
+    assert "writer_silver_data" in output
+  files: []
+- case: default_db_raw
+  setup: |-
+    setup_glue_catalog(
+      database_name='example_raw',
+      table_name='raw_events',
+      columns=[
+        {'Name': 'event_id', 'Type': 'string'}
+      ]
+    )
+  user_prompt: Fetch the schema for raw_events. It is a bronze tier table.
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+  expected_output: |-
+    assert "string" in output
+    assert "event_id" in output
+    assert "raw_events" in output
+  files: []

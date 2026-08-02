@@ -1,0 +1,23 @@
+sequenceDiagram
+    participant O as Orchestrator
+    participant R as Repo / GitHub
+
+    rect rgb(220, 240, 255)
+        Note over O,R: wave-per-pr (auto-pr after each wave)
+        O->>R: Implement Wave 1 on feature branch
+        O->>R: auto-pr → open PR for Wave 1
+        R-->>O: PR merged
+        O->>R: git checkout main && git pull
+        O->>R: Implement Wave 2 on new branch from main
+        O->>R: auto-pr → open PR for Wave 2
+        R-->>O: PR merged
+    end
+
+    rect rgb(220, 255, 220)
+        Note over O,R: all-waves-one-pr (single PR at end)
+        O->>R: Implement Wave 1 on feature branch
+        O->>R: Implement Wave 2 on same branch
+        O->>R: Implement Wave N on same branch
+        O->>R: auto-pr → open single PR for all waves
+        R-->>O: PR merged
+    end

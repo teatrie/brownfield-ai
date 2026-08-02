@@ -1,0 +1,66 @@
+/* Theme custom properties — dark and light palettes.
+ * Color values sourced from the Visual Spec (DASH-0001 plan).
+ */
+
+:root {
+  /* Fonts */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+
+  /* Transitions */
+  --transition-speed: 0.2s;
+}
+
+/* Dark mode (default) */
+[data-theme='dark'] {
+  --color-bg: #0d1117;
+  --color-surface: #161b22;
+  --color-border: #30363d;
+  --color-accent: #58a6ff;
+  --color-text: #e6edf3;
+  --color-text-muted: #8b949e;
+  --color-on-accent: #ffffff;
+
+  /* Status colors */
+  --color-status-completed: #3fb950;
+  --color-status-in-progress: #d29922;
+  --color-status-blocked: #f85149;
+  --color-status-abandoned: #f85149;
+  --color-status-approved: #58a6ff;
+  --color-status-backlog: #8b949e;
+  --color-status-pending: #8b949e;
+  --color-status-in-review: #a371f7;
+
+  /* Verdict colors */
+  --color-verdict-green: #3fb950;
+  --color-verdict-fail: #f85149;
+  --color-verdict-retry: #d29922;
+  --color-verdict-neutral: #8b949e;
+}
+
+/* Light mode */
+[data-theme='light'] {
+  --color-bg: #ffffff;
+  --color-surface: #f6f8fa;
+  --color-border: #d0d7de;
+  --color-accent: #0969da;
+  --color-text: #1f2328;
+  --color-text-muted: #656d76;
+  --color-on-accent: #ffffff;
+
+  /* Status colors */
+  --color-status-completed: #1a7f37;
+  --color-status-in-progress: #9a6700;
+  --color-status-blocked: #cf222e;
+  --color-status-abandoned: #cf222e;
+  --color-status-approved: #0969da;
+  --color-status-backlog: #656d76;
+  --color-status-pending: #656d76;
+  --color-status-in-review: #8250df;
+
+  /* Verdict colors */
+  --color-verdict-green: #1a7f37;
+  --color-verdict-fail: #cf222e;
+  --color-verdict-retry: #9a6700;
+  --color-verdict-neutral: #656d76;
+}

@@ -1,0 +1,6 @@
+# CODEOWNERS — brownfield-ai
+# Each line maps a file pattern to one or more owners.
+# Order matters: later rules override earlier ones.
+
+# Default: all paths owned by the repository owner
+* @teatrie

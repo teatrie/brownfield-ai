@@ -1,0 +1,13 @@
+# Prevent sandbox-restricted files from blocking Docker build context
+.env
+.env.*
+!.env.example
+.envrc
+
+# Large directories not needed in build context
+repos/
+tmp/
+.venv/
+worktrees/
+.git/
+**/node_modules/

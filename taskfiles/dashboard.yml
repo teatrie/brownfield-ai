@@ -1,0 +1,74 @@
+version: '3'
+
+tasks:
+  start:
+    desc: Start the ledger dashboard service
+    deps:
+      - :chromadb:start
+      - frontend-build
+    cmds:
+      - docker compose --profile tools up -d ledger-dashboard
+
+  stop:
+    desc: Stop the ledger dashboard service
+    cmds:
+      - docker compose --profile tools stop ledger-dashboard
+
+  build:
+    desc: Build the ledger dashboard Docker image
+    cmds:
+      - docker compose --profile tools build {{.CLI_ARGS}} ledger-dashboard
+
+  restart:
+    desc: Rebuild (no-cache) and restart the ledger dashboard
+    cmds:
+      - task: stop
+      - task: build
+        vars:
+          CLI_ARGS: --no-cache
+      - task: start
+
+  logs:
+    desc: Show ledger dashboard logs
+    cmds:
+      - docker compose --profile tools logs -f ledger-dashboard
+
+  frontend-build:
+    desc: Build dashboard frontend static assets (required for live-reload mount)
+    cmds:
+      - >-
+        docker run --rm
+        -v {{.ROOT_DIR}}:/app
+        -w /app/services/dashboard/frontend
+        node:20-alpine
+        sh -c "npm ci && npm run build"
+
+  typecheck:
+    desc: Run TypeScript type checking for dashboard frontend
+    cmds:
+      - >-
+        docker run --rm
+        -v {{.ROOT_DIR}}:/app
+        -w /app/services/dashboard/frontend
+        node:20-alpine
+        sh -c "npm ci && npx tsc --noEmit"
+
+  lint:
+    desc: Run frontend linter for dashboard
+    cmds:
+      - >-
+        docker run --rm
+        -v {{.ROOT_DIR}}:/app
+        -w /app/services/dashboard/frontend
+        node:20-alpine
+        sh -c "npm ci && npx tsc --noEmit"
+
+  test:
+    desc: Run Vitest unit tests for dashboard frontend
+    cmds:
+      - >-
+        docker run --rm
+        -v {{.ROOT_DIR}}:/app
+        -w /app/services/dashboard/frontend
+        node:20-alpine
+        sh -c "npm ci && npx vitest run"

@@ -1,0 +1,9 @@
+ignored:
+  - DL3008 # Pin versions in apt get install
+  - DL3013 # Pin versions in pip
+  - DL3015 # Avoid additional packages by specifying `--no-install-recommends`
+  - DL3016 # Pin versions in npm
+  - DL3018 # Pin versions in apk add
+  - DL3059 # Multiple consecutive RUN instructions
+  - DL4006 # Set the SHELL option -o pipefail
+  - SC1091 # Not following: File not included in mock

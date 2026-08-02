@@ -1,0 +1,30 @@
+version: '3'
+
+tasks:
+  infra-lint:
+    desc: Build infra-lint image
+    cmds:
+      - docker compose --profile tools build infra-lint
+
+  infra-terraform:
+    desc: Build infra-terraform image
+    cmds:
+      - docker build -f docker/builders/Dockerfile.infra-terraform -t brownfield-ai/infra-terraform:local docker/builders
+
+  tf-run:
+    desc: >-
+      Run terraform via hardened builder with enforced non-root user.
+      Requires aws-vault-auth pre-flight (source tmp/.aws-credentials.env
+      before invocation). Invoke from the Terraform worktree directory so
+      the correct workspace is mounted.
+    cmds:
+      - >-
+        docker run --rm --user agent
+        -v {{.USER_WORKING_DIR}}:/workspace -w /workspace
+        -e AWS_REGION -e AWS_DEFAULT_REGION
+        -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN
+        brownfield-ai/infra-terraform:local {{.CLI_ARGS}}
+
+  all:
+    desc: Build all builder images
+    deps: [infra-lint, infra-terraform]

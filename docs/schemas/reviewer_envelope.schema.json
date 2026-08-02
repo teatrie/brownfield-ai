@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brownfield-ai.local/schemas/reviewer_envelope.schema.json",
+  "title": "Reviewer Output Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope_version",
+    "agent_id",
+    "agent_family",
+    "agent_effort_tier",
+    "round",
+    "status",
+    "next_action",
+    "feedback_to_forward",
+    "recommended_next_tier",
+    "halt_trigger"
+  ],
+  "properties": {
+    "envelope_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "agent_id": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "The exact agent name from frontmatter, e.g. 'code-review-xhigh', 'gemini-reviewer-high', 'qa-standards'. maxLength bounds DoS surface (TODO-0137)."
+    },
+    "agent_family": {
+      "type": "string",
+      "enum": ["claude-native", "codex-bridge", "gemini-bridge", "copilot-bridge", "qa-internal"]
+    },
+    "agent_effort_tier": {
+      "type": "string",
+      "enum": ["medium", "high", "xhigh", "max"]
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["APPROVED", "APPROVED_WITH_NOTES", "REJECTED", "BLOCKED", "ESCALATE", "ABSTAIN"],
+      "description": "[Req-003] Reviewer verdict enum. [Req-N04] Membership is enforced via a single 'enum' clause — no oneOf/anyOf is layered on top, so additionalProperties:false plus the §4.1.1 status × next_action allOf matrix produce a single deterministic validity surface (no overlapping disjunctions to game)."
+    },
+    "next_action": {
+      "type": "string",
+      "enum": ["APPROVE", "RETURN_TO_WORKER", "RETURN_TO_WORKER_ADVISORY", "ESCALATE_REVIEWER_TIER", "HALT_FOR_OPERATOR", "RETRY_REVIEWER"],
+      "description": "[Req-004] Orchestrator routing primitive enum. The merge function inspects this discrete value (Risk-007 / Req-N02 trojan-horse defense) — never the free-form description — to compute the MergeDecision.action."
+    },
+    "feedback_to_forward": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "description"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "significant", "minor", "informational"]
+          },
+          "file_path": { "type": "string" },
+          "line_range": {
+            "type": "string",
+            "pattern": "^[0-9]+(-[0-9]+)?$"
+          },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "suggested_fix": { "type": "string", "maxLength": 2000 },
+          "rule_id": { "type": "string" },
+          "blocking": {
+            "type": "boolean",
+            "default": true,
+            "description": "B-2 R2: when false, this finding is advisory and the merge function MUST NOT use it as a basis for RETURN_TO_WORKER (e.g., bridge minor/informational findings carry blocking=false per the §6.1.1 mapping). When absent, defaults to true."
+          }
+        }
+      }
+    },
+    "recommended_next_tier": {
+      "type": ["string", "null"],
+      "enum": ["medium", "high", "xhigh", "max", null]
+    },
+    "halt_trigger": {
+      "type": ["string", "null"],
+      "enum": [
+        "destructive_action",
+        "operator_auth_boundary",
+        "repeated_envelope_failure",
+        null
+      ],
+      "description": "[Req-006] HALT classification. Non-null only when next_action=HALT_FOR_OPERATOR (enforced by the §4.1.1 if/then matrix). The string-or-null shape lets every envelope carry the field unconditionally so the top-level 'required' list stays uniform across all routing paths."
+    },
+    "spillover_findings_path": {
+      "type": ["string", "null"],
+      "maxLength": 1024,
+      "description": "Set when feedback_to_forward exceeds 50 entries; points to tmp/findings-overflow-<round>.json. maxLength bounds DoS surface (TODO-0137)."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["next_action"], "properties": { "next_action": { "const": "HALT_FOR_OPERATOR" } } },
+      "then": { "required": ["halt_trigger", "next_action"], "properties": { "halt_trigger": { "type": "string" } } }
+    },
+    {
+      "if": { "required": ["next_action"], "properties": { "next_action": { "const": "ESCALATE_REVIEWER_TIER" } } },
+      "then": { "required": ["recommended_next_tier", "next_action"], "properties": { "recommended_next_tier": { "type": "string" } } }
+    },
+    {
+      "if": { "required": ["next_action"], "properties": { "next_action": { "const": "RETURN_TO_WORKER" } } },
+      "then": { "required": ["next_action"], "properties": { "feedback_to_forward": { "minItems": 1 } } }
+    },
+    {
+      "if": { "required": ["next_action"], "properties": { "next_action": { "const": "RETURN_TO_WORKER_ADVISORY" } } },
+      "then": { "required": ["next_action"], "properties": { "feedback_to_forward": { "minItems": 1 } } }
+    },
+    {
+      "if": { "required": ["next_action"], "properties": { "next_action": { "const": "RETRY_REVIEWER" } } },
+      "then": { "required": ["next_action"] }
+    },
+    {
+      "if": { "required": ["status"], "properties": { "status": { "const": "ABSTAIN" } } },
+      "then": { "properties": { "next_action": { "const": "RETRY_REVIEWER" } } }
+    },
+    {
+      "if": { "required": ["status"], "properties": { "status": { "const": "APPROVED" } } },
+      "then": { "properties": { "next_action": { "const": "APPROVE" } } }
+    },
+    {
+      "if": { "required": ["status"], "properties": { "status": { "const": "APPROVED_WITH_NOTES" } } },
+      "then": { "properties": { "next_action": { "enum": ["APPROVE", "RETURN_TO_WORKER_ADVISORY", "RETURN_TO_WORKER"] } } }
+    },
+    {
+      "if": { "required": ["status"], "properties": { "status": { "const": "REJECTED" } } },
+      "then": { "properties": { "next_action": { "const": "RETURN_TO_WORKER" } } }
+    },
+    {
+      "if": { "required": ["status"], "properties": { "status": { "const": "BLOCKED" } } },
+      "then": { "properties": { "next_action": { "const": "HALT_FOR_OPERATOR" } } }
+    },
+    {
+      "if": { "required": ["status"], "properties": { "status": { "const": "ESCALATE" } } },
+      "then": { "properties": { "next_action": { "const": "ESCALATE_REVIEWER_TIER" } } }
+    }
+  ]
+}

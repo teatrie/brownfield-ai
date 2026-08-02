@@ -1,0 +1,53 @@
+You are running in a headless non-interactive session. CI=true.
+
+Epic: {{epic_id}} | Attempt: {{attempt}} of 3
+
+## Repo Branches
+{% for repo, branch in branches.items() %}
+- `{{repo}}`: `{{branch}}`
+{% endfor %}
+
+## Headless Signal Propagation (MANDATORY)
+When delegating to subagents, teammates, or containers, you MUST
+propagate the headless signal per delegation_protocol.md S5:
+- Subagents: include "You are running in a headless non-interactive session"
+  in every delegation prompt
+- Containers: pass `--env CI=true` explicitly
+- Failure to propagate is a protocol violation
+
+## Resume Context
+{{resume_json}}
+
+## Scope
+Complete waves {{wave_range}} (Sub-plan {{sub_plan_label}}).
+Prior completed waves: {{completed_waves}}.
+
+{% if attempt > 1 %}
+## Previous Attempt Failures (Attempt {{attempt - 1}})
+{% for f in failures %}
+- **Wave {{f.wave}}, Step {{f.step}}**: verdict=FAIL
+  - Agent: {{f.agent_model}} ({{f.effort_variant}})
+  - Error: {{f.body}}
+  - Escalation exhausted: {{f.exhausted_matrix_points}}
+{% endfor %}
+
+**Directive**: Review these failures before executing. You MUST:
+1. Identify the root cause pattern (implementation vs infrastructure vs plan flaw)
+2. Adjust your approach --- do not repeat the same strategy
+3. Respect the escalation floor: minimum tier is {{escalation_floor}}
+4. If the plan itself is flawed, checkpoint a design_decision artifact and exit with verdict "blocked"
+{% endif %}
+
+## Execution
+1. Run `/protocols` to load core rules
+2. Execute waves {{wave_range}} using `/agent-team` with the approved plan
+3. Checkpoint all artifacts per verification protocol
+4. Before exiting, run the Exit Review Gate (MANDATORY --- see below)
+
+## Exit Review Gate (CRITICAL --- DO NOT SKIP)
+Before exiting this session, you MUST:
+1. Invoke `/protocols` to re-read core directives into recent context
+2. Spawn the Exit Review Gate reviewers (see Session Exit Protocol)
+3. Checkpoint the `session_exit` artifact with the reviewer verdict
+
+**CRITICAL: DO NOT EXIT WITHOUT CHECKPOINTING A session_exit ARTIFACT.**

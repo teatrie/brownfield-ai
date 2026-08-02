@@ -1,0 +1,12 @@
+networks:
+  default:
+    name: brownfield-ai_default
+    external: true
+
+services:
+  localstack:
+    image: motoserver/moto:latest
+    ports:
+      - "4566:5000"
+    environment:
+      - MOTO_PORT=5000

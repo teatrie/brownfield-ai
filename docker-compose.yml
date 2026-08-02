@@ -1,0 +1,123 @@
+# Docker Compose Definition
+services:
+  python-cli:
+    annotations:
+      description: >-
+        Python execution environment for agent scripts
+        with 3-layer security gate
+    build:
+      context: .
+      dockerfile: docker/python-cli/Dockerfile
+    image: python-cli
+    volumes:
+      - .:/app:ro
+      - ./tmp:/app/tmp:rw
+      - ~/.brownfield-ai:/brownfield-ai
+    environment:
+      - PYTHONPYCACHEPREFIX=/app/tmp/.pycache
+      - CHROMADB_HOST=host.docker.internal
+      - CHROMADB_PORT=8000
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_DEFAULT_REGION
+      - AWS_REGION
+      - GH_TOKEN
+    extra_hosts:
+      - "localstack:host-gateway"
+    profiles:
+      - tools
+
+  repo-cli:
+    annotations:
+      description: >-
+        Command-restricted git/gh operations gateway
+        with entrypoint allowlist and git environment hardening
+    build:
+      context: .
+      dockerfile: docker/repo-cli/Dockerfile
+    image: repo-cli
+    volumes:
+      - .:/app
+      - ~/.ssh:/home/agent/.ssh:ro
+    environment:
+      - GH_TOKEN
+    profiles:
+      - tools
+
+  pytest-cli:
+    annotations:
+      description: >-
+        Isolated environment for verifying AI skills
+        via pytest test suite
+    build:
+      context: .
+      dockerfile: docker/pytest-cli/Dockerfile
+    image: pytest-cli
+    volumes:
+      - .:/app:ro
+      - ./tmp:/app/tmp:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - PYTHONPYCACHEPREFIX=/app/tmp/.pycache
+      - COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN:-}
+      - GH_TOKEN=${GH_TOKEN:-}
+    extra_hosts:
+      - "localstack:host-gateway"
+    profiles:
+      - tools
+
+  agent-cli:
+    annotations:
+      description: >-
+        Cross-family agent CLI environment
+        for bridge agent reviews
+    build:
+      context: .
+      dockerfile: docker/agent-cli/Dockerfile
+    image: agent-cli
+    volumes:
+      - .:/app:ro
+      - ./tmp:/app/tmp:rw
+      - ~/.brownfield-ai/agent-review:/app/agent-review:rw
+    environment:
+      - CI=true
+      - NPM_CONFIG_CACHE=/app/tmp/.npm
+    profiles:
+      - tools
+
+  infra-lint:
+    annotations:
+      description: >-
+        Infrastructure lint environment
+        with 3-layer security gate
+    build:
+      context: .
+      dockerfile: docker/builders/Dockerfile.infra-lint
+    image: brownfield-ai/infra-lint:local
+    volumes:
+      - .:/workspace:ro
+      - ./tmp:/workspace/tmp:rw
+    profiles:
+      - tools
+
+  ledger-dashboard:
+    annotations:
+      description: >-
+        Execution ledger dashboard web UI
+        with real-time WebSocket updates
+    build:
+      context: .
+      dockerfile: docker/dashboard/Dockerfile
+    image: ledger-dashboard
+    ports:
+      - "127.0.0.1:8484:8484"
+    volumes:
+      - ~/.brownfield-ai:/brownfield-ai
+      - ./services/dashboard/static:/app/services/dashboard/static:ro  # live-reload: run `task dashboard:frontend-build` first
+    environment:
+      - CHROMADB_HOST=host.docker.internal
+      - CHROMADB_PORT=8000
+      - LEDGER_DB_PATH=/brownfield-ai/ledger_index.db
+    profiles:
+      - tools

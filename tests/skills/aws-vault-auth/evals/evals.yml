@@ -1,0 +1,21 @@
+skill_name: aws-vault-auth
+evals:
+- case: fetch-credentials-successfully
+  setup: |-
+    os.makedirs('tmp', exist_ok=True)
+    with open('tmp/aws-vault', 'w') as f:
+        f.write('#!/bin/bash\n'
+                'echo "AWS_ACCESS_KEY_ID=mockId123"\n'
+                'echo "AWS_SECRET_ACCESS_KEY=mockSecret456"\n'
+                'echo "AWS_SESSION_TOKEN=mockToken789"\n')
+    os.chmod('tmp/aws-vault', 0o755)
+  user_prompt: |-
+    Fetch my AWS temporary credentials using the `acme_dev` profile so I can use them.
+  agent_prompt: |-
+    For this test environment, prefix your script execution with `PATH=tmp:$PATH` so it uses our mock `aws-vault` binary.
+    Return the exact export string. Print the output directly in the text response and cat the generated tmp/.aws-credentials.env file.
+  expected_output: |-
+    assert "export AWS_ACCESS_KEY_ID='mockId123'" in output
+    assert "export AWS_SECRET_ACCESS_KEY='mockSecret456'" in output
+    assert "export AWS_SESSION_TOKEN='mockToken789'" in output
+  files: []

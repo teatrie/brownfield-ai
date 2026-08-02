@@ -1,0 +1,106 @@
+version: '3'
+
+includes:
+  sh:
+    taskfile: ./taskfiles/docker.yml
+    dir: .
+  chromadb:
+    taskfile: ./taskfiles/chromadb.yml
+    dir: .
+  gh:
+    taskfile: ./taskfiles/gh.yml
+    dir: .
+  git:
+    taskfile: ./taskfiles/git.yml
+    dir: .
+  ledger:
+    taskfile: ./taskfiles/ledger.yml
+    dir: .
+  builders:
+    taskfile: ./taskfiles/builders.yml
+    dir: .
+  lint:
+    taskfile: ./taskfiles/lint.yml
+    dir: .
+  repos:
+    taskfile: ./taskfiles/repos.yml
+    dir: .
+  test:
+    taskfile: ./taskfiles/test.yml
+    dir: .
+  aws:
+    taskfile: ./taskfiles/aws.yml
+    dir: .
+  agent:
+    taskfile: ./taskfiles/agent-cli.yml
+    dir: .
+  todo:
+    taskfile: ./taskfiles/todo.yml
+    dir: .
+  ralph:
+    taskfile: ./taskfiles/ralph.yml
+    dir: .
+  run:
+    taskfile: ./taskfiles/tools.yml
+    dir: .
+  findings:
+    taskfile: ./taskfiles/findings.yml
+    dir: .
+  dashboard:
+    taskfile: ./taskfiles/dashboard.yml
+    dir: .
+
+tasks:
+  setup:env:
+    desc: Interactive workspace setup — installs dependencies, configures .envrc and .env
+    cmds:
+      - ./scripts/setup_env.sh
+
+  test:
+    desc: Run all tests
+    cmds:
+      - task: test:brownfield_ai
+      - task: test:scripts
+      - task: test:skills
+      - task: test:dashboard
+
+  test:changed:
+    desc: Run tests for changed files only
+    cmds:
+      - task: test:brownfield_ai:changed
+      - task: test:scripts:changed
+      - task: test:skills:changed
+      - task: test:dashboard:changed
+
+  lint:
+    desc: Run all linters
+    cmds:
+      - task: lint:bypasses
+      - task: lint:hygiene
+      - task: lint:markdown
+      - task: lint:skills
+      - task: lint:evals
+      - task: lint:yaml
+      - task: lint:python
+      - task: lint:python-sql
+      - task: lint:shell
+      - task: lint:docker
+      - task: lint:json
+      - task: dashboard:lint
+
+  fix:
+    desc: Fix all lint issues
+    cmds:
+      - task: lint:fix
+
+  clean:
+    desc: Clean all temporary and build/cache files
+    cmds:
+      - >-
+        rm -rf tmp/ logs/ .task/ .pytest_cache/ .ruff_cache/ .mypy_cache/ .coverage .tdd-active
+        chromadb_export.txt chroma_export.txt worktrees/
+      - find . -type d -name "__pycache__" -exec rm -rf {} +
+      - find . -type f -name "*.pyc" -delete
+      - find . -type f -name "*.pyo" -delete
+      - find . -type f -name "*.pyd" -delete
+      - git worktree prune

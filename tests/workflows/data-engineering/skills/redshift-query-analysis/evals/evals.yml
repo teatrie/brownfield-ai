@@ -1,0 +1,30 @@
+skill_name: redshift-query-analysis
+evals:
+- case: optimize-query-distkey
+  user_prompt: |
+    Please analyze this Redshift query for optimization.
+    Query: SELECT u.name, p.amount FROM users u JOIN purchases p ON u.email = p.user_email WHERE p.status = 'completed';
+
+    Here is the schema context you need:
+    - Table users: email (varchar), name (varchar), user_id (int DISTKEY). SORTKEY is created_date.
+    - Table purchases: amount (numeric), status (varchar), user_email (varchar), user_id (int DISTKEY). SORTKEY is purchase_date.
+  agent_prompt: |-
+    Use the redshift-query-analysis skill to critique and rewrite the query. Focus on the JOIN logic against the provided DISTKEYs.
+  expected_output: |-
+    assert "distkey" in output.lower() or "distribution" in output.lower()
+    assert "user_id" in output.lower()
+  files: []
+- case: optimize-query-sortkey
+  user_prompt: |
+    Please analyze this Redshift query for optimization.
+    Query: SELECT * FROM transactions WHERE user_id = 500 ORDER BY recorded_at DESC;
+
+    Here is the schema context you need:
+    - Table transactions: tx_id (int), amount (numeric), user_id (int), recorded_at (timestamp).
+    DISTKEY is tx_id. SORTKEY is recorded_at.
+  agent_prompt: |-
+    Use the redshift-query-analysis skill to critique and rewrite the query. Focus on SORTKEY usage.
+  expected_output: |-
+    assert "sortkey" in output.lower() or "sort key" in output.lower()
+    assert "recorded_at" in output.lower()
+  files: []

@@ -1,0 +1,14 @@
+# Docker Compose Definition for Global ChromaDB Instance
+services:
+  chromadb:
+    annotations:
+      - "description=Vector database for managing global agent memory across brownfield-ai workspaces"
+    image: chromadb/chroma:latest
+    container_name: global-chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - ~/.brownfield-ai/chroma_data:/data
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE

@@ -1,0 +1,122 @@
+version: '3'
+
+# Findings ledger task surface for the diff-review skill.
+#
+# Per CLAUDE.md §11, host-side `python3` invocation is blocked by the
+# PreToolUse hook (`block-container-escape.sh` Pattern #8). All targets
+# below execute through the `python-cli` container behind the 3-layer
+# Python security gate (`python-security-gate.sh` → entrypoint allowlist
+# → container isolation), mirroring the `taskfiles/todo.yml` pattern.
+#
+# Hot-loop guidance: when issuing many ops in close succession (e.g.,
+# Step 3.1 create-per-finding, Step 5.1 filter+priority+marker fan-out),
+# prefer `findings:apply-batch` to amortise container startup. See
+# `scripts/findings_tracker.py:_cli_apply_batch` for the JSONL contract.
+
+vars:
+  FINDINGS_SCRIPT: scripts/findings_tracker.py
+
+tasks:
+  create:
+    desc: Create a new finding and append to the JSON ledger.
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:create {{.CLI_ARGS}}
+
+  update-status:
+    desc: Update the status of a finding in the ledger.
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:update-status {{.CLI_ARGS}}
+
+  filter:
+    desc: >-
+      Filter the ledger by kind (active, no-action-validated,
+      doc-or-todo-validated) and emit JSON to stdout.
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:filter {{.CLI_ARGS}}
+
+  load:
+    desc: Load the ledger JSON to stdout (empty array if missing/malformed).
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:load {{.CLI_ARGS}}
+
+  parse-diff-markers:
+    desc: Scan a git diff file for TODO/FIXME/HACK/XXX markers (JSON out).
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:parse-diff-markers {{.CLI_ARGS}}
+
+  marker-priority:
+    desc: Print the numeric priority for a marker keyword.
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:marker-priority {{.CLI_ARGS}}
+
+  validated-priority:
+    desc: Print the numeric priority for a validated finding.
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:validated-priority {{.CLI_ARGS}}
+
+  merge-duplicates:
+    desc: Merge findings identified as duplicates using highest-holds rule.
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:merge-duplicates {{.CLI_ARGS}}
+
+  apply-batch:
+    desc: >-
+      Execute a JSONL batch of findings ops in a single container start.
+      Pass --batch-path tmp/<epic>-findings-batch.jsonl. See
+      scripts/findings_tracker.py:_cli_apply_batch for the line schema.
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.FINDINGS_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.FINDINGS_SCRIPT}} findings:apply-batch {{.CLI_ARGS}}

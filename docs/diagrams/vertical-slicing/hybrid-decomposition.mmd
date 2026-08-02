@@ -1,0 +1,24 @@
+flowchart TD
+    subgraph Wave0["Wave 0 — Horizontal Prerequisite (no PR)"]
+        W0A[Schema migration / Terraform]
+        W0B[Shared contracts / generated stubs]
+        W0A --> W0B
+    end
+
+    subgraph Wave1["Wave 1 — Vertical Slice (own PR)"]
+        W1A[Slice A: impl]
+        W1B[Slice A: tests]
+        W1C[Slice A: docs]
+        W1A --> W1B --> W1C
+    end
+
+    subgraph WaveN["Wave N — Vertical Slice (own PR)"]
+        WNA[Slice N: impl]
+        WNB[Slice N: tests]
+        WNC[Slice N: docs]
+        WNA --> WNB --> WNC
+    end
+
+    Wave0 --> Wave1
+    Wave0 --> WaveN
+    Wave1 -.->|merged first| WaveN

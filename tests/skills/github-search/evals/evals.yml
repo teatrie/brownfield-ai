@@ -1,0 +1,54 @@
+skill_name: github-search
+evals:
+- case: basic_search_org_scoped_no_clone
+  requires_env: [BROWNFIELD_ORG]
+  user_prompt: |-
+    Search our GitHub org for where event aggregates are defined. Do not clone
+    anything — I just want to know which repository and file to look at.
+  agent_prompt: |-
+    This is a simulated test environment. Scope every search to the
+    {BROWNFIELD_ORG} organization (`--owner {BROWNFIELD_ORG}`), across any
+    repository under it — do NOT pin the search to a single repo. You may run
+    `gh search code` (or `gh api`) via the `run_in_terminal` tool, but DO NOT run
+    any `gh repo clone` commands. DO NOT USE ANY MCP SERVER OR NATIVE GITHUB
+    TOOLS. You MUST only use the `gh` shell CLI. If the search returns no
+    results, say so plainly.
+  expected_output: |-
+    assert os.environ["BROWNFIELD_ORG"] in output
+    assert "clone" not in output.lower()
+  files: []
+- case: no_results_must_not_hallucinate
+  requires_env: [BROWNFIELD_ORG]
+  user_prompt: |-
+    Which repo in our org defines the `zzz_nonexistent_table_xyz` table?
+  agent_prompt: |-
+    This is a simulated test environment. Scope the search to the
+    {BROWNFIELD_ORG} organization (`--owner {BROWNFIELD_ORG}`) using
+    `gh search code` via the `run_in_terminal` tool. This identifier does not
+    exist anywhere. Per the skill's Rules of Engagement, report the absence of
+    results — do NOT invent a repository, file path, or table origin, and do NOT
+    clone anything.
+  expected_output: |-
+    assert "no result" in output.lower() or "not found" in output.lower() or "no match" in output.lower()
+    assert "clone" not in output.lower()
+  files: []
+- case: complex_search_clone_required
+  requires_env: [BROWNFIELD_ORG]
+  user_prompt: |-
+    I need a multi-step deep dive tracing how domain events flow from command
+    handlers through to the event store. Follow the imports across the whole
+    logic chain.
+  agent_prompt: |-
+    This is a simulated test environment. Start by searching the
+    {BROWNFIELD_ORG} organization (`--owner {BROWNFIELD_ORG}`) with
+    `gh search code` via the `run_in_terminal` tool to work out which repository
+    holds the answer — the org may contain many. However, do NOT run
+    `gh repo clone`. Once you determine that tracing imports across the logic
+    chain requires cloning (per the JIT cloning instructions in your skill),
+    output exactly one line of the form
+    "CLONE REQUIRED: {BROWNFIELD_ORG}/<repo>" naming the repository you selected,
+    then stop execution. DO NOT USE ANY MCP SERVER OR NATIVE GITHUB TOOLS. You
+    MUST only use the `gh` shell CLI.
+  expected_output: |-
+    assert f'CLONE REQUIRED: {os.environ["BROWNFIELD_ORG"]}/' in output
+  files: []

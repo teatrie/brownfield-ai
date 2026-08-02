@@ -1,0 +1,42 @@
+{
+  "context": {
+    "discoveryMaxDirs": 0
+  },
+  "modelConfigs": {
+    "customAliases": {
+      "gemini-3.1-pro-high": {
+        "extends": "chat-base-3",
+        "modelConfig": {
+          "model": "gemini-3.1-pro-preview",
+          "generateContentConfig": {
+            "thinkingConfig": {
+              "thinkingLevel": "HIGH"
+            }
+          }
+        }
+      },
+      "gemini-3.1-pro-medium": {
+        "extends": "chat-base-3",
+        "modelConfig": {
+          "model": "gemini-3.1-pro-preview",
+          "generateContentConfig": {
+            "thinkingConfig": {
+              "thinkingLevel": "MEDIUM"
+            }
+          }
+        }
+      },
+      "gemini-3-flash-high": {
+        "extends": "chat-base-3",
+        "modelConfig": {
+          "model": "gemini-3-flash-preview",
+          "generateContentConfig": {
+            "thinkingConfig": {
+              "thinkingLevel": "HIGH"
+            }
+          }
+        }
+      }
+    }
+  }
+}

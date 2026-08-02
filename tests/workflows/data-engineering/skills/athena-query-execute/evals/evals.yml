@@ -1,0 +1,27 @@
+skill_name: "athena-query-execute"
+evals:
+  - case: basic_csv_query
+    user_prompt: >
+      Run an Athena query to `SELECT id FROM db.users LIMIT 1;`. Use context title "test-query".
+      Do not wait for results.
+    agent_prompt: >
+      NOTE: For this testing environment, do NOT use docker compose.
+      Run the python script directly natively: `python3
+      workflows/data-engineering/skills/athena-query-execute/scripts/athena_query_execute.py
+      "SELECT id FROM db.users LIMIT 1" --context "test-query" --no-wait`.
+    setup: ""
+    expected_output: >
+      assert "query" in output.lower() or "execution" in output.lower() or "dispatch" in output.lower()
+
+  - case: parquet_format
+    user_prompt: >
+      Execute `SELECT id FROM db.users LIMIT 10` using Athena in parquet format with context
+      "test-parquet" and no-wait.
+    agent_prompt: >
+      NOTE: For this testing environment, do NOT use docker compose.
+      Run the python script directly natively: `python3
+      workflows/data-engineering/skills/athena-query-execute/scripts/athena_query_execute.py
+      "SELECT id FROM db.users LIMIT 10" --context "test-parquet" --format parquet --no-wait`.
+    setup: ""
+    expected_output: >
+      assert "query" in output.lower() or "execution" in output.lower() or "dispatch" in output.lower()

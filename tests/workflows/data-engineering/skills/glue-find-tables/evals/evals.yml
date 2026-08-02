@@ -1,0 +1,23 @@
+skill_name: glue-find-tables
+evals:
+- case: find-table-limit
+  setup: |-
+    setup_glue_catalog(
+      database_name='test_db',
+      table_name='writer_profiles',
+      columns=[
+        {'Name': 'writer_id',  'Type': 'string'},
+        {'Name': 'profile_name', 'Type': 'string'}
+      ]
+    )
+  user_prompt: |-
+    Where is the writer_profiles table located?
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-find-tables/scripts/find_glue_tables.py
+  expected_output: |-
+    assert "writer_profiles" in output
+    assert "test_db" in output
+  files: []

@@ -1,0 +1,288 @@
+# Reviewer Effort Tiers
+
+## Purpose
+
+This document is the canonical taxonomy for reviewer-agent reasoning
+effort across the three families wired into the repo's Dual-Model and
+Cross-Family Review gates: Anthropic Claude (`code-review*`), OpenAI
+Codex (`codex-reviewer*`), and Google Gemini (`gemini-reviewer*`).
+
+Epic 1 (REVIEWER-EFFORT-001) normalized effort-tier semantics for the
+three reviewer-agent families above. Epic 2 extends the same taxonomy
+to the remaining non-reviewer agent families: `-xhigh` variants now
+ship for `deep-researcher`, `planner`, `qa-standards`, `tdd-red`,
+`tdd-green`, `tdd-refactor`, and `general-purpose`. The `explore`
+family uses `-high` only (its `fast-search` model tier does not pair
+meaningfully with `-xhigh`/`-max` reasoning-budget knobs;
+`deep-researcher-{xhigh,max}` covers the deeper-research need). Some
+non-reviewer agents still lack `-max` variants — see the per-family
+columns in the Cross-Family Mapping table below for current coverage.
+
+## Canonical 4-Level Ladder
+
+The ladder below is the source of truth for the `EFFORT` env var
+threaded through the Taskfile CLI_ARGS pipeline into each reviewer's
+wrapper script. The reviewer floor is HIGH internal reasoning;
+`low` and `minimal` are rejected by the wrapper.
+
+| Level | `EFFORT` value | Scope | Model Tier |
+|---|---|---|---|
+| medium (standard) | `medium` | default for all reviewers | Sonnet 4.6 / Flash / gpt-5.3-codex |
+| high | `high` | plan reviews, architecture audits | Opus 4.7 / Pro / gpt-5.4 |
+| xhigh | `xhigh` | very deep diff/plan reviews — Opus 4.7 only | Opus 4.7 @ xhigh |
+| max | `max` | frontier reservation, exceptional cases | Opus 4.7 @ max |
+
+## Cross-Family Mapping
+
+The following table maps each `EFFORT` value to the corresponding
+model selection per reviewer family. Columns that show a ceiling
+collision indicate the family's upstream enum does not expose a
+distinct tier at that level — the wrapper collapses to the highest
+available tier at composition time.
+
+**Where the collapse happens**: the collapse is applied inside each
+family's wrapper script (`scripts/agent-cli/<family>-review.sh`) at
+CLI_ARGS → env-var marshalling time — *not* at bridge-agent-body
+composition time, and *not* at runtime inside the reviewer CLI. The
+bridge agent bodies (`.claude/agents/<family>-reviewer-{high,xhigh,max}.md`)
+declare the caller's intent (`effort: max`) and the wrapper translates
+that into the best available upstream tier. This means an Opus `max`
+caller always gets Opus at `max`, but a Gemini `max` caller receives
+the same `gemini-3.1-pro-high` binding as a Gemini `xhigh` caller; the
+bridge bodies link back to this table so reviewers understand the
+translation without inspecting the wrapper.
+
+| `EFFORT` | Claude `code-review` | Codex (model + reasoning) | Gemini (`-m <alias>`) |
+|---|---|---|---|
+| medium | Sonnet `high` | `gpt-5.3-codex` + `high` | `<tier-sn>-high` |
+| high | Opus `high` | `gpt-5.4` + `high` (MODEL override) | `gemini-3.1-pro-high` |
+| xhigh | Opus `xhigh` | `gpt-5.4` + `xhigh` | `gemini-3.1-pro-high` (ceiling collision) |
+| max | Opus `max` | `gpt-5.4` + `xhigh` (ceiling collision) | `gemini-3.1-pro-high` (ceiling collision) |
+
+> **Reviewers run at HIGH internal reasoning minimum.** `EFFORT=low` is
+> rejected by both bridge wrappers and has no Claude-native variant —
+> LOW is a false economy for review quality. MEDIUM is the floor for
+> reviewers; if a caller wants cheaper execution, they should pick a
+> lower model tier (Flash / gpt-5.3-codex / Sonnet) at HIGH internal
+> setting rather than a high-capacity model at LOW internal.
+
+### Design Rationale — MEDIUM = lower model at HIGH internal setting
+
+The MEDIUM effort tier runs the lower-capability model at its MAX
+internal reasoning/thinking setting — it is not a "medium-everything"
+tier. This economizes on model cost (Sonnet/Flash/gpt-5.3-codex are
+substantially cheaper per token than Opus/Pro/gpt-5.4) while keeping
+reviews thorough. HIGH+ tiers elevate the model itself, not the
+internal reasoning level — from HIGH onwards, the internal setting
+stays at its maximum (collapsing at the family's ceiling for xhigh
+and max).
+
+## Model-Tier and Effort-Tier Binding
+
+`medium` effort pins to the standard reviewer model per family at its
+MAX internal setting — Sonnet 4.6 at `high` reasoning on Claude,
+`gemini-3-flash-high` on Gemini (Flash tier at HIGH thinking), and
+`gpt-5.3-codex` at `high` reasoning on Codex. This is the baseline
+gate posture for routine code review (see the **Design Rationale**
+note above the Cross-Family Mapping table).
+
+`high`, `xhigh`, and `max` all require the deep-reasoning model per
+family: Opus 4.7 on Claude, `gemini-3.1-pro-preview` on Gemini, and
+`gpt-5.4` on Codex. Pairing a deep-effort tier with the standard
+reviewer model is a configuration error — the wrapper enforces the
+mapping via the customAliases (Gemini) and `-c model_reasoning_effort`
+override (Codex); Claude variants are pinned via `model_tier:
+high-reasoning` in the agent frontmatter.
+
+## Fallback Chain
+
+When the HIGH-tier model (Opus 4.7 / Pro / gpt-5.4) returns HTTP
+429 (rate limit / quota) or 503 (service unavailable), reviewer
+wrappers automatically retry once with the MEDIUM tier model at HIGH
+internal reasoning/thinking. This preserves review quality while
+degrading gracefully under capacity pressure.
+
+### Decision Tree
+
+```text
+HIGH-tier invocation (EFFORT in {high,xhigh,max} or MODEL override = HIGH)
+    │
+    ├─ success → done
+    │
+    └─ 429 or 503
+          │
+          ├─ Codex (wrapper-level): MODEL=gpt-5.4 <e> → MODEL=gpt-5.3-codex + reasoning=high
+          │     │
+          │     ├─ success → done (NOTICE on stderr)
+          │     └─ failure → CODEX_ERROR (error_class=high_tier_fallback_failed)
+          │
+          ├─ Gemini (wrapper-level): gemini-3.1-pro-<e> → gemini-3-flash-high
+          │     │
+          │     ├─ success → done (NOTICE on stderr)
+          │     └─ failure → GEMINI_ERROR (no further chain; agent
+          │                  surfaces the failure to the orchestrator)
+          │
+          └─ Claude (platform-level): Opus 4.7 <e> → Sonnet 4.6 high
+                │
+                (Claude Code's built-in platform fallback mechanism is
+                expected to handle this degradation — no wrapper code.)
+```
+
+### Per-Family Behavior
+
+- **Codex** (`scripts/agent-cli/codex-review.sh`): only triggers when
+  the orchestrator passed a non-default `MODEL` (e.g., `gpt-5.4`). If
+  `MODEL` is unset (default `gpt-5.3-codex` from the TOML pin is
+  already in effect), the fallback is a no-op — retrying with the
+  same model is pointless. The transient-retry path still handles
+  same-model retries where appropriate.
+- **Gemini** (`scripts/agent-cli/gemini-review.sh`): triggers whenever
+  the resolved `-m` alias is a Pro-tier alias (`gemini-3.1-pro-*`)
+  and stderr indicates 429 or 503. The wrapper retries once with
+  `gemini-3-flash-high`; on second failure it emits `GEMINI_ERROR`.
+  Preview models (`-preview` aliases) require `GEMINI_API_KEY` auth
+  for stable capacity — see [docs/learnings.md](learnings.md). With
+  API-key auth on preview, 429/503 events are not observed in
+  practice, so the Pro→Flash retry is belt-and-suspenders.
+- **Claude** (`code-review*`): no wrapper-level fallback is
+  implemented. Claude Code's platform has a built-in Opus 4.7 →
+  Sonnet 4.6 degradation on capacity pressure; this is an expected
+  behavior contract, not repo code.
+
+The fallback is narrowly keyed on 429/503 (and rate-limit / quota /
+service-unavailable stderr markers). Auth failures (401/403), invalid
+arguments, and other terminal error classes do not trigger the
+fallback — they propagate as-is.
+
+## Frontier-Reservation Rule
+
+`xhigh` is the default for deep-effort reviews. The `-xhigh` variants
+(`code-review-xhigh`, `codex-reviewer-xhigh`, `gemini-reviewer-xhigh`)
+are the right choice for complex plan reviews, multi-file security
+audits, and cross-cutting architecture assessments.
+
+`max` is reserved for exceptional cases where `-xhigh` has
+demonstrably failed — for example, a rework review after a fresh
+BLOCKED verdict from `-xhigh` on the same artifact, or a high-stakes
+architectural decision where the Orchestrator has explicit evidence
+that `-xhigh` left critical ambiguity unresolved. Agents should
+default to `-xhigh` and only escalate to `-max` on explicit
+re-invocation. Treating `max` as the default erases the signal that
+`xhigh` provides and wastes frontier capacity on ordinary reviews.
+
+## TOML-Pin vs. CLI-Override Precedence
+
+`.codex/config.toml` pins `model_reasoning_effort = "high"` under
+`[profiles.reviewer]` as the baseline (Req-001). This value applies
+when the wrapper is invoked without an `EFFORT` arg, so even the bare
+invocation gets HIGH internal reasoning — consistent with the rule
+that the MEDIUM tier is "lower model at HIGH internal reasoning", not
+"medium-everything".
+
+When the wrapper is invoked with `EFFORT=<value>`, it constructs a
+CLI override:
+
+```text
+-c profiles.reviewer.model_reasoning_effort=<EFFORT>
+```
+
+Codex's `-c` semantics dictate that CLI overrides take precedence
+over TOML pins (Req-003). A sample invocation threading a `high`
+override:
+
+```bash
+codex exec -p reviewer \
+  -c profiles.reviewer.model_reasoning_effort=high \
+  review --base main
+```
+
+The TOML pin remains the baseline for callers that do not set
+`EFFORT`; the pin is not removed when a CLI override is in effect.
+
+## Cross-Family Asymmetry
+
+Claude's `xhigh` tier reports a substantially larger thinking budget
+than the peer `HIGH` tiers exposed by Codex and Gemini at the time
+of this writing. The underlying numbers are not reproduced here
+because they are expected to shift with every upstream release, and
+are best re-verified against current vendor documentation rather than
+captured as repo artifacts.
+The practical consequence is that a bridge reviewer running at
+`-xhigh` or `-max` produces a strictly shallower review than a
+Claude-native reviewer at the equivalent tier — not just "one tier
+step" less.
+
+**Encoding in the merge function.** The orchestrator applies the
+Cross-Family Asymmetry rule via the merge function in
+[`scripts/orchestrator/envelope_merge.py`](../scripts/orchestrator/envelope_merge.py);
+see [`docs/reviewer_envelope.md`](reviewer_envelope.md) §5 for the
+canonical algorithm. The merge function is **faithful** to the
+"signal to investigate, not automatic veto" guidance below: at
+`gate_effort_tier` of `xhigh` or `max`, when all claude-native
+envelopes APPROVE and at least one bridge envelope returns
+`RETURN_TO_WORKER` with critical/significant blocking findings, the
+gate result is `APPROVE` with a `cross_family_dissent` audit
+artifact attached — **not a HALT** (B-1 R2). The orchestrator MUST
+checkpoint the dissent to the Execution Ledger so operators can
+investigate post-hoc, but the gate does not block.
+
+The bridge `HALT_FOR_OPERATOR` next-action is **not** softened by
+this rule — operator-auth boundaries always halt the gate via merge
+Rule 1, regardless of agent_family (B-5 R2). The
+Frontier-Reservation Rule below is encoded in
+`envelope_merge.py` Rule 4 (B-4 R2): a reviewer that recommends
+`max` is capped to `xhigh` when the prior round did not run at
+`xhigh`, preserving the planner's intended escalation cadence.
+
+This is a present-state asymmetry, not a permanent structural limit.
+Future OpenAI and Google releases are expected to introduce matching
+effort tiers as the upstream APIs stabilize. The repo's taxonomy is
+designed to absorb those additions without renaming the `EFFORT` enum
+— the cross-family mapping table above will gain new rows or lose
+ceiling-collision notes as upstream tiers expand.
+
+Orchestrator guidance: at `-xhigh` and `-max`, treat the
+Claude-native reviewer's verdict as load-bearing. Bridge reviewers
+serve as cross-family sanity checks — a diverging verdict is a
+signal to investigate, not an automatic veto. Re-evaluate this
+posture on every Codex or Gemini release that changes the tier
+enums; update this section when the asymmetry narrows.
+
+## Known limitations (Epic 1 fixes)
+
+- **codex-reviewer cannot review plans without `PROMPT_FILE`**
+  (Risk-004). Codex's `exec review --base main` short-circuits on an
+  empty diff, which is the state for plan or spec reviews (a plan
+  lives in the working tree but is typically gitignored, and
+  `--base` inspects the git diff, not the file itself). Epic 1
+  Wave 1 ships Req-004 — the `PROMPT_FILE` env var on
+  `scripts/agent-cli/codex-review.sh` — which accepts a
+  `tmp/`-scoped prompt file (with path sanitization per Req-016)
+  and pipes it onto `codex exec`'s stdin. This re-enables
+  codex-reviewer for plan and spec review starting Epic 2.
+
+## Invocation Quick Reference
+
+Three canonical invocations, one per family, at `-xhigh`:
+
+```text
+task agent:code-review-xhigh     # Claude native
+task agent:review:codex:local -- ROUND=1 EFFORT=xhigh REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+task agent:review:gemini:local -- ROUND=1 EFFORT=xhigh GEMINI_MODEL=gemini-3.1-pro-preview REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+```
+
+For the full bridge-reviewer invocation contract (pre-flight, session
+UUID, prompt construction, exit artifacts), see
+[.claude/agents/codex-reviewer.md](../.claude/agents/codex-reviewer.md)
+and [.claude/agents/gemini-reviewer.md](../.claude/agents/gemini-reviewer.md).
+
+## Related Documents
+
+- [docs/verification_protocol.md](verification_protocol.md) —
+  Cross-Family Review Extension gate behavior.
+- [.claude/agents/code-review.md](../.claude/agents/code-review.md) —
+  Claude-native reviewer base agent.
+- [.claude/agents/codex-reviewer.md](../.claude/agents/codex-reviewer.md) —
+  Codex bridge reviewer agent.
+- [.claude/agents/gemini-reviewer.md](../.claude/agents/gemini-reviewer.md) —
+  Gemini bridge reviewer agent.

@@ -1,0 +1,192 @@
+name: Evals and Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  test-src-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Pinned go-task release with checksum verification, in preference to a
+      # third-party setup action. Stronger than the uv step below: the checksum
+      # covers the release artifact itself, not just an installer script, so the
+      # binary is content-addressed.
+      # Regenerate on version bump:
+      #   curl -sSL https://github.com/go-task/task/releases/download/<tag>/task_checksums.txt \
+      #     | grep linux_amd64.tar.gz
+      - name: Install Task
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/task.tar.gz" \
+            "https://github.com/go-task/task/releases/download/$TASK_VERSION/task_linux_amd64.tar.gz"
+          echo "$TASK_CHECKSUM  $RUNNER_TEMP/task.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/task.tar.gz" -C "$RUNNER_TEMP" task
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/task" "$HOME/.local/bin/task"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          TASK_VERSION: "v3.52.0"
+          TASK_CHECKSUM: "02c679ffae53dca791804847d78b31731615894e292948397c971c87ac9e95bd"
+
+      - name: Verify Task is available
+        run: task --version
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Package Tests
+        run: task test:brownfield_ai:changed
+
+      - name: Publish Package Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-results-brownfield-ai
+          path: tmp/junit_brownfield_ai.xml
+
+      # uv is required by task test:container-integration (via deps: [setup]),
+      # which ci/test_changed.sh invokes for agent-cli path changes. Pinned
+      # installer with checksum verification — mirrors the test-skills job
+      # (same trust boundary caveat: checksum verifies installer, binary
+      # comes from GitHub Releases via version tag).
+      - name: Install uv
+        run: |
+          curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" \
+            -o "$RUNNER_TEMP/uv-install.sh"
+          echo "$UV_CHECKSUM  $RUNNER_TEMP/uv-install.sh" | sha256sum --check
+          sh "$RUNNER_TEMP/uv-install.sh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          UV_VERSION: "0.6.14"
+          # Regenerate: curl -LsSf "https://astral.sh/uv/0.6.14/install.sh" -o /tmp/uv.sh && sha256sum /tmp/uv.sh
+          UV_CHECKSUM: "de3669cd810357c33a9737c4ba4dc10f3c2ac9152ea5703438b06f942345b761"
+
+      - name: Run Script Tests
+        run: task test:scripts:changed
+
+      - name: Publish Script Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-results-scripts
+          path: tmp/junit_scripts.xml
+
+      - name: Publish Container Integration Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-results-container-integration
+          path: tmp/junit_container_integration.xml
+          # PRs that do not touch agent-cli paths skip this target; the
+          # junit file is absent and upload-artifact@v4 would log a warning.
+          if-no-files-found: ignore
+
+  test-skills:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT_TOKEN }}
+    steps:
+      # When neither ANTHROPIC_API_KEY nor COPILOT_GITHUB_TOKEN is set, every
+      # subsequent step short-circuits via `steps.creds.outputs.run_skills`.
+      # The job then reports `success` rather than `skipped` because the gate
+      # lives at the step level, not the job level. This is intentional: the
+      # `test-skills` job MUST NOT be a required status check when agent
+      # credentials are unavailable (e.g., external PRs, dependabot). If you
+      # need branch protection to distinguish "ran and passed" from "skipped",
+      # promote the creds check to a separate `preflight` job and add
+      # `needs: preflight` + `if: needs.preflight.outputs.run_skills == 'true'`.
+      - name: Check Agent Credentials
+        id: creds
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$COPILOT_GITHUB_TOKEN" ]; then
+            echo "run_skills=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_skills=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No agent API keys configured. Skipping skill evals."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.run_skills == 'true'
+        with:
+          fetch-depth: 0
+
+      # Same pinned-release install as the test-src-scripts job; keep the
+      # version and checksum in sync across all three call sites.
+      - name: Install Task
+        if: steps.creds.outputs.run_skills == 'true'
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/task.tar.gz" \
+            "https://github.com/go-task/task/releases/download/$TASK_VERSION/task_linux_amd64.tar.gz"
+          echo "$TASK_CHECKSUM  $RUNNER_TEMP/task.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/task.tar.gz" -C "$RUNNER_TEMP" task
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/task" "$HOME/.local/bin/task"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          TASK_VERSION: "v3.52.0"
+          TASK_CHECKSUM: "02c679ffae53dca791804847d78b31731615894e292948397c971c87ac9e95bd"
+
+      - name: Verify Task is available
+        if: steps.creds.outputs.run_skills == 'true'
+        run: task --version
+
+      - name: Set up Python
+        if: steps.creds.outputs.run_skills == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        if: steps.creds.outputs.run_skills == 'true'
+        run: |
+          # Pinned Astral installer with checksum verification, in preference
+          # to a third-party setup action. Trust boundary: the checksum
+          # verifies the installer script only; the binary it downloads is
+          # fetched by version tag from GitHub Releases and is NOT
+          # content-addressed. This is weaker than pip's wheel-hash
+          # verification but stronger than unpinned curl-pipe-sh.
+          curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" \
+            -o "$RUNNER_TEMP/uv-install.sh"
+          echo "$UV_CHECKSUM  $RUNNER_TEMP/uv-install.sh" | sha256sum --check
+          sh "$RUNNER_TEMP/uv-install.sh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          UV_VERSION: "0.6.14"
+          # Regenerate: curl -LsSf "https://astral.sh/uv/0.6.14/install.sh" -o /tmp/uv.sh && sha256sum /tmp/uv.sh
+          UV_CHECKSUM: "de3669cd810357c33a9737c4ba4dc10f3c2ac9152ea5703438b06f942345b761"
+
+      - name: Set up test venv
+        if: steps.creds.outputs.run_skills == 'true'
+        run: task test:setup
+
+      - name: Install Claude Code CLI
+        if: steps.creds.outputs.run_skills == 'true' && env.ANTHROPIC_API_KEY != ''
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install Copilot CLI
+        if: steps.creds.outputs.run_skills == 'true' && env.COPILOT_GITHUB_TOKEN != ''
+        run: npm install -g @github/copilot
+
+      - name: Run Changed Skill Evals
+        if: steps.creds.outputs.run_skills == 'true'
+        run: task test:skills:changed
+
+      - name: Publish Skill Eval Results
+        uses: actions/upload-artifact@v4
+        if: always() && steps.creds.outputs.run_skills == 'true'
+        with:
+          name: pytest-results-skills
+          path: tmp/junit_skills.xml

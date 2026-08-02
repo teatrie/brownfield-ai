@@ -1,0 +1,8 @@
+flowchart TD
+    Start([Feature Request]) --> Q1{Hard architectural<br/>prerequisite?}
+    Q1 -->|Yes| Q2{Prerequisite needed<br/>by ALL subsequent work?}
+    Q1 -->|No| Q3{Spans multiple<br/>components?}
+    Q2 -->|Yes| Hybrid[Hybrid Mode<br/>Wave 0: horizontal prerequisite<br/>Wave 1+: vertical slices]
+    Q2 -->|No| Vertical1[Vertical Mode<br/>Independent slices]
+    Q3 -->|Yes| Vertical2[Vertical Mode<br/>One slice per component behavior]
+    Q3 -->|No| Horizontal[Horizontal Mode<br/>Single component, layer by layer]

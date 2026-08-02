@@ -1,0 +1,34 @@
+version: '3'
+
+tasks:
+  adhoc:
+    desc: >-
+      Run an ad-hoc Python script from tmp/ via python-cli.
+      Defence-in-depth: Layer 0 (no settings.json allow rule — Claude Code
+      always prompts for Bash approval per Req-013), Layer 1
+      (preconditions below enforce tmp/ prefix, .py suffix, no path
+      traversal, no -c/-m flags), Layer 2 (python-security-gate inside
+      the container validates the gate-pass token before exec). Any
+      request to bypass the prompt layer (e.g., broadening the allow
+      list) must also adjust the Layer 1/2 gates to preserve the
+      multi-layer posture.
+      Usage: task run:adhoc -- tmp/script.py [args]
+    preconditions:
+      - sh: >-
+          echo "{{.CLI_ARGS}}" | grep -qE '^tmp/.*\.py'
+        msg: "Path must start with tmp/ and end in .py"
+      - sh: >-
+          echo "{{.CLI_ARGS}}" | grep -qvE '\.\.'
+        msg: "Path traversal (..) is not allowed"
+      - sh: >-
+          echo "{{.CLI_ARGS}}" | grep -qvE '(^|\s)(-c|-m)\b'
+        msg: "Flags -c and -m are not allowed"
+    cmds:
+      - >-
+        mkdir -p tmp &&
+        echo "GATE_PASS=$(date +%s):adhoc" > tmp/.python-gate-pass
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3 {{.CLI_ARGS}}

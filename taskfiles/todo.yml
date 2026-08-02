@@ -1,0 +1,118 @@
+version: '3'
+
+vars:
+  TODO_SCRIPT: >-
+    workflows/agent-memory/skills/execution-ledger/scripts/todo_cli.py
+
+tasks:
+  add:
+    desc: Add a new TODO
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} add {{.CLI_ARGS}}
+
+  add-batch:
+    desc: Add TODOs in batch from a JSON file
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} add-batch {{.CLI_ARGS}}
+
+  list:
+    desc: List TODOs with filters
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} list- {{.CLI_ARGS}}
+
+  done:
+    desc: Mark a TODO as done
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} done {{.CLI_ARGS}}
+
+  assign:
+    desc: Assign a TODO to an epic
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} assign {{.CLI_ARGS}}
+
+  update:
+    desc: Update TODO fields
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} update {{.CLI_ARGS}}
+
+  add-category:
+    desc: Add a new TODO category
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} add-category {{.CLI_ARGS}}
+
+  list-categories:
+    desc: List available TODO categories
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - ./docker/shared/python-security-gate.sh run {{.TODO_SCRIPT}}
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -e HOST_PWD=$PWD python-cli python3
+        {{.TODO_SCRIPT}} list-categories {{.CLI_ARGS}}

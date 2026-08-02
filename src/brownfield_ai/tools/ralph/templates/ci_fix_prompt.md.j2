@@ -1,0 +1,36 @@
+You are running in a headless non-interactive session. CI=true.
+
+Epic: {{ epic_id }} | CI Fix Attempt: {{ attempt }} of {{ max_attempts }}
+
+## Repo Branches
+{% for repo, branch in branches.items() %}
+- `{{ repo }}`: `{{ branch }}`
+{% endfor %}
+
+## PR URLs
+{% for repo, url in pr_urls.items() %}
+- `{{ repo }}`: {{ url }}
+{% endfor %}
+
+## Failing CI Checks
+{% for f in failures %}
+- **{{ f.name }}** ({{ f.repo }}): {{ f.log_url }}
+{% endfor %}
+
+{% if escalation_floor %}
+## Escalation Floor
+Minimum tier: {{ escalation_floor }}
+{% endif %}
+
+## Instructions
+1. Pull CI logs for the failing checks above using `task gh:pr -- checks`
+2. Diagnose the failure root cause
+3. Fix the code
+4. Run `task lint:staged` and `task test:staged` to verify
+5. Commit and push fixes
+6. Exit — ralph will re-poll CI
+
+## Headless Signal Propagation (MANDATORY)
+When delegating to subagents or containers, propagate the headless signal:
+- Subagents: include "You are running in a headless non-interactive session"
+- Containers: pass `--env CI=true`

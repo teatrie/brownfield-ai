@@ -1,0 +1,22 @@
+resource "aws_dms_replication_task" "{{ task_name }}" {
+  replication_task_id          = "{{ task_name }}"
+  migration_type               = "full-load-and-cdc"
+  replication_instance_arn     = aws_dms_replication_instance.{{ replication_instance }}.replication_instance_arn
+  source_endpoint_arn          = {{ source_endpoint_ref }}
+  target_endpoint_arn          = {{ target_endpoint_ref }}
+  table_mappings               = jsonencode({{ table_mappings_rules | tojson }})
+
+  tags = {
+    Name = "{{ tags_name }}"
+  }
+
+  replication_task_settings = jsonencode({
+    ErrorBehavior = {
+      ApplyErrorDeletePolicy = "LOG_ERROR"
+    }
+  })
+}
+
+data "aws_secretsmanager_secret" "{{ task_name }}" {
+  arn = {{ secret_data_source }}
+}

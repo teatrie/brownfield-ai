@@ -1,0 +1,135 @@
+version: '3'
+
+tasks:
+  preflight:copilot:
+    desc: Run cross-family agent CLI pre-flight checks (copilot family).
+    cmds:
+      - >-
+        docker compose run --rm --user agent
+        -e COPILOT_GITHUB_TOKEN
+        -e GEMINI_API_KEY
+        -e OPENAI_API_KEY
+        agent-cli preflight
+
+  review:copilot:
+    desc: >-
+      Execute copilot review inside agent-cli container.
+
+      Caller values via CLI_ARGS (KEY=value after `--`):
+        task agent:review:copilot -- ROUND=3 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+      Allowlisted keys: ROUND, REVIEW_TYPE, DIFF_FILE.
+    cmds:
+      - >-
+        scripts/agent-cli/cli-args-to-env.sh
+        scripts/agent-cli/copilot-review-container.sh {{.CLI_ARGS}}
+
+  review:gemini:
+    desc: >-
+      Execute gemini review inside agent-cli container.
+
+      Caller values via CLI_ARGS (KEY=value after `--`):
+        task agent:review:gemini -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt GEMINI_MODEL=gemini-3.1-pro-high
+      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
+      REVIEW_TYPE, DIFF_FILE, GEMINI_MODEL, GEMINI_TIMEOUT.
+
+      The shim (cli-args-to-env.sh) validates each token against a key
+      allowlist and value-character allowlist before exec'ing the target
+      wrapper with the values injected via `env`. This closes the
+      `$(...)` injection surface that the previous `env:` map guarded
+      against — values that contain shell metacharacters or expansion
+      tokens are rejected. The wrapper script (gemini-review-container.sh)
+      owns the docker compose invocation so the shim target is always
+      a single-word script path.
+    cmds:
+      - >-
+        scripts/agent-cli/cli-args-to-env.sh
+        scripts/agent-cli/gemini-review-container.sh {{.CLI_ARGS}}
+
+  review:codex:
+    desc: >-
+      Execute codex review inside agent-cli container.
+
+      Caller values via CLI_ARGS (KEY=value after `--`):
+        task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
+      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
+      MODEL, REVIEW_TYPE, DIFF_FILE, REVIEW_MODE. Pass REVIEW_MODE=fixture
+      for fixture-driven smokes where DIFF_FILE does not match the
+      working-tree git diff (TODO-0114); default is branch.
+    cmds:
+      - >-
+        scripts/agent-cli/cli-args-to-env.sh
+        scripts/agent-cli/codex-review-container.sh {{.CLI_ARGS}}
+
+  test:
+    desc: Build agent-cli image and verify all CLIs respond
+    cmds:
+      - docker compose build agent-cli
+      - >-
+        docker compose run --rm --user agent
+        agent-cli preflight
+
+  preflight:gemini:
+    desc: >-
+      Tiered gemini pre-flight (local OAuth -> local API key -> container).
+      Runs on host — local OAuth credentials (~/.gemini/oauth_creds.json)
+      cannot be accessed from inside containers (CLAUDE.md §11 exception,
+      analogous to test:skills OAuth locality constraint).
+    cmds:
+      - scripts/agent-cli/gemini-preflight-tiered.sh
+
+  review:gemini:local:
+    desc: >-
+      Execute gemini review on host (local OAuth or API key).
+      Host execution — see preflight:gemini desc for §11 exemption.
+
+      Caller values via CLI_ARGS (KEY=value after `--`):
+        task agent:review:gemini:local -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt GEMINI_MODEL=gemini-3.1-pro-high
+      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
+      REVIEW_TYPE, DIFF_FILE, GEMINI_MODEL, GEMINI_TIMEOUT.
+    env:
+      GEMINI_EXECUTION_CONTEXT: 'host'
+    cmds:
+      - >-
+        scripts/agent-cli/cli-args-to-env.sh
+        scripts/agent-cli/gemini-review.sh {{.CLI_ARGS}}
+
+  preflight:codex:
+    desc: >-
+      Tiered codex pre-flight (local OAuth -> local API key -> container).
+      Runs on host — local OAuth credentials (~/.codex/auth.json)
+      cannot be accessed from inside containers (CLAUDE.md §11 exception,
+      analogous to test:skills OAuth locality constraint).
+    cmds:
+      - scripts/agent-cli/codex-preflight-tiered.sh
+
+  review:codex:local:
+    desc: >-
+      Execute codex review on host (local OAuth or API key).
+      Host execution — see preflight:codex desc for §11 exemption.
+
+      Caller values via CLI_ARGS (KEY=value after `--`):
+        task agent:review:codex:local -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
+      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
+      MODEL, REVIEW_TYPE, DIFF_FILE, REVIEW_MODE. Pass REVIEW_MODE=fixture
+      for fixture-driven smokes where DIFF_FILE does not match the
+      working-tree git diff (TODO-0114); default is branch.
+    env:
+      CODEX_EXECUTION_CONTEXT: 'host'
+    cmds:
+      - >-
+        scripts/agent-cli/cli-args-to-env.sh
+        scripts/agent-cli/codex-review.sh {{.CLI_ARGS}}
+
+  setup:codex-reviewer:
+    desc: Set up Codex CLI reviewer profile (~/.codex/config.toml)
+    cmds:
+      - ./scripts/setup_codex_reviewer.sh
+
+  clean:
+    desc: Clean bridge-agent review artifacts for this workspace
+    vars:
+      WORKSPACE: 'brownfield-ai'
+    cmds:
+      - rm -f ~/.brownfield-ai/agent-review/{{.WORKSPACE}}-*
+      - rm -f tmp/codex-combined-prompt-*.txt
+      - rm -f tmp/*-subject-sanitized-*.txt

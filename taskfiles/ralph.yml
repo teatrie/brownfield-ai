@@ -1,0 +1,32 @@
+version: '3'
+
+env:
+  PYTHONPATH: "{{.ROOT_DIR}}:{{.ROOT_DIR}}/src"
+
+tasks:
+  setup:
+    desc: Create .venv/ with ralph dependencies
+    cmds:
+      - python3 -m venv .venv
+      - .venv/bin/pip install -r requirements.txt
+    status:
+      - test -f .venv/bin/python
+
+  run:
+    desc: Run ralph headless epic runner
+    deps: [setup]
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    cmds:
+      - .venv/bin/python scripts/ledger/ralph_runner.py {{.CLI_ARGS}}
+
+  run:log:
+    desc: Run ralph with timestamped log output to tmp/
+    deps: [setup]
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    set: [pipefail]
+    cmds:
+      - .venv/bin/python scripts/ledger/ralph_runner.py {{.CLI_ARGS}} 2>&1 | tee tmp/ralph_run_$(date +%Y%m%dT%H%M%S).log

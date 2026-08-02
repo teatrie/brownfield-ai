@@ -1,0 +1,56 @@
+version: '3'
+
+tasks:
+  search:
+    desc: Run gh search inside repo-cli
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    cmds:
+      - >-
+        docker compose run --rm -e GH_TOKEN repo-cli
+        gh search code {{.CLI_ARGS}}
+
+  api:
+    desc: Run gh api inside repo-cli
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    cmds:
+      - >-
+        docker compose run --rm -e GH_TOKEN repo-cli
+        gh api {{.CLI_ARGS}}
+
+  repo:
+    desc: Run gh repo commands inside repo-cli (clone writes to /app/repos/)
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    cmds:
+      - >-
+        docker compose run --rm -e GH_TOKEN -w /app/repos repo-cli
+        gh repo {{.CLI_ARGS}}
+
+  pr:
+    desc: >-
+      Run gh pr commands inside repo-cli.
+      Usage: task gh:pr -- create|view|edit|checks|merge [args]
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    cmds:
+      - >-
+        docker compose run --rm -e GH_TOKEN repo-cli
+        gh pr {{.CLI_ARGS}}
+
+  sparse-clone:
+    desc: >-
+      Sparse-clone a repo into repos/ with only the specified path(s).
+      Usage: task gh:sparse-clone -- <org/repo> <path/to/directory>
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    cmds:
+      - >-
+        docker compose run --rm -w /app/repos repo-cli
+        sparse-clone.sh {{.CLI_ARGS}}

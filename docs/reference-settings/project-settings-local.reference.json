@@ -1,0 +1,57 @@
+{
+  "_comment_1": "REFERENCE ONLY — adapt paths and domains to your project before copying to .claude/settings.local.json",
+  "_comment_2": "Permissions use a three-tier model: allow (auto-approved), deny (blocked), ask (prompted). Paths in neither allow nor deny trigger an interactive approval prompt — this is the 'ask' tier.",
+
+  "permissions": {
+    "deny": [
+      "Edit(.claude/settings.local.json)",
+      "Write(.claude/settings.local.json)"
+    ],
+    "_comment_bash_allow": "Bash allowlist uses permission-rule syntax (Bash(...)) — not tools.bash.allowList. The task * entry below auto-approves any `task <name>` invocation without prompting.",
+    "allow": [
+      "Bash(task *)",
+      "Edit(src/**)",
+      "Edit(scripts/**)",
+      "Edit(tests/**)",
+      "Edit(docs/**)",
+      "Edit(services/**)",
+      "Edit(workflows/**)",
+      "Edit(ci/**)",
+      "Edit(repos/**)",
+      "Edit(tmp/**)",
+      "Edit(agent-review/**)",
+      "Edit(.claude/rules/**)",
+      "Edit(.claude/skills/**)",
+      "Edit(plan.md)",
+      "Edit(todo-plan.md)",
+      "Edit(README.md)",
+      "Write(src/**)",
+      "Write(scripts/**)",
+      "Write(tests/**)",
+      "Write(docs/**)",
+      "Write(services/**)",
+      "Write(workflows/**)",
+      "Write(ci/**)",
+      "Write(repos/**)",
+      "Write(tmp/**)",
+      "Write(agent-review/**)",
+      "Write(.claude/rules/**)",
+      "Write(.claude/skills/**)",
+      "Write(plan.md)",
+      "Write(todo-plan.md)",
+      "Write(~/.claude/projects/**)",
+      "Edit(~/.claude/projects/**)",
+      "NotebookEdit(docs/**)",
+      "NotebookEdit(repos/**)",
+      "NotebookEdit(tmp/**)"
+    ]
+  },
+
+  "_comment_3": "Paths intentionally omitted from both allow and deny (ask tier): Taskfile.yml, taskfiles/*, CLAUDE.md, AGENT.md, GEMINI.md, .github/**, tsconfig.json. These trigger an interactive prompt so the user can approve or reject case-by-case.",
+
+  "filesystem": {
+    "denyList": [
+      "**/tmp/.aws-credentials.env"
+    ]
+  }
+}

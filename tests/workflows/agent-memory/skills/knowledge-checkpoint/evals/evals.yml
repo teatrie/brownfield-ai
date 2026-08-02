@@ -1,0 +1,52 @@
+skill_name: knowledge-checkpoint
+evals:
+- case: parse-copilot-format
+  setup: |-
+    import json
+    os.makedirs('tmp', exist_ok=True)
+    events = [
+        {"type": "user.message", "timestamp": "2026-01-01T00:00:00Z",
+         "data": {"content": "hello"}},
+        {"type": "assistant.message", "timestamp": "2026-01-01T00:00:01Z",
+         "data": {"content": "hi", "toolRequests": [{"name": "Read"}]}}
+    ]
+    with open('tmp/test_chat.jsonl', 'w') as f:
+        for e in events:
+            f.write(json.dumps(e) + '\n')
+  user_prompt: >
+    Parse the conversation log at tmp/test_chat.jsonl and tell me
+    what format it is and how many chat entries it contains.
+  agent_prompt: >
+    Run the parse_events function from the knowledge_checkpoint.py
+    script directly (do NOT use Docker). Print the detected format
+    and the number of entries. Do NOT attempt to connect to ChromaDB.
+  expected_output: |-
+    assert "copilot" in output.lower()
+    assert "2" in output or "two" in output.lower()
+- case: parse-claude-code-format
+  setup: |-
+    import json
+    os.makedirs('tmp', exist_ok=True)
+    events = [
+        {"type": "user", "timestamp": "2026-01-01T00:00:00Z",
+         "message": {"role": "user",
+         "content": [{"type": "text", "text": "hello"}]}},
+        {"type": "assistant", "timestamp": "2026-01-01T00:00:01Z",
+         "message": {"role": "assistant",
+         "content": [{"type": "text", "text": "hi"}]}},
+        {"type": "progress", "timestamp": "2026-01-01T00:00:02Z",
+         "data": {"type": "hook_progress"}}
+    ]
+    with open('tmp/test_chat.jsonl', 'w') as f:
+        for e in events:
+            f.write(json.dumps(e) + '\n')
+  user_prompt: >
+    Parse the conversation log at tmp/test_chat.jsonl and tell me
+    what format it is and how many chat entries it contains.
+  agent_prompt: >
+    Run the parse_events function from the knowledge_checkpoint.py
+    script directly (do NOT use Docker). Print the detected format
+    and the number of entries. Do NOT attempt to connect to ChromaDB.
+  expected_output: |-
+    assert "claude" in output.lower()
+    assert "2" in output or "two" in output.lower()

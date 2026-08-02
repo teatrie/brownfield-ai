@@ -1,0 +1,98 @@
+version: '3'
+
+tasks:
+  start:
+    desc: Start the global ChromaDB instance (safe if already running)
+    cmds:
+      - mkdir -p ~/.brownfield-ai/chroma_data
+      - >-
+        docker ps -q --filter "name=global-chromadb" | grep -q .
+        && echo "ChromaDB is already running."
+        || docker compose -f docker-compose.chromadb.yml
+        -p brownfield-ai-global up -d
+
+  stop:
+    desc: Stop the global ChromaDB instance
+    cmds:
+      - >-
+        docker compose -f docker-compose.chromadb.yml
+        -p brownfield-ai-global down
+
+  status:
+    desc: Check if the global ChromaDB instance is running
+    cmds:
+      - docker ps --filter "name=global-chromadb"
+
+  collection:
+    desc: >-
+      Manage ChromaDB collections (add, query, list).
+      Usage: task chromadb:collection -- <subcommand> [args]
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh run
+        workflows/agent-memory/skills/knowledge-base/scripts/knowledge_base.py
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        workflows/agent-memory/skills/knowledge-base/scripts/knowledge_base.py
+        {{.CLI_ARGS}}
+
+  export:
+    desc: Export all ChromaDB collections to tmp/chroma_export.txt
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh run
+        workflows/agent-memory/skills/knowledge-export/scripts/knowledge_export.py
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        workflows/agent-memory/skills/knowledge-export/scripts/knowledge_export.py
+        {{.CLI_ARGS}}
+
+  import:
+    desc: >-
+      Import collections from a text file into ChromaDB.
+      Usage: task chromadb:import -- --input <file> [--tag key=value]
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh run
+        workflows/agent-memory/skills/knowledge-import/scripts/knowledge_import.py
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        workflows/agent-memory/skills/knowledge-import/scripts/knowledge_import.py
+        {{.CLI_ARGS}}
+
+  checkpoint:
+    desc: >-
+      Import a conversation log into ChromaDB chat_history collection.
+      Usage: task chromadb:checkpoint -- <path/to/chat_history.jsonl>
+    preconditions:
+      - sh: docker ps -q --filter "name=global-chromadb" | grep -q .
+        msg: "ChromaDB is not running. Run: task chromadb:start"
+    cmds:
+      - >-
+        ./docker/shared/python-security-gate.sh run
+        workflows/agent-memory/skills/knowledge-checkpoint/scripts/knowledge_checkpoint.py
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm --user agent
+        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        python-cli python3
+        workflows/agent-memory/skills/knowledge-checkpoint/scripts/knowledge_checkpoint.py
+        {{.CLI_ARGS}}

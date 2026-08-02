@@ -1,0 +1,31 @@
+globs: ["**/*.md"]
+config:
+  MD013: false          # Line length — too strict for documentation
+  MD033: false          # Inline HTML — needed for some patterns
+  MD041: false          # First line heading — not all docs start with h1
+  MD060: false          # Table column style — compact tables are fine
+  MD036: false          # Emphasis as heading — used in skill/agent docs
+  MD028: false          # Blank line inside blockquote — false positive on GFM callouts
+  MD046: false          # Code block style — repo uses both fenced and indented styles
+
+ignores:
+  # Git's own directory is never project documentation. It is not normally
+  # scanned, but a `git init` run under an `init.templateDir` copies that
+  # template's files — which can include Markdown — straight into `.git/`,
+  # which would otherwise fail this lint for reasons unrelated to the repo.
+  - ".git/**"
+  - "**/node_modules/**"
+  - ".venv/**"
+  - ".claude/projects/**"
+  - "**/third-party/**"
+  - "repos/**"
+  - "tmp/**"
+  - "worktrees/**"
+  - "plan.md"
+  - "todo-plan.md"
+  # Reviewer-envelope fixtures simulate raw reviewer-agent output for
+  # parser tests (B-3 R2 / B-4 R2 / Req-N08 detection cases). They
+  # intentionally include malformed JSON, hard tabs in whitespace-only
+  # bodies, and discriminator-token edge cases that are not project
+  # documentation and must not be normalized by markdownlint.
+  - "tests/fixtures/envelopes/**"

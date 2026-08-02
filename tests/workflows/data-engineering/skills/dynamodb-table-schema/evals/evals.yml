@@ -1,0 +1,71 @@
+skill_name: dynamodb-table-schema
+evals:
+- case: basic_success
+  setup: |-
+    setup_dynamodb_table(
+      table_name='users-table',
+      key_schema=[
+        {'AttributeName': 'user_id', 'KeyType': 'HASH'}, # Partition Key
+        {'AttributeName': 'created_at', 'KeyType': 'RANGE'} # Sort Key
+      ],
+      attribute_definitions=[
+        {'AttributeName': 'user_id', 'AttributeType': 'S'}, # String
+        {'AttributeName': 'created_at', 'AttributeType': 'N'} # Number
+      ]
+    )
+  user_prompt: Can you show me the schema for the DynamoDB table 'users-table' in 'us-east-1'?
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/dynamodb-table-schema/scripts/get_dynamodb_table_schema.py
+  expected_output: |-
+    assert "HASH" in output
+    assert "RANGE" in output
+    assert "user_id" in output
+    assert "created_at" in output
+  files: []
+- case: missing_resource
+  user_prompt: Fetch the schema for the DynamoDB table 'non-existent-table' in 'us-east-1'.
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/dynamodb-table-schema/scripts/get_dynamodb_table_schema.py
+  expected_output: |-
+    assert "not found" in output.lower() or "error" in output.lower()
+  files: []
+- case: invalid_arguments
+  user_prompt: Fetch the DynamoDB schema for table nonexistent_table_xyz.
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/dynamodb-table-schema/scripts/get_dynamodb_table_schema.py
+  expected_output: |-
+    assert "error" in output.lower() or "not found" in output.lower()
+  files: []
+- case: mermaid_format
+  setup: |-
+    setup_dynamodb_table(
+      table_name='users-table',
+      key_schema=[
+        {'AttributeName': 'user_id', 'KeyType': 'HASH'}, # Partition Key
+        {'AttributeName': 'created_at', 'KeyType': 'RANGE'} # Sort Key
+      ],
+      attribute_definitions=[
+        {'AttributeName': 'user_id', 'AttributeType': 'S'}, # String
+        {'AttributeName': 'created_at', 'AttributeType': 'N'} # Number (Timestamp)
+      ]
+    )
+  user_prompt: Can you show me the schema for the DynamoDB table 'users-table' in 'us-east-1' in mermaid format?
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/dynamodb-table-schema/scripts/get_dynamodb_table_schema.py
+  expected_output: |-
+    assert "erDiagram" in output
+    assert "PK" in output
+    assert "SK" in output
+  files: []

@@ -1,0 +1,17 @@
+version: '3'
+
+tasks:
+  python-cli:
+    desc: Start an interactive bash shell in the python-cli container
+    cmds:
+      - docker compose run --rm --entrypoint bash python-cli
+
+  pytest-cli:
+    desc: Start an interactive bash shell in the pytest-cli container
+    cmds:
+      - docker compose run --rm --entrypoint bash pytest-cli
+
+  chromadb:
+    desc: Start an interactive bash shell in the chromadb container
+    cmds:
+      - docker compose run --rm --entrypoint bash chromadb

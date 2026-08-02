@@ -1,0 +1,53 @@
+skill_name: athena-query-analysis
+evals:
+- case: optimize-query-partitions
+  setup: |-
+    setup_glue_catalog(
+      database_name='datalake',
+      table_name='events',
+      columns=[
+        {'Name': 'event_id', 'Type': 'string'},
+        {'Name': 'event_type', 'Type': 'string'}
+      ],
+      partition_keys=[
+        {'Name': 'year', 'Type': 'string'},
+        {'Name': 'month', 'Type': 'string'}
+      ]
+    )
+  user_prompt: |
+    Can you analyze and optimize this Athena query: SELECT * FROM datalake.events WHERE year='2023'
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+
+    Use the athena-query-analysis skill.
+  expected_output: |-
+    assert "partition" in output.lower() and "month" in output.lower()
+  files: []
+- case: schema-correctness-check
+  setup: |-
+    setup_glue_catalog(
+      database_name='datalake',
+      table_name='events',
+      columns=[
+        {'Name': 'event_id', 'Type': 'string'},
+        {'Name': 'event_type', 'Type': 'string'}
+      ],
+      partition_keys=[
+        {'Name': 'year', 'Type': 'string'}
+      ]
+    )
+  user_prompt: |
+    Please review this Athena query for syntax and schema correctness: SELECT nonexistent_col FROM datalake.events
+  agent_prompt: |-
+    AWS credentials and endpoint are pre-configured in the environment.
+    Do NOT set AWS env vars manually. Do NOT use docker compose or
+    aws-vault. Run the python script directly:
+    python3 workflows/data-engineering/skills/glue-catalog-schema/scripts/get_glue_catalog_schema.py
+
+    Use athena-query-analysis to check the query's static correctness.
+  expected_output: |-
+    assert "column" in output.lower() or "error" in output.lower() or "nonexistent_col" in output.lower()
+  files: []

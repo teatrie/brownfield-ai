@@ -1,0 +1,142 @@
+version: '3'
+
+tasks:
+  push:
+    desc: >-
+      Push current branch via repo-cli.
+      Usage: task git:push [-- <extra-args>]
+    vars:
+      BRANCH:
+        sh: git rev-parse --abbrev-ref HEAD
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git push -u origin "{{.BRANCH}}" {{.CLI_ARGS}}
+
+  commit:
+    desc: >-
+      Commit staged changes via repo-cli (injects host git identity).
+      Usage: task git:commit -- -m "message"
+    vars:
+      GIT_NAME:
+        sh: git config user.name
+      GIT_EMAIL:
+        sh: git config user.email
+    preconditions:
+      - sh: test -n "{{.GIT_NAME}}"
+        msg: "git user.name is not set. Run: git config user.name \"Your Name\""
+      - sh: test -n "{{.GIT_EMAIL}}"
+        msg: "git user.email is not set. Run: git config user.email \"you@example.com\""
+    cmds:
+      - >-
+        docker compose run --rm
+        -e GIT_AUTHOR_NAME="{{.GIT_NAME}}"
+        -e GIT_AUTHOR_EMAIL="{{.GIT_EMAIL}}"
+        -e GIT_COMMITTER_NAME="{{.GIT_NAME}}"
+        -e GIT_COMMITTER_EMAIL="{{.GIT_EMAIL}}"
+        repo-cli git commit {{.CLI_ARGS}}
+
+  rebase:
+    desc: >-
+      Rebase current branch via repo-cli (injects host git identity).
+      Usage: task git:rebase -- <upstream> [<args>]
+    vars:
+      GIT_NAME:
+        sh: git config user.name
+      GIT_EMAIL:
+        sh: git config user.email
+    preconditions:
+      - sh: test -n "{{.GIT_NAME}}"
+        msg: "git user.name is not set. Run: git config user.name \"Your Name\""
+      - sh: test -n "{{.GIT_EMAIL}}"
+        msg: "git user.email is not set. Run: git config user.email \"you@example.com\""
+    cmds:
+      - >-
+        docker compose run --rm
+        -e GIT_AUTHOR_NAME="{{.GIT_NAME}}"
+        -e GIT_AUTHOR_EMAIL="{{.GIT_EMAIL}}"
+        -e GIT_COMMITTER_NAME="{{.GIT_NAME}}"
+        -e GIT_COMMITTER_EMAIL="{{.GIT_EMAIL}}"
+        repo-cli git rebase {{.CLI_ARGS}}
+
+  pull:
+    desc: >-
+      Pull from remote via repo-cli.
+      Usage: task git:pull [-- <extra-args>]
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git pull {{.CLI_ARGS}}
+
+  add:
+    desc: >-
+      Stage files via repo-cli.
+      Usage: task git:add -- <files...>
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git add {{.CLI_ARGS}}
+
+  status:
+    desc: Show working tree status via repo-cli
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git status {{.CLI_ARGS}}
+
+  checkout:
+    desc: >-
+      Switch branches via repo-cli.
+      Usage: task git:checkout -- <branch>
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git checkout {{.CLI_ARGS}}
+
+  clone:
+    desc: >-
+      Clone a repository via repo-cli.
+      Usage: task git:clone -- <url-or-org/repo> [path]
+    preconditions:
+      - sh: test -n "$GH_TOKEN"
+        msg: "GH_TOKEN is not set. Run: export GH_TOKEN=$(gh auth token)"
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git clone {{.CLI_ARGS}}
+
+  fetch:
+    desc: >-
+      Fetch from remote via repo-cli.
+      Usage: task git:fetch [-- <remote> <branch>]
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git fetch {{.CLI_ARGS}}
+
+  diff:
+    desc: >-
+      Show diff via repo-cli.
+      Usage: task git:diff [-- <args>]
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git diff {{.CLI_ARGS}}
+
+  log:
+    desc: >-
+      Show git log via repo-cli.
+      Usage: task git:log [-- <args>]
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git log {{.CLI_ARGS}}
+
+  run:
+    desc: >-
+      Run any git subcommand via repo-cli (catch-all).
+      Usage: task git:run -- <subcommand> [args]
+    cmds:
+      - >-
+        docker compose run --rm repo-cli
+        git {{.CLI_ARGS}}
