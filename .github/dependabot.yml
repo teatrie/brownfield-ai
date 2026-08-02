@@ -9,7 +9,7 @@ updates:
   # /services/dashboard/frontend (add a "npm" entry there if JS updates are
   # wanted — the lockfile is now tracked, so it would work).
 
-  # requirements.txt — runtime dependencies for scripts and src/brownfield_ai.
+  # requirements.txt — runtime and tooling dependencies for scripts and src/brownfield_ai.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -30,11 +30,26 @@ updates:
         patterns: ["*"]
 
   # requirements.txt + requirements-dev.txt for the dashboard service.
+  #
+  # Scoped with "allow" because services/dashboard/requirements.txt opens with
+  # `-r ../../requirements.txt`. Dependabot's pip fetcher follows `-r` includes
+  # across directory boundaries, so without this filter the job would also fetch
+  # and update the root requirements.txt that the "/" entry above already owns —
+  # two weekly PRs editing the same file. The list below is exactly the packages
+  # declared by the dashboard's own manifests.
+  #
+  # Upkeep trade-off: a new dashboard dependency MUST be added to this allow list
+  # as well, or it silently receives no updates.
   - package-ecosystem: "pip"
     directory: "/services/dashboard"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    allow:
+      - dependency-name: "fastapi"
+      - dependency-name: "uvicorn"
+      - dependency-name: "httpx"
+      - dependency-name: "pytest-asyncio"
     groups:
       dashboard-python:
         patterns: ["*"]

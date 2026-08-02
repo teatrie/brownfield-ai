@@ -34,6 +34,13 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         Context snapshot matching schema v1 with keys
         ``schema_version``, ``git_branch``, ``active_epic_id``,
         ``modified_files``, ``recent_commits``, and ``notes``.
+
+        Git context is best-effort: if git is unavailable, refuses to answer, or
+        its helper subprocess dies, the corresponding fields degrade to ``None``
+        / empty lists rather than raising, and callers cannot distinguish a
+        degraded snapshot from a genuinely clean tree. When ``git_branch``
+        degrades to ``None``, ``active_epic_id`` falls through to the
+        single-in-progress-epic DB query.
     """
     git_branch: str | None = None
     modified_files: list[str] = []
@@ -48,9 +55,13 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
     # runners) the next write to its stdin raises ``BrokenPipeError``, an
     # ``OSError`` subclass, rather than a ``git.*`` error.
 
-    # Git branch
+    # Git branch. ``os.getcwd()`` is hoisted out of the try because its own
+    # ``FileNotFoundError`` (an ``OSError``) means the process's working directory
+    # was unlinked — a broken process state unrelated to the GitPython rationale
+    # above, and one that must not be silently swallowed here.
+    cwd = os.getcwd()
     try:
-        repo = git.Repo(os.getcwd(), search_parent_directories=True)
+        repo = git.Repo(cwd, search_parent_directories=True)
         git_branch = repo.active_branch.name
     except (git.InvalidGitRepositoryError, git.GitCommandError, TypeError, OSError):
         pass
@@ -63,13 +74,17 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         except (git.GitCommandError, ValueError, AttributeError, OSError):
             pass
 
-    # Recent commits
+    # Recent commits. ``iter_commits`` is a generator over a ``git rev-list``
+    # stream, so a failure partway through would otherwise leave a truncated list
+    # bound. Collect into a local and only bind on success, mirroring the
+    # all-or-nothing semantics ``modified_files`` gets from its comprehension.
     if repo is not None:
         try:
-            for commit in repo.iter_commits(max_count=2):
-                recent_commits.append({"sha": commit.hexsha, "message": str(commit.summary)})
+            collected = [{"sha": commit.hexsha, "message": str(commit.summary)} for commit in repo.iter_commits(max_count=2)]
         except (git.GitCommandError, ValueError, OSError):
             pass
+        else:
+            recent_commits = collected
 
     # Epic ID detection: regex from branch name first
     active_epic_id: str | None = None

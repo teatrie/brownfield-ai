@@ -112,6 +112,8 @@ This document captures low-level "gotchas" and edge cases encountered while deve
   * **Solution**: Follow the `list_docs_cli` naming convention from `chromadb_collection.py` — use `next_plan`, `index_epics`, etc. `defopt` automatically converts underscores to hyphens for the CLI sub-command name (`next_plan` → `next-plan`).
 * **Python Defopt Keyword Mappings**: The `defopt` CLI parser translates variable names into argument flags. Refactoring Python variables to avoid built-in keyword warnings (like renaming `format_` to `output_format` to dodge `A002`) will unintentionally rename the CLI flag from `--format` to `--output-format`.
   * **Solution**: To safely handle built-in keywords while keeping the intended CLI mapping structure, natively append an underscore: use `format_` which `defopt` elegantly interprets as `--format`.
+* **Luigi `> 3.5.2` Packaging Bug**: `luigi` releases after `3.5.2` ship a broken sdist/wheel that drops the `luigi.contrib` sub-packages, including `mrrunner`. Any code importing from `luigi.contrib` breaks on upgrade, and the only alternative to pinning is building luigi from source. See [spotify/luigi#3398](https://github.com/spotify/luigi/issues/3398).
+  * **Why this is recorded here**: the constraint used to live as a Dependabot `ignore` block in [.github/dependabot.yml](../.github/dependabot.yml). That block was removed as vestigial config — luigi is not currently a dependency in any of the four requirements files — which would have erased the rationale entirely. Re-apply the pin (or the `ignore` entry) if luigi is ever reintroduced.
 
 ## AWS & Moto (LocalStack) Specifics
 

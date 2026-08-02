@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from brownfield_ai.ledger.todo.context import build_chromadb_document, capture_context
 
@@ -136,6 +136,34 @@ def test_capture_context_survives_broken_pipe_from_git_subprocess(make_db) -> No
 def test_capture_context_survives_oserror_opening_repo(make_db) -> None:
     """An ``OSError`` while opening the repo degrades to empty git context."""
     with patch("brownfield_ai.ledger.todo.context.git.Repo", side_effect=OSError("stale file handle")):
+        ctx = capture_context(make_db)
+
+    assert ctx["schema_version"] == 1
+    assert ctx["git_branch"] is None
+    assert ctx["modified_files"] == []
+    assert ctx["recent_commits"] == []
+
+
+def test_capture_context_survives_broken_pipe_reading_active_branch(make_db) -> None:
+    """A ``BrokenPipeError`` from ``active_branch`` still yields a usable snapshot.
+
+    This is the case the module comment describes: the ``git.Repo`` constructor
+    succeeds, so ``repo`` is bound, and only the subsequent ``active_branch``
+    read hits the dead ``cat-file --batch-check`` helper. Control then falls
+    through to the modified-files and recent-commits blocks holding a repo whose
+    helper subprocess is gone, so those must degrade too rather than raise.
+
+    ``PropertyMock`` is required so the error is raised on attribute access; a
+    plain ``side_effect`` would only fire on a call. As with the tests above,
+    only ``git.Repo`` is patched — aliasing the real exception classes would
+    make the assertions vacuous.
+    """
+    mock_repo = MagicMock()
+    type(mock_repo).active_branch = PropertyMock(side_effect=BrokenPipeError(32, "Broken pipe"))
+    mock_repo.head.commit.diff.side_effect = BrokenPipeError(32, "Broken pipe")
+    mock_repo.iter_commits.side_effect = BrokenPipeError(32, "Broken pipe")
+
+    with patch("brownfield_ai.ledger.todo.context.git.Repo", return_value=mock_repo):
         ctx = capture_context(make_db)
 
     assert ctx["schema_version"] == 1

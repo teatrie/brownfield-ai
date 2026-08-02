@@ -59,14 +59,20 @@ repos/*/
 services/dashboard/static/assets/
 services/dashboard/static/index.html
 
+# Node / dashboard frontend
+node_modules/
+# Guard against stray lockfiles elsewhere in the tree, while keeping the one
+# intended lockfile tracked: the dashboard frontend is an application, not a
+# library, and `npm ci` (used by the dashboard build/lint/test tasks and by
+# docker/dashboard/Dockerfile) requires a committed lockfile to install.
+package-lock.json
+!services/dashboard/frontend/package-lock.json
+
 # AI TDD lockfiles
 .tdd-active
 
 # MCP server logs (chroma-mcp-server etc.)
 logs/
-# NOTE: package-lock.json is deliberately NOT ignored. The dashboard frontend is
-# an application, not a library, and `npm ci` (used by every dashboard task and
-# by docker/dashboard/Dockerfile) requires a committed lockfile to install.
 uv.lock
 tmp/
 agent-review/
