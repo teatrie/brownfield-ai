@@ -14,8 +14,22 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # A dependency joins the FIRST group it matches, but the catch-all also
+      # excludes the tooling patterns explicitly, so the partition holds even if
+      # the entries are ever reordered or round-tripped by a formatter.
+      # The toolchain is split out because pyproject.toml sets ruff
+      # `preview = true`: preview-rule churn makes "a ruff bump turns lint red"
+      # the expected case here, not a hypothetical, and it would otherwise block
+      # every other update sharing the grouped PR.
+      # Type stubs deliberately stay in the catch-all — they are version-coupled
+      # to their runtime library (types-PyYAML tracks PyYAML), and splitting them
+      # would let a stub and its library land in separate PRs, leaving mypy
+      # reading stubs for the wrong version.
+      root-python-tooling:
+        patterns: ["ruff", "mypy"]
       root-python:
         patterns: ["*"]
+        exclude-patterns: ["ruff", "mypy"]
     ignore:
       # luigi > 3.5.2 drops the luigi.contrib sub-packages (including
       # mrrunner). Inert while luigi is not a dependency; kept so the bound
@@ -34,15 +48,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # First matching group wins, and the catch-all excludes the runner patterns
+      # explicitly, so the partition does not depend on group ordering. The test
+      # runner is split out because a pytest major bump can break collection for
+      # every suite at once, and grouping it with the rest would hold back
+      # unrelated updates behind that one failure.
+      tests-python-runner:
+        patterns: ["pytest", "pytest-*"]
       tests-python:
         patterns: ["*"]
+        exclude-patterns: ["pytest", "pytest-*"]
 
   # requirements.txt + requirements-dev.txt for the dashboard service.
   #
   # Deliberately unscoped. services/dashboard/requirements.txt opens with
-  # `-r ../../requirements.txt`, and Dependabot's pip fetcher may follow that
-  # include across directory boundaries — if it does, this entry and the "/"
-  # entry above would each raise a weekly PR editing the root requirements.txt.
+  # `-r ../../requirements.txt`, and Dependabot's pip fetcher follows that
+  # include across directory boundaries — its open PR carried 15 updates for a
+  # directory that declares only a handful of packages of its own, so this entry
+  # and the "/" entry above each raise a weekly PR editing the root
+  # requirements.txt.
   # That duplicate is loud and self-announcing; an "allow" filter is not, because
   # "allow" also filters *security* updates, so any dashboard dependency missing
   # from the list would silently receive no CVE-driven PRs. Fail-loud beats
@@ -57,8 +81,25 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # Same partition as "/" and "/tests". First matching group wins, and the
+      # catch-all excludes both specific pattern sets explicitly, so ordering is
+      # not load-bearing.
+      # dashboard-python-tooling is live: ruff and mypy ride along here via the
+      # `-r ../../requirements.txt` include.
+      # dashboard-python-runner matches NOTHING today. pytest-asyncio used to
+      # live in this directory's requirements-dev.txt; it now sits in
+      # tests/requirements.txt, so the runner is owned solely by the "/tests"
+      # entry's tests-python-runner group. No pytest package is declared here or
+      # in the root manifest the include pulls in. The group is kept as a guard
+      # so that if a pytest-* plugin is ever added back to this directory it is
+      # isolated on arrival instead of silently joining the catch-all PR.
+      dashboard-python-tooling:
+        patterns: ["ruff", "mypy"]
+      dashboard-python-runner:
+        patterns: ["pytest", "pytest-*"]
       dashboard-python:
         patterns: ["*"]
+        exclude-patterns: ["ruff", "mypy", "pytest", "pytest-*"]
 
   # services/dashboard/frontend/package.json + package-lock.json.
   - package-ecosystem: "npm"

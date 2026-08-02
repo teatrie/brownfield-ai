@@ -93,6 +93,43 @@ jobs:
           # junit file is absent and upload-artifact@v4 would log a warning.
           if-no-files-found: ignore
 
+  test-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same pinned-release install as the test-src-scripts job; keep the
+      # version and checksum in sync across every Install Task step in this file
+      # and in ci.yml.
+      - name: Install Task
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/task.tar.gz" \
+            "https://github.com/go-task/task/releases/download/$TASK_VERSION/task_linux_amd64.tar.gz"
+          echo "$TASK_CHECKSUM  $RUNNER_TEMP/task.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/task.tar.gz" -C "$RUNNER_TEMP" task
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/task" "$HOME/.local/bin/task"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          TASK_VERSION: "v3.52.0"
+          TASK_CHECKSUM: "02c679ffae53dca791804847d78b31731615894e292948397c971c87ac9e95bd"
+
+      - name: Verify Task is available
+        run: task --version
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # No Publish step: the dashboard target runs pytest inside pytest-cli
+      # without --junitxml, so there is no result file to upload. Add one here
+      # if ci/test_changed.sh ever starts emitting tmp/junit_dashboard.xml.
+      - name: Run Dashboard Tests
+        run: task test:dashboard:changed
+
   test-skills:
     runs-on: ubuntu-latest
     env:
@@ -124,7 +161,8 @@ jobs:
           fetch-depth: 0
 
       # Same pinned-release install as the test-src-scripts job; keep the
-      # version and checksum in sync across all three call sites.
+      # version and checksum in sync across every Install Task step in this file
+      # and in ci.yml.
       - name: Install Task
         if: steps.creds.outputs.run_skills == 'true'
         run: |
