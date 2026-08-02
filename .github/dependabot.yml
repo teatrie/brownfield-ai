@@ -14,6 +14,12 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # Order is load-bearing: a dependency joins the FIRST group it matches, so
+      # the specific group must precede the catch-all. The toolchain is split out
+      # because a ruff/mypy bump can enable new rules and turn lint red, which
+      # would otherwise block every other update sharing the grouped PR.
+      root-python-tooling:
+        patterns: ["ruff", "mypy", "types-*"]
       root-python:
         patterns: ["*"]
     ignore:
@@ -34,6 +40,12 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # Order is load-bearing: first matching group wins, so the specific group
+      # precedes the catch-all. The test runner is split out because a pytest
+      # major bump can break collection for every suite at once, and grouping it
+      # with the rest would hold back unrelated updates behind that one failure.
+      tests-python-runner:
+        patterns: ["pytest", "pytest-*"]
       tests-python:
         patterns: ["*"]
 
