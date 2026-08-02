@@ -20,6 +20,10 @@ updates:
       # luigi > 3.5.2 drops the luigi.contrib sub-packages (including
       # mrrunner). Inert while luigi is not a dependency; kept so the bound
       # re-applies automatically if it returns. See docs/learnings.md.
+      #
+      # Note this suppresses *security* updates above 3.5.2 as well as version
+      # updates. If luigi returns, revisit the bound rather than just re-adding
+      # the dependency.
       - dependency-name: "luigi"
         versions: ["> 3.5.2"]
 
