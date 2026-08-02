@@ -64,7 +64,9 @@ services/dashboard/static/index.html
 
 # MCP server logs (chroma-mcp-server etc.)
 logs/
-package-lock.json
+# NOTE: package-lock.json is deliberately NOT ignored. The dashboard frontend is
+# an application, not a library, and `npm ci` (used by every dashboard task and
+# by docker/dashboard/Dockerfile) requires a committed lockfile to install.
 uv.lock
 tmp/
 agent-review/

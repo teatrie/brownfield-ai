@@ -106,6 +106,44 @@ def test_capture_context_survives_subprocess_failure(make_db) -> None:
     assert ctx["modified_files"] == []
 
 
+def test_capture_context_survives_broken_pipe_from_git_subprocess(make_db) -> None:
+    """A ``BrokenPipeError`` from GitPython's helper process is not fatal.
+
+    GitPython keeps a persistent ``cat-file --batch-check`` subprocess per repo.
+    When git kills it — e.g. the dubious-ownership check firing on a CI runner
+    whose checkout uid differs from the uid running the tests — the next write
+    raises ``BrokenPipeError``. That is an ``OSError``, not a ``git.*`` error,
+    so it escapes any except tuple listing only GitPython exceptions.
+
+    Unlike ``test_capture_context_survives_subprocess_failure``, this patches
+    only ``git.Repo`` so the real exception classes stay in place; aliasing them
+    to ``Exception`` would catch everything and prove nothing.
+    """
+    mock_repo = MagicMock()
+    mock_repo.active_branch.name = "main"
+    mock_repo.head.commit.diff.side_effect = BrokenPipeError(32, "Broken pipe")
+    mock_repo.iter_commits.side_effect = BrokenPipeError(32, "Broken pipe")
+
+    with patch("brownfield_ai.ledger.todo.context.git.Repo", return_value=mock_repo):
+        ctx = capture_context(make_db)
+
+    assert ctx["schema_version"] == 1
+    assert ctx["git_branch"] == "main"
+    assert ctx["modified_files"] == []
+    assert ctx["recent_commits"] == []
+
+
+def test_capture_context_survives_oserror_opening_repo(make_db) -> None:
+    """An ``OSError`` while opening the repo degrades to empty git context."""
+    with patch("brownfield_ai.ledger.todo.context.git.Repo", side_effect=OSError("stale file handle")):
+        ctx = capture_context(make_db)
+
+    assert ctx["schema_version"] == 1
+    assert ctx["git_branch"] is None
+    assert ctx["modified_files"] == []
+    assert ctx["recent_commits"] == []
+
+
 # ---------------------------------------------------------------------------
 # build_chromadb_document
 # ---------------------------------------------------------------------------

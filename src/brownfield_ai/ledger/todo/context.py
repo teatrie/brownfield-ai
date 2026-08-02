@@ -40,11 +40,19 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
     recent_commits: list[dict[str, str]] = []
     repo: git.Repo | None = None
 
+    # Git context is best-effort — a TODO must still be capturable when git is
+    # unavailable or refuses to answer. ``OSError`` is caught alongside the
+    # GitPython errors because GitPython keeps a persistent ``cat-file
+    # --batch-check`` subprocess: if git kills it (e.g. the dubious-ownership
+    # check firing when the checkout uid differs from the running uid, as on CI
+    # runners) the next write to its stdin raises ``BrokenPipeError``, an
+    # ``OSError`` subclass, rather than a ``git.*`` error.
+
     # Git branch
     try:
         repo = git.Repo(os.getcwd(), search_parent_directories=True)
         git_branch = repo.active_branch.name
-    except (git.InvalidGitRepositoryError, git.GitCommandError, TypeError):
+    except (git.InvalidGitRepositoryError, git.GitCommandError, TypeError, OSError):
         pass
 
     # Modified files
@@ -52,7 +60,7 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         try:
             diffs = repo.head.commit.diff(None)
             modified_files = [str(d.a_path or d.b_path) for d in diffs if (d.a_path or d.b_path)]
-        except (git.GitCommandError, ValueError, AttributeError):
+        except (git.GitCommandError, ValueError, AttributeError, OSError):
             pass
 
     # Recent commits
@@ -60,7 +68,7 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         try:
             for commit in repo.iter_commits(max_count=2):
                 recent_commits.append({"sha": commit.hexsha, "message": str(commit.summary)})
-        except (git.GitCommandError, ValueError):
+        except (git.GitCommandError, ValueError, OSError):
             pass
 
     # Epic ID detection: regex from branch name first
