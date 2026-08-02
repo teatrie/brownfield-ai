@@ -34,17 +34,40 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         Context snapshot matching schema v1 with keys
         ``schema_version``, ``git_branch``, ``active_epic_id``,
         ``modified_files``, ``recent_commits``, and ``notes``.
+
+    Raises:
+        OSError: Only from ``os.getcwd()``, when the process's working directory
+            has been unlinked. Git failures never propagate — see the note below.
+
+    Note:
+        Git context is best-effort: if the repository cannot be read, refuses to
+        answer, or its helper subprocess dies, the corresponding fields degrade to
+        ``None`` / empty lists rather than raising, and callers cannot distinguish
+        a degraded snapshot from a genuinely clean tree. When ``git_branch``
+        degrades to ``None``, ``active_epic_id`` falls through to the
+        single-in-progress-epic DB query.
+
+        ``OSError`` is caught alongside the GitPython errors because GitPython
+        keeps a persistent ``cat-file --batch-check`` subprocess: if git kills it
+        (e.g. the dubious-ownership check firing when the checkout uid differs
+        from the running uid, as on CI runners) the next write to its stdin raises
+        ``BrokenPipeError``, an ``OSError`` subclass, rather than a ``git.*``
+        error.
     """
     git_branch: str | None = None
     modified_files: list[str] = []
     recent_commits: list[dict[str, str]] = []
     repo: git.Repo | None = None
 
-    # Git branch
+    # Best-effort git context — degrades when the repository cannot be read; see the docstring for the OSError rationale.
+
+    # Git branch. ``os.getcwd()`` is hoisted out of the try because its own
+    # ``FileNotFoundError`` — an unlinked working directory — must not be swallowed.
+    cwd = os.getcwd()
     try:
-        repo = git.Repo(os.getcwd(), search_parent_directories=True)
+        repo = git.Repo(cwd, search_parent_directories=True)
         git_branch = repo.active_branch.name
-    except (git.InvalidGitRepositoryError, git.GitCommandError, TypeError):
+    except (git.InvalidGitRepositoryError, git.GitCommandError, TypeError, OSError):
         pass
 
     # Modified files
@@ -52,15 +75,15 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         try:
             diffs = repo.head.commit.diff(None)
             modified_files = [str(d.a_path or d.b_path) for d in diffs if (d.a_path or d.b_path)]
-        except (git.GitCommandError, ValueError, AttributeError):
+        except (git.GitCommandError, ValueError, AttributeError, OSError):
             pass
 
-    # Recent commits
+    # Recent commits. The comprehension is bound only after full evaluation, so a
+    # mid-stream ``rev-list`` failure leaves ``recent_commits`` at its initial ``[]``.
     if repo is not None:
         try:
-            for commit in repo.iter_commits(max_count=2):
-                recent_commits.append({"sha": commit.hexsha, "message": str(commit.summary)})
-        except (git.GitCommandError, ValueError):
+            recent_commits = [{"sha": commit.hexsha, "message": str(commit.summary)} for commit in repo.iter_commits(max_count=2)]
+        except (git.GitCommandError, ValueError, OSError):
             pass
 
     # Epic ID detection: regex from branch name first

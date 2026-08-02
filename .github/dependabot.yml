@@ -1,15 +1,71 @@
 version: 2
 updates:
-  # Only /docker/shared is monitored to enforce the luigi pin.
-  # Other directories are intentionally excluded to avoid noisy PRs.
+  # One entry per directory that actually contains a pip manifest. Dependabot
+  # errors out on a directory it cannot parse, so every path below must hold a
+  # requirements file. Updates are grouped so each directory raises a single PR
+  # per interval rather than one per dependency.
+  #
+  # Not monitored: /docker/shared (shell scripts only).
+
+  # requirements.txt — runtime and tooling dependencies for scripts and src/brownfield_ai.
   - package-ecosystem: "pip"
-    directory: "/docker/shared"
+    directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      root-python:
+        patterns: ["*"]
     ignore:
-      # luigi > 3.5.2 has a packaging bug that drops luigi.contrib
-      # sub-packages (including mrrunner). The alternative is building
-      # from source. See https://github.com/spotify/luigi/issues/3398
+      # luigi > 3.5.2 drops the luigi.contrib sub-packages (including
+      # mrrunner). Inert while luigi is not a dependency; kept so the bound
+      # re-applies automatically if it returns. See docs/learnings.md.
+      #
+      # Note this suppresses *security* updates above 3.5.2 as well as version
+      # updates. If luigi returns, revisit the bound rather than just re-adding
+      # the dependency.
       - dependency-name: "luigi"
         versions: ["> 3.5.2"]
+
+  # tests/requirements.txt — pytest and test-only tooling.
+  - package-ecosystem: "pip"
+    directory: "/tests"
+    schedule:
+      interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      tests-python:
+        patterns: ["*"]
+
+  # requirements.txt + requirements-dev.txt for the dashboard service.
+  #
+  # Deliberately unscoped. services/dashboard/requirements.txt opens with
+  # `-r ../../requirements.txt`, and Dependabot's pip fetcher may follow that
+  # include across directory boundaries — if it does, this entry and the "/"
+  # entry above would each raise a weekly PR editing the root requirements.txt.
+  # That duplicate is loud and self-announcing; an "allow" filter is not, because
+  # "allow" also filters *security* updates, so any dashboard dependency missing
+  # from the list would silently receive no CVE-driven PRs. Fail-loud beats
+  # fail-silent for a security control.
+  #
+  # If duplicate PRs do appear, fix it by restructuring
+  # services/dashboard/requirements.txt so it no longer `-r`s the root manifest —
+  # do not re-add an allow filter.
+  - package-ecosystem: "pip"
+    directory: "/services/dashboard"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dashboard-python:
+        patterns: ["*"]
+
+  # services/dashboard/frontend/package.json + package-lock.json.
+  - package-ecosystem: "npm"
+    directory: "/services/dashboard/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dashboard-npm:
+        patterns: ["*"]
