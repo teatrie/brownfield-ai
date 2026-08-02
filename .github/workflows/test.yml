@@ -101,7 +101,8 @@ jobs:
           fetch-depth: 0
 
       # Same pinned-release install as the test-src-scripts job; keep the
-      # version and checksum in sync across all three call sites.
+      # version and checksum in sync across every Install Task step in this file
+      # and in ci.yml.
       - name: Install Task
         run: |
           curl -sSL -o "$RUNNER_TEMP/task.tar.gz" \
@@ -160,7 +161,8 @@ jobs:
           fetch-depth: 0
 
       # Same pinned-release install as the test-src-scripts job; keep the
-      # version and checksum in sync across all three call sites.
+      # version and checksum in sync across every Install Task step in this file
+      # and in ci.yml.
       - name: Install Task
         if: steps.creds.outputs.run_skills == 'true'
         run: |

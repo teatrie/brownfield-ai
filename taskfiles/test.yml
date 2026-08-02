@@ -152,13 +152,21 @@ tasks:
 
   dashboard:
     desc: Run all dashboard tests (containerized)
-    # The `-c tests/requirements.txt` constraint is load-bearing. pytest-cli runs
-    # as USER agent against root-owned site-packages, so this pip call falls back
-    # to a --user install into /home/agent/.local, which PRECEDES system
-    # site-packages on sys.path. Without the constraint a conflicting bound does
-    # not fail — it silently SHADOWS the image's pinned tool. With it, the
+    # The `-c tests/requirements.txt` constraint guards this full-suite path only.
+    # pytest-cli runs as USER agent against root-owned site-packages, so this pip
+    # call falls back to a --user install into /home/agent/.local, which PRECEDES
+    # system site-packages on sys.path. Without the constraint a conflicting bound
+    # does not fail — it silently SHADOWS the image's pinned tool. With it, the
     # conflict surfaces as ResolutionImpossible. See docs/learnings.md.
+    #
+    # The equivalent installs in ci/test_staged.sh and ci/test_changed.sh are NOT
+    # yet constrained (those files are agent-deny-listed). Latent, not live:
+    # requirements-dev.txt no longer pins any pytest-family package.
+    #
+    # The build step matters now that the plugin is baked into the image rather
+    # than installed at runtime — every other pytest-cli path already builds first.
     cmds:
+      - docker compose build pytest-cli
       - >-
         docker compose run --rm --entrypoint ""
         pytest-cli

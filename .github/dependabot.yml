@@ -63,9 +63,10 @@ updates:
   #
   # Deliberately unscoped. services/dashboard/requirements.txt opens with
   # `-r ../../requirements.txt`, and Dependabot's pip fetcher follows that
-  # include across directory boundaries — its open PR carries 15 updates for a
-  # directory that declares only 4 packages, so this entry and the "/" entry
-  # above each raise a weekly PR editing the root requirements.txt.
+  # include across directory boundaries — its open PR carried 15 updates for a
+  # directory that declares only a handful of packages of its own, so this entry
+  # and the "/" entry above each raise a weekly PR editing the root
+  # requirements.txt.
   # That duplicate is loud and self-announcing; an "allow" filter is not, because
   # "allow" also filters *security* updates, so any dashboard dependency missing
   # from the list would silently receive no CVE-driven PRs. Fail-loud beats
