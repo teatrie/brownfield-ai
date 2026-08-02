@@ -5,9 +5,7 @@ updates:
   # requirements file. Updates are grouped so each directory raises a single PR
   # per interval rather than one per dependency.
   #
-  # Not monitored: /docker/shared (shell scripts only) and the npm manifest at
-  # /services/dashboard/frontend (add a "npm" entry there if JS updates are
-  # wanted — the lockfile is now tracked, so it would work).
+  # Not monitored: /docker/shared (shell scripts only).
 
   # requirements.txt — runtime and tooling dependencies for scripts and src/brownfield_ai.
   - package-ecosystem: "pip"
@@ -18,6 +16,12 @@ updates:
     groups:
       root-python:
         patterns: ["*"]
+    ignore:
+      # luigi > 3.5.2 drops the luigi.contrib sub-packages (including
+      # mrrunner). Inert while luigi is not a dependency; kept so the bound
+      # re-applies automatically if it returns. See docs/learnings.md.
+      - dependency-name: "luigi"
+        versions: ["> 3.5.2"]
 
   # tests/requirements.txt — pytest and test-only tooling.
   - package-ecosystem: "pip"
@@ -31,25 +35,33 @@ updates:
 
   # requirements.txt + requirements-dev.txt for the dashboard service.
   #
-  # Scoped with "allow" because services/dashboard/requirements.txt opens with
-  # `-r ../../requirements.txt`. Dependabot's pip fetcher follows `-r` includes
-  # across directory boundaries, so without this filter the job would also fetch
-  # and update the root requirements.txt that the "/" entry above already owns —
-  # two weekly PRs editing the same file. The list below is exactly the packages
-  # declared by the dashboard's own manifests.
+  # Deliberately unscoped. services/dashboard/requirements.txt opens with
+  # `-r ../../requirements.txt`, and Dependabot's pip fetcher may follow that
+  # include across directory boundaries — if it does, this entry and the "/"
+  # entry above would each raise a weekly PR editing the root requirements.txt.
+  # That duplicate is loud and self-announcing; an "allow" filter is not, because
+  # "allow" also filters *security* updates, so any dashboard dependency missing
+  # from the list would silently receive no CVE-driven PRs. Fail-loud beats
+  # fail-silent for a security control.
   #
-  # Upkeep trade-off: a new dashboard dependency MUST be added to this allow list
-  # as well, or it silently receives no updates.
+  # If duplicate PRs do appear, fix it by restructuring
+  # services/dashboard/requirements.txt so it no longer `-r`s the root manifest —
+  # do not re-add an allow filter.
   - package-ecosystem: "pip"
     directory: "/services/dashboard"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    allow:
-      - dependency-name: "fastapi"
-      - dependency-name: "uvicorn"
-      - dependency-name: "httpx"
-      - dependency-name: "pytest-asyncio"
     groups:
       dashboard-python:
+        patterns: ["*"]
+
+  # services/dashboard/frontend/package.json + package-lock.json.
+  - package-ecosystem: "npm"
+    directory: "/services/dashboard/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dashboard-npm:
         patterns: ["*"]

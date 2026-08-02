@@ -35,30 +35,34 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         ``schema_version``, ``git_branch``, ``active_epic_id``,
         ``modified_files``, ``recent_commits``, and ``notes``.
 
-        Git context is best-effort: if git is unavailable, refuses to answer, or
-        its helper subprocess dies, the corresponding fields degrade to ``None``
-        / empty lists rather than raising, and callers cannot distinguish a
-        degraded snapshot from a genuinely clean tree. When ``git_branch``
+    Raises:
+        OSError: Only from ``os.getcwd()``, when the process's working directory
+            has been unlinked. Git failures never propagate — see the note below.
+
+    Note:
+        Git context is best-effort: if the repository cannot be read, refuses to
+        answer, or its helper subprocess dies, the corresponding fields degrade to
+        ``None`` / empty lists rather than raising, and callers cannot distinguish
+        a degraded snapshot from a genuinely clean tree. When ``git_branch``
         degrades to ``None``, ``active_epic_id`` falls through to the
         single-in-progress-epic DB query.
+
+        ``OSError`` is caught alongside the GitPython errors because GitPython
+        keeps a persistent ``cat-file --batch-check`` subprocess: if git kills it
+        (e.g. the dubious-ownership check firing when the checkout uid differs
+        from the running uid, as on CI runners) the next write to its stdin raises
+        ``BrokenPipeError``, an ``OSError`` subclass, rather than a ``git.*``
+        error.
     """
     git_branch: str | None = None
     modified_files: list[str] = []
     recent_commits: list[dict[str, str]] = []
     repo: git.Repo | None = None
 
-    # Git context is best-effort — a TODO must still be capturable when git is
-    # unavailable or refuses to answer. ``OSError`` is caught alongside the
-    # GitPython errors because GitPython keeps a persistent ``cat-file
-    # --batch-check`` subprocess: if git kills it (e.g. the dubious-ownership
-    # check firing when the checkout uid differs from the running uid, as on CI
-    # runners) the next write to its stdin raises ``BrokenPipeError``, an
-    # ``OSError`` subclass, rather than a ``git.*`` error.
+    # Best-effort git context — degrades when the repository cannot be read; see the docstring for the OSError rationale.
 
     # Git branch. ``os.getcwd()`` is hoisted out of the try because its own
-    # ``FileNotFoundError`` (an ``OSError``) means the process's working directory
-    # was unlinked — a broken process state unrelated to the GitPython rationale
-    # above, and one that must not be silently swallowed here.
+    # ``FileNotFoundError`` — an unlinked working directory — must not be swallowed.
     cwd = os.getcwd()
     try:
         repo = git.Repo(cwd, search_parent_directories=True)
@@ -74,17 +78,13 @@ def capture_context(db: sqlite3.Connection, *, notes: str = "") -> dict[str, Any
         except (git.GitCommandError, ValueError, AttributeError, OSError):
             pass
 
-    # Recent commits. ``iter_commits`` is a generator over a ``git rev-list``
-    # stream, so a failure partway through would otherwise leave a truncated list
-    # bound. Collect into a local and only bind on success, mirroring the
-    # all-or-nothing semantics ``modified_files`` gets from its comprehension.
+    # Recent commits. The comprehension is bound only after full evaluation, so a
+    # mid-stream ``rev-list`` failure leaves ``recent_commits`` at its initial ``[]``.
     if repo is not None:
         try:
-            collected = [{"sha": commit.hexsha, "message": str(commit.summary)} for commit in repo.iter_commits(max_count=2)]
+            recent_commits = [{"sha": commit.hexsha, "message": str(commit.summary)} for commit in repo.iter_commits(max_count=2)]
         except (git.GitCommandError, ValueError, OSError):
             pass
-        else:
-            recent_commits = collected
 
     # Epic ID detection: regex from branch name first
     active_epic_id: str | None = None

@@ -66,6 +66,7 @@ node_modules/
 # library, and `npm ci` (used by the dashboard build/lint/test tasks and by
 # docker/dashboard/Dockerfile) requires a committed lockfile to install.
 package-lock.json
+# ORDER MATTERS: the negation must stay after the generic pattern above.
 !services/dashboard/frontend/package-lock.json
 
 # AI TDD lockfiles
