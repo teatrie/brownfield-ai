@@ -152,11 +152,17 @@ tasks:
 
   dashboard:
     desc: Run all dashboard tests (containerized)
+    # The `-c tests/requirements.txt` constraint is load-bearing. pytest-cli runs
+    # as USER agent against root-owned site-packages, so this pip call falls back
+    # to a --user install into /home/agent/.local, which PRECEDES system
+    # site-packages on sys.path. Without the constraint a conflicting bound does
+    # not fail — it silently SHADOWS the image's pinned tool. With it, the
+    # conflict surfaces as ResolutionImpossible. See docs/learnings.md.
     cmds:
       - >-
         docker compose run --rm --entrypoint ""
         pytest-cli
-        sh -c 'pip install --quiet -r services/dashboard/requirements-dev.txt &&
+        sh -c 'pip install --quiet -c tests/requirements.txt -r services/dashboard/requirements-dev.txt &&
         pytest tests/services/dashboard/ -v'
 
   dashboard:staged:
