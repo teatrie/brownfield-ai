@@ -40,7 +40,7 @@ tasks:
         docker run --rm
         -v {{.ROOT_DIR}}:/app
         -w /app/services/dashboard/frontend
-        node:20-alpine
+        node:22-alpine
         sh -c "npm ci && npm run build"
 
   typecheck:
@@ -50,7 +50,7 @@ tasks:
         docker run --rm
         -v {{.ROOT_DIR}}:/app
         -w /app/services/dashboard/frontend
-        node:20-alpine
+        node:22-alpine
         sh -c "npm ci && npx tsc --noEmit"
 
   lint:
@@ -60,7 +60,7 @@ tasks:
         docker run --rm
         -v {{.ROOT_DIR}}:/app
         -w /app/services/dashboard/frontend
-        node:20-alpine
+        node:22-alpine
         sh -c "npm ci && npx tsc --noEmit"
 
   test:
@@ -70,5 +70,5 @@ tasks:
         docker run --rm
         -v {{.ROOT_DIR}}:/app
         -w /app/services/dashboard/frontend
-        node:20-alpine
+        node:22-alpine
         sh -c "npm ci && npx vitest run"
