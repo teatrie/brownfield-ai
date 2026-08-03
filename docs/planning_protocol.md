@@ -495,6 +495,43 @@ To prevent context loss and provide shared visibility across sessions, project t
    "auto-headless", "selected": "review"}`. Draft plans are not
    supported in headless mode — the plan proceeds directly to
    Dual-Model Review.
+
+   **Promotion to `docs/plans/` (human review)**: `plan.md` is *working
+   scratch* — untracked, no history, overwritten by the next epic. When a
+   plan needs review by human teammates rather than by review-gate agents,
+   promote it to a tracked folder at
+   **`docs/plans/<EPIC-ID>/`** so it arrives as a reviewable PR. The three
+   layers are distinct and none substitutes for another:
+
+   | Layer | Artifact | Tracked | Audience |
+   |---|---|---|---|
+   | Working scratch | `plan.md` | no | the active session |
+   | Machine record | ledger epic + `plan_snapshot` / `step_result` | ChromaDB | agents resuming work |
+   | Human review | `docs/plans/<EPIC-ID>/` | yes | teammates reviewing a plan |
+
+   Folder contents follow a conventional shape:
+
+   | File | Role |
+   |---|---|
+   | `README.md` | Index. Opens with an HTML-comment lifecycle block carrying `Status`, `Owners`, `Epic`, and `Purpose`, then a document index table |
+   | `<topic>_plan.md` | The primary implementation plan |
+   | `slice<N>-spec.md` | Per-vertical-slice specs, one per slice |
+   | `validation_plan.md` / `validation_results.md` | How correctness was to be established, and what it showed |
+   | `pr_summary.md` | The PR-facing narrative |
+
+   Only `README.md` and the primary plan are required; add the rest as the
+   epic produces them. Directory names are epic identifiers and need not be
+   ticket keys — a descriptive slug is fine for work with no ticket.
+
+   Two properties make the folder worth keeping after the epic ships:
+
+   - It is a **reusable template** for the next epic of the same shape.
+   - When an epic produces a *generalized* convention, that convention is
+     promoted out into `.claude/rules/` or `docs/repo-guides/`, and the
+     folder remains the **derivation record** showing how it was reached.
+     Do not leave the only copy of a general rule inside an epic folder.
+
+   See [docs/plans/README.md](../docs/plans/README.md).
 5. **Dual-Model Review** (mandatory): The Planner must invoke the
    **Dual-Model Review Gate** defined in
    [verification_protocol.md](verification_protocol.md). Spawn two
