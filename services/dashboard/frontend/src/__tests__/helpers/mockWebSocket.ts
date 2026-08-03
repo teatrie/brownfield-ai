@@ -48,7 +48,10 @@ export function createMockWebSocket(): {
 } {
   const wsInstances: MockWSInstance[] = [];
 
-  const factory = vi.fn().mockImplementation((url: string) => {
+  // Must be a `function`, not an arrow: consumers call `new WebSocket(url)`,
+  // and Vitest 4 refuses to construct a mock whose implementation is not
+  // constructible.
+  const factory = vi.fn().mockImplementation(function (url: string) {
     const instance: MockWSInstance = {
       onopen: null,
       onmessage: null,

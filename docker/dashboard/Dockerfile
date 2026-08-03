@@ -1,5 +1,5 @@
 # Stage 1: Build frontend SPA
-FROM node:20-alpine AS frontend-build
+FROM node:22-alpine AS frontend-build
 WORKDIR /build
 COPY services/dashboard/frontend/package.json services/dashboard/frontend/package-lock.json* ./
 RUN npm ci

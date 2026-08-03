@@ -19,25 +19,30 @@ describe('useWebSocket', () => {
     vi.useFakeTimers();
     wsInstances = [];
 
-    const factory = vi.fn().mockImplementation((url: string) => {
+    // Must be a `function`, not an arrow: the hook calls `new WebSocket(url)`,
+    // and Vitest 4 refuses to construct a mock whose implementation is not
+    // constructible.
+    const factory = vi.fn().mockImplementation(function (url: string) {
       const instance: MockWSInstance = {
         onopen: null,
         onmessage: null,
         onclose: null,
         onerror: null,
         send: vi.fn(),
-        close: vi.fn().mockImplementation(function (this: MockWSInstance) {
-          // Trigger onclose when close() is called, matching real WebSocket behavior
-          if (this.onclose) {
-            this.readyState = WebSocket.CLOSED;
-            this.onclose(new CloseEvent('close'));
-          }
-        }),
+        close: vi.fn(),
         readyState: WebSocket.CONNECTING,
         url,
       };
-      // Bind close to the instance
-      instance.close = instance.close.bind(instance);
+      // Trigger onclose when close() is called, matching real WebSocket
+      // behavior. Closes over `instance` lexically rather than relying on a
+      // `this`-bound function: under Vitest 4 the mock type no longer resolves
+      // `.bind()` to a single call signature (TS2349).
+      instance.close.mockImplementation(() => {
+        if (instance.onclose) {
+          instance.readyState = WebSocket.CLOSED;
+          instance.onclose(new CloseEvent('close'));
+        }
+      });
       wsInstances.push(instance);
       return instance;
     });
