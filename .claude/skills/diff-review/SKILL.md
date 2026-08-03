@@ -116,7 +116,17 @@ with these KEY=value args after `--`).
 > 2. CLAUDE.md and coding standard violations
 > 3. Accidental file deletions or unintended modifications
 > 4. Architectural consistency with existing patterns
-> 5. Missing or degraded documentation (docstrings, type hints)
+> 5. Missing or degraded documentation (docstrings, type hints). Also enforce
+>    the two comment standards indexed by `docs/coding_standards.md` §6 and §7:
+>    (a) added comments that narrate change history — dates, deployment status,
+>    evolution narrative, PR/ticket cross-references — instead of current-state
+>    rationale; (b) added comments that are redundant or agent-directed —
+>    restating what the code, its base class, its type signature, or a linked
+>    guide already says, or speculating about paths the code does not take.
+>    Both are judged from the diff alone. Do **not** attempt to verify that
+>    history *deleted* in this diff was relocated to the PR description or
+>    ledger — you cannot see either, so you would be guessing in both
+>    directions; that obligation rests with the author and the orchestrator.
 > 6. Anti-Faking Duty: inspect for hardcoded stubs, skipped validation steps,
 >    or faked configurations that tests would not catch
 > 7. Linter suppression additions or modifications (`# noqa`, `# type: ignore`,
