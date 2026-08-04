@@ -102,43 +102,175 @@ regardless of session type. Without these signals, headless mode
 delegates one fix attempt and halts if unresolved per
 [verification_protocol.md](verification_protocol.md).
 
-## JIRA Ticket Requirement
+## Work Item Reference
 
-Every PR must be associated with a JIRA ticket. Tickets follow the
-pattern `ABC-1234` (uppercase project key, hyphen, numeric ID).
+Every PR must carry a **work item reference** — the link between the change
+and wherever the work is tracked. This repository is tracker-agnostic: the
+reference names both the **system** and the **identifier**.
 
-**Resolution order:**
+### Why the system must be named, not inferred
 
-1. **User-supplied**: If the user provided a ticket in `$ARGUMENTS`
-   or conversation, use it.
-2. **Branch name**: Extract the ticket from the current branch name.
-   Branch names must follow `<type>/<title>_<JIRA-TICKET>`, e.g.,
-   `feat/refactor-sub-system_ACME-1234`. Parse the segment after the
-   last underscore.
-3. **Ask the user**: If no ticket is found from either source, stop
-   and ask the user to supply one before proceeding. Do NOT create a
-   PR without a JIRA ticket.
+JIRA and Linear issue keys are structurally identical — both are
+`ABC-123` (uppercase team/project key, hyphen, numeric ID). **No pattern
+match can distinguish them.** An earlier version of this document assumed
+JIRA and validated with `[A-Z]{2,}-\d+`; that both mis-rejects legitimate
+Execution Ledger epic IDs and silently mislabels Linear issues as JIRA.
+The system is therefore declared explicitly and never guessed.
 
-**Ticket validation**: The resolved ticket MUST match the pattern
-`[A-Z]{2,}-\d+` (e.g., `ACME-2931`, `DATA-42`). Reject obvious
-placeholders like `XXX-1234`, `ABC-0000`, or `TODO-0001`. If the
-ticket looks like a placeholder, ask the user for a real ticket.
+### Supported systems
 
-**Branch naming enforcement**: When creating a new branch (e.g., in
-`auto-pr` or `ship`), ensure the branch name includes the JIRA
-ticket: `<type>/<short-name>_<JIRA-TICKET>`.
+| System | Identifier form | Example | Machine-verifiable |
+|---|---|---|---|
+| **Execution Ledger** (default here) | no fixed pattern — see below | `UPSTREAM-PORT-001`, `TODO-0092-DEFERRED` | **Yes** — `task ledger:index` |
+| **JIRA** | `[A-Z]{2,}-\d+` | `ACME-1234` | No |
+| **Linear** | `[A-Z]{2,}-\d+` | `ENG-456` | No |
+| **GitHub Issues** | `#\d+` or `<owner>/<repo>#\d+` | `#123` | **Yes** — `task gh:api` |
+| **None** | the literal `none` plus a reason | `none — CI flake re-run` | n/a |
 
-The JIRA ticket must appear in the PR body after the Summary section
-and before the Co-authored-by trailer:
+**Lookup beats pattern-matching — and supersedes it.** For the Execution
+Ledger and GitHub Issues the reference is checkable, so **check it**: a
+fabricated or mistyped ID is worse than none because it reads as
+authoritative. Confirm a ledger epic with `task ledger:index` and a GitHub
+issue with:
+
+```bash
+task gh:api -- repos/<owner>/<repo>/issues/<n> --jq '{state, is_pr: has("pull_request")}'
+```
+
+**`is_pr` must be `false`.** GitHub's issues endpoint serves pull requests too —
+`/issues/13` returns the PR numbered 13 with a `state` field like any issue — so
+checking `.state` alone will happily validate a PR number as an issue reference.
+Verified against this repository: `/issues/13` returns
+`{"is_pr": true, "state": "closed"}` for PR #13.
+
+**Query the epic registry, with an explicit limit.** Existence is a property
+of the `epics` registry, and `task ledger:index` is what reads it — but it
+paginates, so call it with an explicit high `--limit` and match the exact ID:
+
+```bash
+task ledger:index -- --limit 1000
+```
+
+Two traps, both verified against the live ledger:
+
+- **Default pagination.** Without `--limit`, only the first page is
+  returned, so a valid older epic can appear missing — a false negative that
+  would hard-stop a legitimate workflow.
+- **`ledger:resume` is NOT an existence check.** It queries Chroma artifacts
+  and open TODOs, not the registry, so a real-but-artifact-free epic
+  (freshly created, no checkpoints yet) returns exactly what a nonexistent
+  ID returns: empty collections. Using it to test existence both rejects
+  valid new epics and lets a "looks free" check reuse an ID that is already
+  taken. Use `resume` to load an epic's context, never to prove it exists.
+
+For these two systems a successful lookup is **conclusive** — do not
+additionally validate the ID's shape, and never reject an ID that the
+system confirms. Ledger epic IDs deliberately have no fixed pattern: the
+ledger holds `UPSTREAM-PORT-001` alongside `TODO-0092-DEFERRED`, so any
+regex tight enough to look tidy will reject real epics. This document
+previously specified such a regex and it was wrong on live data.
+
+JIRA and Linear cannot be verified from this repo, so their references are
+taken on trust and should come from the user rather than be constructed.
+Pattern-matching is a weak fallback used only where lookup is unavailable.
+
+**`none` is a legitimate answer, not a failure.** Dependency bumps, CI
+re-runs, typo fixes, and hygiene changes often have no tracked work item.
+Recording `none — <reason>` is honest; inventing an ID to satisfy a field
+is not. What is forbidden is leaving the reference off entirely.
+
+### Resolution order
+
+1. **User-supplied**: a reference in `$ARGUMENTS` or the conversation.
+2. **Branch name**: the segment after the last underscore, when present
+   (`feat/refactor-sub-system_ACME-1234`).
+
+   **First, decide whether that segment is an ID at all.** Descriptive
+   branch names legitimately contain underscores — `feat/add_user_login`
+   yields `login`, which is not an identifier. Treat the segment as a
+   candidate ID **only** if it matches `[A-Z]{2,}-\d+` (JIRA/Linear shape) or
+   resolves in the Execution Ledger. Otherwise it is part of the description:
+   ignore it and continue to source 3. Do **not** halt on it.
+
+   **A candidate ID carries no system.** `ACME-1234` could be JIRA or Linear —
+   the forms are identical — and the body line requires the system. Resolve it
+   in this order, and do not guess:
+
+   1. Look the ID up in the epic registry (`task ledger:index -- --limit 1000`
+      — see the traps above). A hit is conclusive: it is a ledger epic.
+   2. Otherwise, if the user named the system in this conversation, use that.
+   3. Otherwise the system is **ambiguous**. In interactive mode, ask which
+      tracker it is. In headless mode, halt and checkpoint
+      `{"verdict": "fail", "reason": "work item system ambiguous from branch name"}`
+      — do not default to JIRA, and do not omit the system from the body.
+3. **Active ledger epic**: if the work belongs to an in-flight epic,
+   `execution-ledger resume` supplies its `epic_id`.
+4. **Ask the user.** If none of the above resolves, stop and ask. Do NOT
+   invent an identifier, and do NOT substitute an identifier from one
+   system while labelling it as another.
+5. **Record `none`** only when the user confirms there is no tracked item.
+
+**Placeholder rejection**: reject `XXX-1234`, `ABC-0000`, and similar
+obvious fillers. Note that `TODO-0001` is **not** a placeholder in this
+repository — it is a valid TODO identifier — so judge by whether the
+referent exists, not by its shape.
+
+### Branch naming
+
+Include the identifier as a suffix when the tracking system is JIRA or
+Linear: `<type>/<short-name>_<ID>`. There the ID is the primary handle
+people search by, so having it in the branch name earns its verbosity.
+
+For Execution Ledger, GitHub Issues, and `none`, a descriptive branch name
+is sufficient — the PR body is the authoritative carrier of the reference,
+and the ledger already links epics to PR refs via `task ledger:set-prs`.
+
+### The work item and the ledger epic are independent
+
+These are two different things and resolving one does **not** resolve the
+other:
+
+| | Work Item reference | Ledger epic (`epic_id`) |
+|---|---|---|
+| Answers | "what tracked request is this PR for?" | "which epic's lifecycle does this work belong to?" |
+| Lives in | the PR body | Execution Ledger artifacts |
+| Resolved from | user, branch name, active ledger epic, or ask | `execution-ledger resume` |
+| May be absent | yes — `none` is valid | yes — ad-hoc work has no epic |
+
+They coincide only when the work item *is* a ledger epic. A PR whose work
+item is `ACME-1234 (JIRA)` can still be running under ledger epic
+`UPSTREAM-PORT-001`, and in that case `epic_id` **is** `UPSTREAM-PORT-001` —
+withholding it because the work item came from a different tracker would
+strand the `pr_created` checkpoint, the `in_review` transition, and the PR
+refs that depend on it.
+
+**Rule**: resolve `epic_id` from the active ledger epic, always and
+independently of the work item. Only omit it when there is genuinely no
+active epic. Never populate it with a foreign tracker's identifier.
+
+### Placement in the PR body
+
+The reference appears after the Summary section and before the
+Co-authored-by trailer, naming the system in parentheses:
 
 ```markdown
 ## Summary
 <1-3 bullet points>
 
-**JIRA**: <TICKET-ID>
+**Work Item**: <ID> (<System>)
 
 ---
 Co-authored-by: ...
+```
+
+Examples of the reference line:
+
+```markdown
+**Work Item**: UPSTREAM-PORT-001 (Execution Ledger)
+**Work Item**: ACME-1234 (JIRA)
+**Work Item**: ENG-456 (Linear)
+**Work Item**: #123 (GitHub Issues)
+**Work Item**: none — dependency bump, no tracked item
 ```
 
 ## Template Detection
@@ -166,11 +298,11 @@ with details of the changes, and mark relevant checkboxes (`[x]`).
 ## Summary
 <1-3 bullet points describing what this PR contains>
 
-**JIRA**: <TICKET-ID>
+**Work Item**: <ID> (<System>)
 ```
 
-The JIRA ticket line is mandatory (see **JIRA Ticket Requirement**
-above).
+The Work Item line is mandatory (see **Work Item Reference** above).
+`none — <reason>` is a valid value; an absent line is not.
 
 **For sequential multi-PR flows** (e.g., `ship`), always include:
 
@@ -563,14 +695,20 @@ by the fix:
      "title": "<MARKER>: <context from surrounding line>",
      "category": "ci-fix",
      "priority": <mapped_priority>,
-     "epic_id": "<JIRA_TICKET>"
+     "epic_id": "<LEDGER_EPIC_ID>"
    }
    ```
 
-   The `epic_id` is the JIRA ticket resolved during PR creation (from
-   `$ARGUMENTS`, branch name, or Execution Ledger — already available
-   in the agent's context). Accumulate entries across all fix cycles
-   in memory.
+   The `epic_id` is the **active ledger epic**, resolved via
+   `execution-ledger resume` independently of the PR's Work Item reference
+   (see §"The work item and the ledger epic are independent"). A PR tracked
+   in JIRA, Linear, or GitHub still files its CI TODOs under whatever ledger
+   epic the work belongs to. Omit `epic_id` only when there is genuinely no
+   active epic, and never write a foreign tracker's identifier into it —
+   that creates a TODO pointing at an epic that does not exist. When the PR
+   also carries an external work item, put that reference in the entry
+   `title` for traceability. Accumulate entries across all fix cycles in
+   memory.
 5. **After all fix cycles complete and CI is GREEN**: If any entries
    were accumulated, write them to
    `tmp/<branch-short-name>/ci-todo-batch.json` (branch-scoped, distinct

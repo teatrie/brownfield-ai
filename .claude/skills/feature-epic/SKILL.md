@@ -11,7 +11,23 @@ Do not write any implementation code yourself. For term definitions (Domain, Wav
 
 ## PHASE 1: Feature Decomposition & Planning (Planner)
 
-0. **JIRA Ticket (Required)**: Before any planning begins, identify the JIRA ticket for this epic. If the user provided one in their request (e.g., "ACME-2931"), use it. Otherwise query the Execution Ledger (`execution-ledger resume`) to derive the active epic's `epic_id`. If still not found: in **interactive mode**, ask: "What JIRA ticket should I associate with this epic?" In **headless mode** (`CI=true` or explicit headless signal), halt immediately and checkpoint `{"verdict": "fail", "reason": "JIRA ticket unresolvable in headless mode"}`. The ticket becomes the `epic_id` for all Execution Ledger checkpoints throughout the lifecycle. Do NOT proceed without a valid JIRA ticket (pattern: `ABC-1234`).
+0. **Epic Identifier (Required)**: Before any planning begins, identify the **Execution Ledger epic ID** for this epic — every checkpoint in the lifecycle is filed under it, so it must be a real ledger epic, never a foreign tracker's ID. JIRA, Linear, and GitHub references belong in the PR's Work Item line (see [pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference), not in `epic_id`.
+
+   Resolve in this order:
+
+   1. **User-supplied**: verify it exists against the epic registry with `task ledger:index -- --limit 1000`, matching the exact ID. Pass the limit explicitly — the default page can hide an older epic. Do NOT use `ledger:resume` for this: it reads Chroma artifacts, not the registry, so a real-but-artifact-free epic looks identical to a nonexistent one. A hit is conclusive. A **miss is a hard stop, not a fallback** — a mistyped ID (`UPSTREAM-PRT-001`) must never silently attach every checkpoint to whatever epic step 2 happens to return. In interactive mode, report the miss and ask the user to correct it or confirm creating a new epic; in headless mode, halt and checkpoint `{"verdict": "fail", "reason": "user-supplied epic ID not found in ledger"}`. Only proceed to step 2 when the user supplied no ID at all.
+   2. **Active epic**: query `execution-ledger resume`.
+   3. **Neither resolves** — branch on mode:
+      - **Interactive**: ask the user whether to reuse an existing epic or create a new one, then create it if they choose to.
+      - **Headless** (`CI=true` or explicit headless signal): halt immediately and checkpoint `{"verdict": "fail", "reason": "ledger epic unresolvable in headless mode"}`. Do NOT create an epic autonomously — naming one is a judgement call the user owns.
+
+   Do NOT proceed without a verified ledger epic ID.
+
+   **Naming a new epic** (interactive only): use `SCOPE-NNN`, where `SCOPE` is one or more uppercase words describing the work joined by hyphens, and `NNN` is a zero-padded sequence starting at `001` — matching the epics already in the ledger (`UPSTREAM-PORT-001`, `REVIEWER-EFFORT-001`, `DASH-KB-001`). Derive the scope from the epic's subject, not from a ticket key. Confirm the candidate ID is free by checking the registry listing (`task ledger:index -- --limit 1000`) for an exact match, so a re-run does not collide. Do not use `ledger:resume` for this — an artifact-free epic returns empty there and would look free while already being taken. The `epic_id` is positional; `--priority` accepts 0-9 where 0 is highest:
+
+   ```bash
+   task ledger:create -- UPSTREAM-PORT-001 --title "Port upstream harness improvements" --priority 3
+   ```
 
 1. **Memory Check (Mandatory)**: Query ChromaDB (`long_term_memory` and `chat_history`) and the Execution Ledger (`execution-ledger index-epics`) for relevant patterns, active epics, or "gotchas". Check [docs/learnings.md](../../../docs/learnings.md) and [docs/architecture.md](../../../docs/architecture.md). Incorporate findings to prevent repeating mistakes.
 
@@ -37,7 +53,7 @@ Do not write any implementation code yourself. For term definitions (Domain, Wav
      `Status: Grilling — pending user confirmation` and halt.
    - In **headless mode** (`CI=true` or explicit headless
      signal), delegate to an `explore` agent for automated
-     requirements extraction from the JIRA ticket and codebase.
+     requirements extraction from the work item and codebase.
      Note as `[auto-extracted]`. If zero requirements,
      fail-closed: halt and checkpoint
      `{"verdict": "fail", "reason": "zero requirements extracted
@@ -78,7 +94,7 @@ Do not write any implementation code yourself. For term definitions (Domain, Wav
 
 12. **Ledger Checkpoint & Status Transition.** Once the user approves, checkpoint the plan to the ledger and transition the epic to `approved`:
     - Save the plan as a `plan_snapshot` artifact via the `execution-ledger` skill with `epic_status: approved`.
-    - Transition the epic's SQLite index status: `execution-ledger status <JIRA-TICKET> --new-status approved`.
+    - Transition the epic's SQLite index status: `execution-ledger status <EPIC-ID> --new-status approved`.
     - This makes the epic visible to `next-plan` for bot-driven execution. Without this step, the epic remains `pending` and cannot be claimed.
 
 ## PHASE 2: Execution (Orchestrator → agent-team)

@@ -10,7 +10,7 @@ Unlike the `ship` skill, this does NOT group changes into multiple PRs.
 It treats the working tree as a single unit.
 
 **Shared procedures**: This skill references
-[docs/pr_protocol.md](../../../docs/pr_protocol.md) for JIRA ticket
+[docs/pr_protocol.md](../../../docs/pr_protocol.md) for work item
 resolution, PR template detection, body generation, trailer format,
 auto-review, and CI/merge procedures. Read that document before
 proceeding.
@@ -31,8 +31,21 @@ Run `task git:status` and `task git:log -- --oneline origin/main..HEAD` to under
 
 If there are uncommitted changes:
 
-1. Resolve the JIRA ticket per [docs/pr_protocol.md](../../../docs/pr_protocol.md) (user hint, branch name, or ask).
-   Create a branch: `task git:checkout -- -b <type>/<short-name>_<JIRA-TICKET>` (e.g., `feat/add-metrics_ACME-1234`).
+1. Resolve the work item per [docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch name, active ledger epic, or ask).
+   Create a branch — use the form matching the resolved tracking system. First
+   check `task git:status`: if you are **already on** the intended branch, skip
+   this step, because `checkout -b` on an existing branch fails with
+   `fatal: A branch named '...' already exists` and aborts the run. Omitting the
+   ID suffix makes that collision more likely, not less.
+
+   ```bash
+   # Execution Ledger, GitHub Issues, or none — no ID suffix:
+   task git:checkout -- -b <type>/<short-name>
+
+   # JIRA or Linear — ID suffix required:
+   task git:checkout -- -b <type>/<short-name>_<ID>
+   ```
+
 2. **Artifact & Hygiene Review (Delegated)**: Before staging, you MUST delegate to a subagent (e.g., `explore` or `tdd-refactor`) to specifically review the `git status` output for temporary artifacts, debug files, or anomalies (e.g., `testItEOF`, `*.tmp`, `x[a-z][a-z]` split artifacts, out-of-place logs).
    - If the subagent has very high confidence the file is a temporary garbage artifact, the Orchestrator MUST safely remove it (e.g., `rm <file>`).
    - If there is uncertainty, the Orchestrator MUST flag the file and explicitly ask for the user's review before proceeding.
@@ -41,8 +54,10 @@ If there are uncommitted changes:
 
 If there are only unpushed commits (clean working tree):
 
-1. Resolve the JIRA ticket, then create a branch from HEAD:
-   `task git:checkout -- -b <type>/<short-name>_<JIRA-TICKET>`
+1. Resolve the work item, then create a branch from HEAD using the same
+   two-form convention given in step 1 of "If there are uncommitted changes"
+   above — no ID suffix for Execution Ledger, GitHub Issues, or none;
+   `_<ID>` suffix for JIRA or Linear.
 
 ## Step 2b: Pre-Push Validation Gate
 
@@ -77,7 +92,13 @@ Do not assume the fix worked. Do not push broken files.
 
 Before pushing, invoke the
 [diff-review](../diff-review/SKILL.md) skill to validate implementation quality.
-Pass the JIRA ticket as `epic_id` (if available) and use the PR's target branch
+Pass the **active ledger epic** as `epic_id`, resolved via
+`execution-ledger resume` independently of the PR's Work Item reference — a PR
+tracked in JIRA, Linear, or GitHub can still belong to a ledger epic, and the
+later `pr_created` checkpoint, `in_review` transition, and PR-ref steps all
+depend on it. Omit `epic_id` only when there is genuinely no active epic, and
+never set it to a foreign tracker's ID (see `pr_protocol.md` §The work item and
+the ledger epic are independent). Use the PR's target branch
 as the base. **If running in headless mode**, propagate the headless signal per
 delegation protocol §5. Do NOT proceed to push until the diff-review gate
 returns `MergeDecision.action == "APPROVE"`.
@@ -106,11 +127,13 @@ in `pr_protocol.md` for the full signal table.
 `$ARGUMENTS`): Skip this confirmation gate and proceed automatically to
 Step 3. Checkpoint a `step_result` artifact to the Execution Ledger with
 `{"step": "pre-push-confirmation", "verdict": "skipped-headless"}` before
-proceeding. If no JIRA ticket was supplied via `$ARGUMENTS` or branch name,
+proceeding. If no work item was supplied via `$ARGUMENTS` or branch name,
 query the Execution Ledger (`execution-ledger resume`) to derive the active
-epic's `epic_id` and use that as the ticket. If the ticket still cannot be
-resolved, halt immediately and checkpoint
-`{"verdict": "fail", "reason": "JIRA ticket unresolvable in headless mode"}`.
+epic's `epic_id` and use that. If none resolves, headless mode MUST NOT
+invent one and MUST NOT silently record `none` — `none` requires user
+confirmation that no tracked item exists, which is unavailable here. Halt
+immediately and checkpoint
+`{"verdict": "fail", "reason": "work item unresolvable in headless mode"}`.
 
 **Interactive mode** (default — no headless signal):
 
@@ -132,12 +155,12 @@ Follow the procedures in
 
 1. **Template Detection** — locate and use PR template if present.
 2. **Generate PR Body** — fill template or use standard format with
-   mandatory JIRA ticket line.
+   mandatory Work Item line.
 3. **Append Trailer** — add the Co-authored-by trailer for your
    agent platform.
 4. **Create PR** — write body to `tmp/<branch>/pr_body.md`, then
    `task gh:pr -- create`.
-5. **Ledger Checkpoint** — After successfully creating the PR, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, and JIRA ticket in the metadata. If the PR is subsequently merged (Step 4), checkpoint a `pr_merged` artifact with the merge SHA and PR number.
+5. **Ledger Checkpoint** *(steps 5 and 6 apply only when an active ledger epic was resolved — see the `epic_id` note in Step 2c. For an ad-hoc PR with no epic, **skip both entirely**; do not invent an epic and do not call ledger commands with an empty ID, which fails after the PR already exists)* — After successfully creating the PR, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, and the Work Item reference in the metadata. If the PR is subsequently merged (Step 4), checkpoint a `pr_merged` artifact with the merge SHA and PR number.
 6. **Epic Status Transition** — After creating the PR and checkpointing
    `pr_created`, transition the epic from `in_progress` to `in_review`
    via `task ledger:status -- <epic_id> --new-status in_review`. Then

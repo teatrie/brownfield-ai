@@ -9,7 +9,7 @@ dirty working tree, group changes into logical PRs, get user approval,
 then create the PRs sequentially.
 
 **Shared procedures**: This skill references
-[docs/pr_protocol.md](../../../docs/pr_protocol.md) for JIRA ticket
+[docs/pr_protocol.md](../../../docs/pr_protocol.md) for work item
 resolution, PR template detection, body generation, trailer format,
 auto-review, and CI/merge procedures. Read that document before
 proceeding.
@@ -104,7 +104,7 @@ PR 3: ...
 `$ARGUMENTS`): Skip the grouping confirmation and proceed automatically to
 PHASE 1b. Checkpoint a `step_result` artifact to the Execution Ledger with
 `{"step": "grouping-approval", "verdict": "skipped-headless", "groups": <summary>}`
-before proceeding. If the grouping is ambiguous (no JIRA ticket resolvable
+before proceeding. If the grouping is ambiguous (no work item resolvable
 from `$ARGUMENTS`, branch name, or active Execution Ledger epic via
 `execution-ledger resume`), halt immediately and checkpoint
 `{"verdict": "fail", "reason": "grouping approval unresolvable in headless mode"}`.
@@ -189,14 +189,18 @@ For each PR **in dependency order**, you MUST wait for the previous PR to be mer
 
 Branch from the updated `main`. This ensures the new branch contains the previously merged changes and stays strictly up-to-date with `main` to satisfy repository rebase rules.
 
-Resolve the JIRA ticket per
-[docs/pr_protocol.md](../../../docs/pr_protocol.md) (user hint, branch
+Resolve the work item per
+[docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch
 name, or ask).
 
 ```bash
 task git:checkout -- main
 task git:pull
-task git:checkout -- -b ship/<short-name>_<JIRA-TICKET> main
+# Execution Ledger, GitHub Issues, or none — no ID suffix:
+task git:checkout -- -b ship/<short-name> main
+
+# JIRA or Linear — ID suffix required:
+task git:checkout -- -b ship/<short-name>_<ID> main
 ```
 
 Use the prefix `ship/` for all branches (e.g.,
@@ -210,7 +214,12 @@ Stage **only** the files belonging to this PR group. Use `task git:add -- <file>
 
 Before pushing, invoke the
 [diff-review](../diff-review/SKILL.md) skill scoped to the files in this PR's
-commit group. Pass the JIRA ticket as `epic_id` (if available) and use the PR's
+commit group. Pass the **active ledger epic** as `epic_id`, resolved via
+`execution-ledger resume` independently of the Work Item reference — a group
+tracked in JIRA, Linear, or GitHub can still belong to a ledger epic, and the
+later ledger transition and PR-ref steps depend on it. Omit only when there is
+no active epic, and never set it to a foreign tracker's ID (see
+`pr_protocol.md` §The work item and the ledger epic are independent). Use the PR's
 target branch as the base. **If running in headless mode**, propagate the
 headless signal per delegation protocol §5. Do NOT proceed to push until the
 diff-review gate returns APPROVED.
@@ -226,7 +235,7 @@ Follow the procedures in
 
 1. **Template Detection** — locate and use PR template if present.
 2. **Generate PR Body** — fill template or use standard format with
-   mandatory JIRA ticket line. For multi-PR flows, include the
+   mandatory Work Item line. For multi-PR flows, include the
    **Merge Order** section from the protocol.
 3. **Append Trailer** — add the Co-authored-by trailer for your
    agent platform.
@@ -266,7 +275,7 @@ TODOs were captured.
 
 Save each PR's URL and number for the final summary.
 
-**Ledger Checkpoint:** After each PR is created, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, JIRA ticket, and merge order position. After each PR is merged, checkpoint a `pr_merged` artifact with the merge SHA and PR number.
+**Ledger Checkpoint:** *(Applies only when an active ledger epic was resolved. For an ad-hoc group with no epic, skip every ledger operation in this step — checkpoint, `ledger:status`, and `ledger:set-prs` alike. Do not invent an epic and do not pass an empty ID, which fails after the PRs already exist.)* After each PR is created, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, Work Item reference, and merge order position. After each PR is merged, checkpoint a `pr_merged` artifact with the merge SHA and PR number.
 
 Follow the **CI Wait & Merge** procedure in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md). Ask the user
