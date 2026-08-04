@@ -20,7 +20,9 @@ tests alone cannot detect.
   via `$ARGUMENTS` (e.g., "diff-review against origin/develop").
 - **File scope**: Optional file or directory filter. Default: full diff. Override
   via `$ARGUMENTS` (e.g., "diff-review scoped to src/").
-- **Epic ID**: Optional JIRA ticket for Execution Ledger checkpointing. If
+- **Epic ID**: Optional **Execution Ledger epic ID** for ledger checkpointing —
+  not a generic work item reference; a JIRA, Linear, or GitHub ID here would
+  create artifacts under an epic that does not exist. If
   provided, `gate_verdict` artifacts are checkpointed. If omitted (ad-hoc
   invocation), results are reported directly without ledger interaction.
 

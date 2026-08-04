@@ -274,7 +274,7 @@ on the full code diff:
    Procedure defined in the Teammate Lifecycle section above. In subagent mode,
    skip this sub-step and proceed directly to sub-step 2.
 2. **Invoke**: Run the `diff-review` skill with `epic_id` set to the epic's
-   JIRA ticket and the default base branch (`origin/main`). **If running in
+   Execution Ledger epic ID and the default base branch (`origin/main`). **If running in
    headless mode**, propagate the headless signal per delegation protocol §5
    (include "You are running in a headless non-interactive session" in the
    invocation prompt and pass `--env CI=true` to any containers).
