@@ -7,13 +7,19 @@ part worth testing; the container run is not. The ``route`` fixture in
 list), plus ``docker`` and ``task`` (to swallow the execution stage), and the
 assertions here read the targets back off the router's own announcement line.
 
+The routers run in a fake workspace rather than the repository, which is what
+lets the security gate be shadowed — it is invoked by a path relative to the
+working directory, not through ``PATH``. Nothing here touches the real
+repository state, so these tests assert on routing alone and nothing else.
+
 Two deliberate limits:
 
-- ``docker/shared/python-security-gate.sh`` is invoked by relative path, so it
-  cannot be shadowed via ``PATH`` and does run. Its path-containment, realpath,
-  and mode checks are therefore exercised for real; only its *tracked-file*
-  probes are answered by the git stub, because those are the queries that make
-  the gate depend on the ambient repository.
+- The security gate is stubbed, so its path-containment and tracked-file
+  checks are **not** covered here. They belong to
+  ``tests/scripts/test_python_security_gate.py``. Running the real gate was
+  tried and abandoned: it writes ``tmp/.python-gate-pass``, which in CI is
+  already owned by the outer gate run's uid, so the nested write failed with
+  EACCES and ``set -e`` killed the router before it announced anything.
 - Assertions read the announced targets rather than the exit code, because the
   code reports on the stubbed execution stage. It is not meaningless, though:
   the stubs exit 0, so a non-zero code means the router itself failed, and
@@ -57,19 +63,12 @@ HOOKS_SUITE = "tests/hooks/"
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
 GIT_STUB = """#!/usr/bin/env bash
-# Fully synthetic git — nothing here ever reaches the real binary.
+# Fully synthetic git — nothing here reaches the real binary, so no assertion
+# can be swayed by the state of the developer's or the runner's checkout.
 #
-# Both the routers and the security gate they invoke call git, and the gate
-# inherits this PATH. Delegating any of it to real git makes the harness depend
-# on the ambient repository, which is not merely impure but actively breaks:
-# inside the CI test container the mounted workspace is owned by a different
-# uid than the `agent` user running pytest, so real git refuses it. Under
-# `set -e` that turned every routing assertion into a silent crash — the
-# routers died before printing anything.
-#
-# Matching on the subcommand rather than on flag positions also keeps a router
-# that reorders its flags (`git diff --cached --name-only`) from falling
-# through unnoticed.
+# Matching on the subcommand rather than on flag positions keeps a router that
+# reorders its flags (`git diff --cached --name-only`) from falling through
+# unnoticed.
 case "$1" in
     diff)
         # Every `git diff` in these routers is a changed-file query.
@@ -78,14 +77,10 @@ case "$1" in
     ls-files)
         shift
         case "${1:-}" in
-            # Gate probe: is this exact path tracked? Routed targets always are.
-            --error-unmatch) ;;
             # Root-commit branch of test_changed.sh: "all tracked files".
             "") cat "$ROUTER_TEST_CHANGED_FILES" ;;
-            # Flag-only queries (--others --exclude-standard): no untracked files.
-            -*) ;;
-            # Gate probe: does this directory hold a tracked file? One suffices.
-            *) echo "$1" ;;
+            # --others --exclude-standard: report no untracked files.
+            *) ;;
         esac
         ;;
     rev-parse)

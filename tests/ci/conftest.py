@@ -36,6 +36,21 @@ def route(tmp_path: Path) -> RouteFn:
         stub.write_text(body, encoding="utf-8")
         stub.chmod(0o755)
 
+    # The routers run against a fake workspace, not the repository. The
+    # security gate is invoked by a path relative to the working directory, so
+    # this is the only way to shadow it — and it must be shadowed: the gate
+    # writes tmp/.python-gate-pass, which in CI is already owned by the outer
+    # gate run's uid, so the nested write fails with EACCES and `set -e` kills
+    # the router before it announces anything. `tests/` is symlinked in so the
+    # `[ -f "$test_file" ]` probes still see real test files.
+    workspace = tmp_path / "workspace"
+    (workspace / "docker" / "shared").mkdir(parents=True)
+    gate = workspace / "docker" / "shared" / "python-security-gate.sh"
+    gate.write_text(NOOP_STUB, encoding="utf-8")
+    gate.chmod(0o755)
+    (workspace / "tmp").mkdir()
+    (workspace / "tests").symlink_to(REPO_ROOT / "tests")
+
     listing = tmp_path / "changed-files.txt"
 
     def _route(
@@ -57,7 +72,7 @@ def route(tmp_path: Path) -> RouteFn:
 
         return subprocess.run(
             ["bash", str(REPO_ROOT / "ci" / script), target],
-            cwd=REPO_ROOT,
+            cwd=workspace,
             env=env,
             capture_output=True,
             text=True,

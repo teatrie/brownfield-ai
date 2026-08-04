@@ -6,7 +6,7 @@ unique to this router. Harness details and its deliberate limits are
 documented in ``helpers.router_harness``.
 """
 
-from helpers.router_harness import RouteFn, RouterContract, routed_targets
+from helpers.router_harness import RouteFn, RouterContract, diagnose, routed_targets
 
 
 class TestChangedRouter(RouterContract):
@@ -21,4 +21,4 @@ class TestChangedRouter(RouterContract):
         its grep entirely.
         """
         result = route(self.SCRIPT, ["docker/agent-cli/entrypoint.sh"])
-        assert routed_targets(result) == ["tests/scripts/test_agent_cli_entrypoint.py"]
+        assert routed_targets(result) == ["tests/scripts/test_agent_cli_entrypoint.py"], diagnose(result)
