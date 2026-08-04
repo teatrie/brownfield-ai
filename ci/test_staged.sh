@@ -69,7 +69,7 @@ run_pytest_venv() {
 }
 
 if [ "$TARGET" == "scripts" ]; then
-    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|docker/shared/)" || true)
+    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|docker/shared/|\.claude/settings(\.local)?\.json)" || true)
 
     if [ -n "$CHANGED_SCRIPTS" ]; then
         declare -a TEST_TARGETS_ARRAY=()
@@ -94,12 +94,18 @@ if [ "$TARGET" == "scripts" ]; then
                     TEST_TARGETS_ARRAY+=("$test_file")
                 fi
             elif [[ "$file" == .claude/hooks/* ]]; then
-                # Map hook to its test file in tests/hooks/
-                basename=$(basename "$file" .sh)
-                test_file="tests/hooks/test_${basename}.py"
-                if [ -f "$test_file" ]; then
-                    TEST_TARGETS_ARRAY+=("$test_file")
-                fi
+                # Route to the whole suite rather than deriving a test name.
+                # Hooks are dash-named, their tests underscore-named with a
+                # _hook suffix, and block-container-escape.sh /
+                # test_block_container_hook.py share no stem at all — so no
+                # derivation rule resolves every hook, and a miss silently
+                # routes a security-boundary change to zero tests.
+                TEST_TARGETS_ARRAY+=("tests/hooks/")
+            elif [[ "$file" == .claude/settings*.json ]]; then
+                # The permission-baseline and hook-registration-integrity
+                # tests live in tests/hooks/ and are the only gate on this
+                # file.
+                TEST_TARGETS_ARRAY+=("tests/hooks/")
             elif [[ "$file" == .claude/agents/* ]]; then
                 # Any agent .md change re-runs the variant-parity contract.
                 # The test walks .claude/agents/*-{high,xhigh,max}.md and

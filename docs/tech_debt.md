@@ -37,18 +37,10 @@ Agents MUST proactively document any codebase flaws, confusing conventions, or r
 
 ---
 
-### A hook edited without its test — or any settings change — routes to zero tests
-
-- **Context**: `ci/test_staged.sh:72,96-102` and `ci/test_changed.sh:110,159-165` (byte-identical branches).
-- **Description**: The `.claude/hooks/*` branch derives `tests/hooks/test_${basename}.py` from a dash-named hook without the `-`→`_` conversion its sibling branches perform, so `[ -f ]` never matches. Adding the conversion is insufficient: the real test files carry a `_hook` suffix and `block-container-escape.sh` / `test_block_container_hook.py` share no stem, so zero of five hooks resolve under any derivation rule. **Scope precisely**: a diff that touches a hook *and* its `tests/hooks/*.py` file still routes, because the test file matches the `tests/hooks/*` branch at line 77 and is added directly. The hole is a hook edited **alone** — exactly the shape of a logic-only change to security-boundary code — which silently runs nothing. Separately, `.claude/settings.json` appears in neither routing grep, so `test_settings_permission_baseline.py` and `test_settings_hook_registration_integrity.py` never fire on the file they exist to guard, in any diff shape. `test_changed.sh` is the pre-push gate for `auto-pr` and `ship`, so this reaches the PR path too. Observed 2026-08-03: staging a new hook plus a `settings.json` edit, with no test file yet, produced `No testable scripts found`.
-- **Proposed Fix**: Route `.claude/hooks/*` and `.claude/settings*.json` to the `tests/hooks/` **directory** rather than a derived filename — matching the existing fallback idiom at `ci/test_staged.sh:148-151`. Ready-to-apply operator patch (both files) was written to `tmp/operator-patch-hook-routing/APPLY.md`; re-derive from this entry if that scratch directory is gone. Both files are `.sh`, so this is operator-applied.
-
----
-
 ### `docker/agent-cli/` routing asymmetry between the two gates
 
 - **Context**: `ci/test_changed.sh:110` vs `ci/test_staged.sh:72`.
-- **Description**: The `changed` grep covers `docker/agent-cli/`; the `staged` grep does not. A change under `docker/agent-cli/` is therefore gated pre-push but not at the per-step `test:staged` checkpoint, so the failure surfaces later than it should.
+- **Description**: The `changed` grep covers `docker/agent-cli/`; the `staged` grep does not. A change under `docker/agent-cli/` is therefore gated pre-push but not at the per-step `test:staged` checkpoint, so the failure surfaces later than it should. The current behaviour is pinned on both sides — `TestStagedRouter::test_agent_cli_paths_are_not_routed` and `TestChangedRouter::test_agent_cli_path_routes_to_prefixed_test` — so reconciling the greps means updating those two tests deliberately rather than discovering the divergence again.
 - **Proposed Fix**: Reconcile the two greps. Confirm which other prefixes diverge while doing so — this was found incidentally, so the audit is not exhaustive.
 
 ---
