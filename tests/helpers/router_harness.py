@@ -10,8 +10,10 @@ assertions here read the targets back off the router's own announcement line.
 Two deliberate limits:
 
 - ``docker/shared/python-security-gate.sh`` is invoked by relative path, so it
-  cannot be shadowed via ``PATH``. It runs for real, which is a feature: a
-  routed target the gate would reject surfaces as a failure here.
+  cannot be shadowed via ``PATH`` and does run. Its path-containment, realpath,
+  and mode checks are therefore exercised for real; only its *tracked-file*
+  probes are answered by the git stub, because those are the queries that make
+  the gate depend on the ambient repository.
 - Assertions read the announced targets rather than the exit code, because the
   code reports on the stubbed execution stage. It is not meaningless, though:
   the stubs exit 0, so a non-zero code means the router itself failed, and
@@ -55,18 +57,45 @@ HOOKS_SUITE = "tests/hooks/"
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
 GIT_STUB = """#!/usr/bin/env bash
-# Intercept every `git diff` — each one in these routers is a changed-file
-# query. Matching on the subcommand alone rather than on flag positions keeps
-# the stub from silently falling through to real git if a router ever reorders
-# its flags (`git diff --cached --name-only`); a fall-through would answer from
-# the developer's actual worktree and quietly destroy test isolation.
-# Every other subcommand — ls-files, rev-parse — must reach real git, or the
-# security gate loses the tracked-file validation it performs on the targets.
-if [ "$1" = "diff" ]; then
-    cat "$ROUTER_TEST_CHANGED_FILES"
-    exit 0
-fi
-exec "$ROUTER_TEST_REAL_GIT" "$@"
+# Fully synthetic git — nothing here ever reaches the real binary.
+#
+# Both the routers and the security gate they invoke call git, and the gate
+# inherits this PATH. Delegating any of it to real git makes the harness depend
+# on the ambient repository, which is not merely impure but actively breaks:
+# inside the CI test container the mounted workspace is owned by a different
+# uid than the `agent` user running pytest, so real git refuses it. Under
+# `set -e` that turned every routing assertion into a silent crash — the
+# routers died before printing anything.
+#
+# Matching on the subcommand rather than on flag positions also keeps a router
+# that reorders its flags (`git diff --cached --name-only`) from falling
+# through unnoticed.
+case "$1" in
+    diff)
+        # Every `git diff` in these routers is a changed-file query.
+        cat "$ROUTER_TEST_CHANGED_FILES"
+        ;;
+    ls-files)
+        shift
+        case "${1:-}" in
+            # Gate probe: is this exact path tracked? Routed targets always are.
+            --error-unmatch) ;;
+            # Root-commit branch of test_changed.sh: "all tracked files".
+            "") cat "$ROUTER_TEST_CHANGED_FILES" ;;
+            # Flag-only queries (--others --exclude-standard): no untracked files.
+            -*) ;;
+            # Gate probe: does this directory hold a tracked file? One suffices.
+            *) echo "$1" ;;
+        esac
+        ;;
+    rev-parse)
+        # HEAD^ must resolve, or test_changed.sh takes its root-commit branch.
+        echo "0000000000000000000000000000000000000000"
+        ;;
+    *)
+        ;;
+esac
+exit 0
 """
 
 NOOP_STUB = """#!/usr/bin/env bash
@@ -92,6 +121,23 @@ def routed_targets(result: subprocess.CompletedProcess[str]) -> list[str]:
     return []
 
 
+def diagnose(result: subprocess.CompletedProcess[str]) -> str:
+    """
+    Render a router run for an assertion message.
+
+    stderr carries as much as stdout here: under ``set -e`` a router that dies
+    early prints nothing to stdout, so a stdout-only message reports that the
+    target list was empty without saying why.
+
+    Args:
+        result: Completed router process.
+
+    Returns:
+        Exit code, stdout, and stderr, labelled.
+    """
+    return f"exit={result.returncode}\n--- stdout ---\n{result.stdout}--- stderr ---\n{result.stderr}"
+
+
 def assert_routed_nothing(result: subprocess.CompletedProcess[str]) -> None:
     """
     Assert the router ran successfully and deliberately selected no targets.
@@ -104,8 +150,8 @@ def assert_routed_nothing(result: subprocess.CompletedProcess[str]) -> None:
     Args:
         result: Completed router process.
     """
-    assert result.returncode == 0, f"router failed (exit {result.returncode}): {result.stderr}"
-    assert routed_targets(result) == [], f"expected no targets, got: {result.stdout}"
+    assert result.returncode == 0, f"router failed\n{diagnose(result)}"
+    assert routed_targets(result) == [], f"expected no targets\n{diagnose(result)}"
 
 
 class RouterContract:
@@ -125,22 +171,23 @@ class RouterContract:
     def test_hook_alone_routes_to_suite(self, route: RouteFn, hook: str) -> None:
         """A hook edited on its own routes to the whole hooks suite."""
         result = route(self.SCRIPT, [hook])
-        assert routed_targets(result) == [HOOKS_SUITE], f"{hook} routed to: {result.stdout}"
+        assert routed_targets(result) == [HOOKS_SUITE], f"{hook}\n{diagnose(result)}"
 
     @pytest.mark.parametrize("settings", SETTINGS_FILES)
     def test_settings_alone_routes_to_suite(self, route: RouteFn, settings: str) -> None:
         """A settings change routes to the suite holding its two guard tests."""
         result = route(self.SCRIPT, [settings])
-        assert routed_targets(result) == [HOOKS_SUITE], f"{settings} routed to: {result.stdout}"
+        assert routed_targets(result) == [HOOKS_SUITE], f"{settings}\n{diagnose(result)}"
 
     def test_many_hooks_collapse_to_one_target(self, route: RouteFn) -> None:
         """Several changed hooks deduplicate to a single directory target."""
-        assert routed_targets(route(self.SCRIPT, list(HOOKS))) == [HOOKS_SUITE]
+        result = route(self.SCRIPT, list(HOOKS))
+        assert routed_targets(result) == [HOOKS_SUITE], diagnose(result)
 
     def test_hook_and_settings_collapse_to_one_target(self, route: RouteFn) -> None:
         """The hook and settings branches share one target without duplicating it."""
         result = route(self.SCRIPT, [HOOKS[0], SETTINGS_FILES[0]])
-        assert routed_targets(result) == [HOOKS_SUITE]
+        assert routed_targets(result) == [HOOKS_SUITE], diagnose(result)
 
     @pytest.mark.parametrize("hook", HOOKS)
     def test_no_filename_derivation(self, route: RouteFn, hook: str) -> None:
@@ -151,12 +198,14 @@ class RouterContract:
         stem, so any derived name silently resolves to nothing.
         """
         derived = f"tests/hooks/test_{Path(hook).stem.replace('-', '_')}.py"
-        assert derived not in routed_targets(route(self.SCRIPT, [hook]))
+        result = route(self.SCRIPT, [hook])
+        assert derived not in routed_targets(result), diagnose(result)
 
     def test_hook_test_file_still_routes_directly(self, route: RouteFn) -> None:
         """A changed test under tests/hooks/ is still added as itself."""
         test_file = "tests/hooks/test_block_stranded_agent_hook.py"
-        assert routed_targets(route(self.SCRIPT, [test_file])) == [test_file]
+        result = route(self.SCRIPT, [test_file])
+        assert routed_targets(result) == [test_file], diagnose(result)
 
     def test_unrelated_file_routes_nothing(self, route: RouteFn) -> None:
         """A file outside every branch selects no targets."""
@@ -165,19 +214,20 @@ class RouterContract:
     def test_agent_definition_routes_to_variant_parity(self, route: RouteFn) -> None:
         """An agent .md change routes to the parity contract."""
         result = route(self.SCRIPT, [".claude/agents/code-review.md"])
-        assert routed_targets(result) == ["tests/agents/test_variant_parity.py"]
+        assert routed_targets(result) == ["tests/agents/test_variant_parity.py"], diagnose(result)
 
     def test_shared_docker_script_routes_by_derived_name(self, route: RouteFn) -> None:
         """docker/shared/ keeps filename derivation, which resolves for it."""
         result = route(self.SCRIPT, ["docker/shared/python-security-gate.sh"])
-        assert routed_targets(result) == ["tests/scripts/test_python_security_gate.py"]
+        assert routed_targets(result) == ["tests/scripts/test_python_security_gate.py"], diagnose(result)
 
     def test_independent_branches_accumulate(self, route: RouteFn) -> None:
         """Separate branches add targets rather than shadowing each other."""
         result = route(self.SCRIPT, [HOOKS[4], ".claude/agents/code-review.md"])
-        assert sorted(routed_targets(result)) == sorted([HOOKS_SUITE, "tests/agents/test_variant_parity.py"])
+        expected = sorted([HOOKS_SUITE, "tests/agents/test_variant_parity.py"])
+        assert sorted(routed_targets(result)) == expected, diagnose(result)
 
     def test_hook_alone_is_not_reported_as_untestable(self, route: RouteFn) -> None:
         """The original defect: a lone hook printed 'No testable scripts found'."""
         result = route(self.SCRIPT, [HOOKS[3]])
-        assert "No testable scripts found." not in result.stdout
+        assert "No testable scripts found." not in result.stdout, diagnose(result)

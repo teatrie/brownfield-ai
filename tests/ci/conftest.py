@@ -5,7 +5,6 @@ The harness itself — constants, assertions, and the shared ``RouterContract``
 """
 
 import os
-import shutil
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -27,10 +26,6 @@ def route(tmp_path: Path) -> RouteFn:
         list, plus an optional keyword-only ``target`` (default ``scripts``),
         and returning the completed process.
     """
-    real_git = shutil.which("git")
-    if real_git is None:
-        pytest.skip("git must be on PATH to exercise the routers")
-
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     # `task` is stubbed alongside `docker` so a changed-file list reaching the
@@ -54,7 +49,6 @@ def route(tmp_path: Path) -> RouteFn:
         env = os.environ.copy()
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
         env["ROUTER_TEST_CHANGED_FILES"] = str(listing)
-        env["ROUTER_TEST_REAL_GIT"] = real_git
         # Pin the push branch of test_changed.sh so CHANGED_FILES comes from a
         # single intercepted `git diff --name-only`. Its local branch unions
         # four git queries, two of which would leak real worktree state into
