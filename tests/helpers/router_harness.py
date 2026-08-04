@@ -12,8 +12,12 @@ Two deliberate limits:
 - ``docker/shared/python-security-gate.sh`` is invoked by relative path, so it
   cannot be shadowed via ``PATH``. It runs for real, which is a feature: a
   routed target the gate would reject surfaces as a failure here.
-- The exit code is not meaningful, because the stages producing it are stubbed
-  out. Assertions look at the announced targets instead.
+- Assertions read the announced targets rather than the exit code, because the
+  code reports on the stubbed execution stage. It is not meaningless, though:
+  the stubs exit 0, so a non-zero code means the router itself failed, and
+  ``assert_routed_nothing`` checks it — otherwise a router that crashed before
+  announcing would be indistinguishable from one that deliberately selected
+  nothing.
 
 Lives under ``tests/helpers/`` rather than beside the tests because
 ``pytest.ini`` sets ``--import-mode=importlib``, which does not put a test's
@@ -51,10 +55,14 @@ HOOKS_SUITE = "tests/hooks/"
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
 GIT_STUB = """#!/usr/bin/env bash
-# Intercept the changed-file queries only. Every other subcommand — ls-files
-# and rev-parse — must reach real git, or the security gate loses the
-# tracked-file validation it performs on the routed targets.
-if [ "$1" = "diff" ] && [ "$2" = "--name-only" ]; then
+# Intercept every `git diff` — each one in these routers is a changed-file
+# query. Matching on the subcommand alone rather than on flag positions keeps
+# the stub from silently falling through to real git if a router ever reorders
+# its flags (`git diff --cached --name-only`); a fall-through would answer from
+# the developer's actual worktree and quietly destroy test isolation.
+# Every other subcommand — ls-files, rev-parse — must reach real git, or the
+# security gate loses the tracked-file validation it performs on the targets.
+if [ "$1" = "diff" ]; then
     cat "$ROUTER_TEST_CHANGED_FILES"
     exit 0
 fi
@@ -86,11 +94,17 @@ def routed_targets(result: subprocess.CompletedProcess[str]) -> list[str]:
 
 def assert_routed_nothing(result: subprocess.CompletedProcess[str]) -> None:
     """
-    Assert the router selected no targets.
+    Assert the router ran successfully and deliberately selected no targets.
+
+    The exit-code check is what separates "chose nothing" from "died before it
+    could announce anything" — both produce an empty target list. Nothing
+    downstream of the stubs runs on this path, so a non-zero code here is
+    always a real router failure.
 
     Args:
         result: Completed router process.
     """
+    assert result.returncode == 0, f"router failed (exit {result.returncode}): {result.stderr}"
     assert routed_targets(result) == [], f"expected no targets, got: {result.stdout}"
 
 
