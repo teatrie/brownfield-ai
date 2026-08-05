@@ -531,7 +531,7 @@ To prevent context loss and provide shared visibility across sessions, project t
      folder remains the **derivation record** showing how it was reached.
      Do not leave the only copy of a general rule inside an epic folder.
 
-   See [docs/plans/README.md](../docs/plans/README.md).
+   See [docs/plans/README.md](plans/README.md).
 5. **Dual-Model Review** (mandatory): The Planner must invoke the
    **Dual-Model Review Gate** defined in
    [verification_protocol.md](verification_protocol.md). Spawn two

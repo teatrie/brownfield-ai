@@ -12,8 +12,13 @@ substitute for the other two, and they are not substitutes for it:
 | Machine record | ledger epic + `plan_snapshot` / `step_result` | ChromaDB | agents resuming work |
 | **Human review** | **`docs/plans/<EPIC-ID>/`** | **yes** | **teammates reviewing a plan** |
 
-`plan.md` is disposable by design: the next epic overwrites it and nothing is
-recoverable. Promote a plan here when teammates need to review it, and create a
+`plan.md` is disposable by design: the next epic overwrites it, and outside the
+one case below nothing is recoverable. The exception is a plan paused with
+`/status pause`, which force-adds `plan.md` onto a pause branch and pushes it —
+[status-sync](../../workflows/repository-maintenance/skills/status-sync/SKILL.md)
+is the supported recovery path, and `/status resume <branch>` restores it. That
+covers a plan you deliberately paused; it does nothing for one silently
+overwritten. Promote a plan here when teammates need to review it, and create a
 ledger epic when agents need to resume it. See
 [planning_protocol.md](../planning_protocol.md) §2 step 4.
 
