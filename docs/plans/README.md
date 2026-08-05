@@ -19,7 +19,8 @@ one case below nothing is recoverable. The exception is a plan paused with
 is the supported recovery path, and `/status resume <branch>` restores it. That
 covers a plan you deliberately paused; it does nothing for one silently
 overwritten. Promote a plan here when teammates need to review it, and create a
-ledger epic when agents need to resume it. See
+ledger epic when agents need to resume it — a `plan_snapshot` requires an
+approved plan, since drafts are not ledger-eligible. See
 [planning_protocol.md](../planning_protocol.md) §2 step 4.
 
 ## Folder shape
@@ -40,8 +41,9 @@ exists; a descriptive slug is fine where none does.
 
 ## Lifecycle block
 
-Every folder `README.md` opens with an HTML comment so the status is readable
-without rendering, and does not appear in the rendered document:
+Every epic folder's `README.md` opens with an HTML comment so the status is
+readable without rendering, and does not appear in the rendered document (this
+index file is not an epic folder and carries no lifecycle block):
 
 ```markdown
 <!--
