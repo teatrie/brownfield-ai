@@ -495,6 +495,27 @@ To prevent context loss and provide shared visibility across sessions, project t
    "auto-headless", "selected": "review"}`. Draft plans are not
    supported in headless mode — the plan proceeds directly to
    Dual-Model Review.
+
+   **Promotion to `docs/plans/` (human review)**: `plan.md` is *working
+   scratch* — untracked, no history, overwritten by the next epic. When a
+   plan needs review by human teammates in addition to the review-gate
+   agents, promote it to a tracked folder at
+   **`docs/plans/<EPIC-ID>/`** so it arrives as a reviewable PR. The three
+   layers are distinct and none substitutes for another:
+
+   | Layer | Artifact | Tracked | Audience |
+   |---|---|---|---|
+   | Working scratch | `plan.md` | no | the active session |
+   | Machine record | ledger epic + `plan_snapshot` / `step_result` | ChromaDB | agents resuming work |
+   | Human review | `docs/plans/<EPIC-ID>/` | yes | teammates reviewing a plan |
+
+   Promotion is orthogonal to the three options above and does **not**
+   substitute for the Dual-Model Review Gate in step 5 — a promoted plan
+   still requires both reviewers GREEN before implementation begins.
+
+   The folder's conventional shape, its lifecycle block, and the rules for
+   retaining it after the epic ships are documented in
+   [docs/plans/README.md](plans/README.md).
 5. **Dual-Model Review** (mandatory): The Planner must invoke the
    **Dual-Model Review Gate** defined in
    [verification_protocol.md](verification_protocol.md). Spawn two
