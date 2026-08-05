@@ -45,6 +45,14 @@ Agents MUST proactively document any codebase flaws, confusing conventions, or r
 
 ---
 
+### CI `lint` job rebuilds the infra-lint image uncached, with no retry
+
+- **Context**: `.github/workflows/ci.yml` (`lint` job, `Build Infra Lint Image` step) → `taskfiles/builders.yml:infra-lint` → `docker/builders/Dockerfile.infra-lint`.
+- **Description**: The build is a bare `docker compose --profile tools build infra-lint` — no `--cache-from`, no registry or GHA layer cache, no retry wrapper. Every CI run starts from a cold runner and rebuilds all twelve layers, each reaching a different remote: Docker Hub (`python:3.12-slim`), Debian apt, nodesource, PyPI, npm, and three GitHub release downloads. Any one of those timing out fails the `lint` job with a red check that is indistinguishable from a genuine lint violation, so a transient network fault reads as a code defect until someone opens the log. Diagnosing exactly that on PR #14 cost a full cycle.
+- **Proposed Fix**: Cache and retry are separable, and either alone reduces the failure rate. Cache: switch the step to `docker/build-push-action` with `cache-from: type=gha` / `cache-to: type=gha,mode=max`, or publish the image to GHCR on `main` and pull it as `--cache-from`. Retry: wrap the build in a bounded retry so a single registry timeout does not fail the job. Whichever lands, the job should distinguish infrastructure failure from lint failure in its exit surface — a build-stage failure is not a lint result.
+
+---
+
 ## Upstream repositories
 
 Debt discovered inside the repositories you clone under `repos/` belongs here
