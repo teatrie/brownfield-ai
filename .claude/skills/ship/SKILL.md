@@ -229,7 +229,7 @@ Reconciliation" against `<branch>` first:
 - **OPEN PR, conclusively ours** → resume with
   `task git:checkout -- <branch>`, which also creates the local tracking
   branch when only the remote ref is present, then sync with
-  **`task git:pull -- --rebase origin <branch>`**. Name the remote and branch
+  **`task git:pull -- --rebase --autostash origin <branch>`**. Name the remote and branch
   explicitly: a local branch that lost or never had upstream tracking
   makes a bare `git pull` fail with `no tracking information`. The remote branch may have advanced — a reviewer's suggestion
   committed from the GitHub UI, a CI auto-formatter push — and pushing a
@@ -271,7 +271,7 @@ Then sync **only if the remote ref exists** (the probe above already told
 you), so the later push is not rejected as non-fast-forward:
 
 ```bash
-task git:pull -- --rebase origin <branch>
+task git:pull -- --rebase --autostash origin <branch>
 ```
 
 Name the remote and branch explicitly — upstream tracking may be absent
@@ -280,6 +280,11 @@ even when the remote ref exists, and a bare `git pull` then fails with
 runs with local unpushed commits, so a remote that also advanced leaves
 the branches diverged, and the default merge would both open `$EDITOR`
 for the merge message and litter the PR with a merge commit.
+**`--autostash` is required**: every remaining group's files are still
+uncommitted in the working tree at this point, and a rebase refuses to
+start with a dirty tree (`cannot pull with rebase: You have unstaged
+changes`). Autostash shelves them and restores them once the rebase
+lands, so the later per-group staging still sees them.
 
 Skip the pull entirely when the branch is local-only — the
 interrupted-run case, where the prior run stopped before its first push.

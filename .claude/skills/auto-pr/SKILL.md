@@ -77,13 +77,17 @@ If there are uncommitted changes:
    - **Not on it, but an OPEN PR is conclusively ours** → resume:
      `task git:checkout -- <branch>` (this also creates the local tracking
      branch when only the remote ref is present), then sync with
-     **`task git:pull -- --rebase origin <branch>`**. Name the remote and branch
+     **`task git:pull -- --rebase --autostash origin <branch>`**. Name the remote and branch
      explicitly: a local branch that lost or never had upstream tracking
      makes a bare `git pull` fail with `no tracking information`.
      **`--rebase` is deliberate** — this path runs with local unpushed
      commits, so a remote that also advanced leaves the branches diverged,
      and the default merge would both open `$EDITOR` for the merge message
-     and litter the PR with a merge commit. The remote branch may have advanced — a reviewer's suggestion
+     and litter the PR with a merge commit. **`--autostash` is required**:
+     you reach this step from the *uncommitted changes* path, and a rebase
+     refuses to start with a dirty tree
+     (`cannot pull with rebase: You have unstaged changes`). Autostash
+     shelves them and restores them once the rebase lands. The remote branch may have advanced — a reviewer's suggestion
      committed from the GitHub UI, a CI auto-formatter push — and pushing a
      stale local branch is rejected as non-fast-forward, halting the run.
      This is the UPDATE path.
@@ -101,7 +105,7 @@ If there are uncommitted changes:
    have advanced regardless of PR state, and an unsynced local ref makes the
    later push fail as non-fast-forward, which is the failure this whole
    probe exists to avoid. Always name the remote and branch —
-   `task git:pull -- --rebase origin <branch>` — since upstream tracking may be
+   `task git:pull -- --rebase --autostash origin <branch>` — since upstream tracking may be
    absent. Skip the pull only when the branch is local-only: there is
    nothing on the remote to pull from.
 
