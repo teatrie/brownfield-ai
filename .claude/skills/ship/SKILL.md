@@ -336,9 +336,17 @@ instead.
 New branch — base it on an updated `main`, **without checking `main` out**:
 
 ```bash
-task git:fetch -- origin main
+task git:fetch -- origin --prune
 task git:checkout -- -b <branch> origin/main
 ```
+
+Fetch **`origin --prune`**, not `origin main`. A bare `git fetch origin
+<ref>` updates only `FETCH_HEAD`, leaving `refs/remotes/origin/main`
+stale, so the new branch would silently miss upstream commits — the same
+trap [ci.github-actions.md](../../rules/ci.github-actions.md) §5 documents
+for changed-file diffs. This is the same fetch the branch probe above
+already runs, so in practice it is a no-op repeat rather than a second
+round trip.
 
 `ship` runs with every remaining group still uncommitted in the working
 tree. Checking `main` out first would carry that tree across, and the

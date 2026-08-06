@@ -103,9 +103,20 @@ If there are uncommitted changes:
      `Your local changes ... would be overwritten by checkout` when the
      target branch differs in any modified path. The `--autostash` on the
      pull does not help — it runs later. Wrap **every** checkout below:
-     `task git:run -- stash push --include-untracked`, the checkout, then
-     `task git:run -- stash pop`. Skip the pair on a clean tree, where
-     `stash pop` fails with `No stash entries found`.
+     `task git:run -- stash push --include-untracked`, the checkout, **then
+     any sync**, and only then `task git:run -- stash pop`. Skip the pair on
+     a clean tree, where `stash pop` fails with `No stash entries found`.
+
+     **Pop last, after the sync.** Popping before the pull only forces the
+     rebase to autostash the same changes again — and if the pop conflicts,
+     the pull then hard-fails on the unmerged tree.
+
+     **A conflicting pop stops the run.** The resumed branch may hold an
+     earlier version of these files. `git stash pop` **keeps its entry** on
+     conflict, so nothing is lost: report the conflicting paths and let the
+     user reconcile, rather than staging a half-merged tree. Under
+     `CI=true`, halt per CLAUDE.md Principle 16. Never `stash drop` to clear
+     it.
 
    Then, by outcome:
 
