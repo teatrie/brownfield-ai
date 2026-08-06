@@ -74,6 +74,14 @@ If there are uncommitted changes:
      the branch does **not** waive the ownership guard: an **OPEN PR that is
      not conclusively ours** halts here exactly as it would below — do not
      treat it as a CREATE.
+   Before switching away from your current branch at all, check it for
+   **unpushed commits** (`task git:log -- --oneline origin/main..HEAD`). A
+   stash moves the dirty tree but leaves committed work behind, so switching
+   would push `<branch>` without the very commits you were asked to publish —
+   silently. If the current branch has unpushed commits and `<branch>` is a
+   different branch, **halt and ask** which one to publish rather than
+   switching. Under `CI=true`, halt per CLAUDE.md Principle 16.
+
    - **Not on it, but an OPEN PR is conclusively ours** → resume. **Stash
      first when the tree is dirty** — you arrived here from the
      uncommitted-changes path, and `checkout` aborts with
