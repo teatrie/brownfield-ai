@@ -1169,11 +1169,11 @@ compound commands — see `docs/learnings.md` §Claude Code Sandbox):
 ```bash
 # Step 1: Derive the merge body into a file (use Write tool, NOT command substitution)
 # Transform the PR body — do not copy it verbatim — then write the result
-# to tmp/<branch>/merge_body.md via the Write tool.
+# to tmp/<branch-short-name>/merge_body.md via the Write tool.
 
 # Step 2: Merge (single Bash call — use --body-file, not inline --body)
 task gh:pr -- merge <number> --squash \
-  --body-file tmp/<branch>/merge_body.md
+  --body-file tmp/<branch-short-name>/merge_body.md
 
 # Step 3: Return to main (single Bash call)
 task git:checkout -- main
