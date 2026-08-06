@@ -68,12 +68,21 @@ If there are uncommitted changes:
 
    - **Already on `<branch>`** (`task git:status` reports it as current) → it
      is your working branch; the local ref is expected, not a collision.
-     Proceed with no prompt when the detection returned **no OPEN PR** (the
+     Proceed with no prompt when the detection returned **no PR at all** (the
      ordinary case — a local branch with commits and no PR yet, which must
-     never halt) or an **OPEN PR conclusively ours** (UPDATE). Standing on
-     the branch does **not** waive the ownership guard: an **OPEN PR that is
-     not conclusively ours** halts here exactly as it would below — do not
-     treat it as a CREATE.
+     never halt) or an **OPEN PR conclusively ours** (UPDATE).
+
+     Two outcomes are **not** plain CREATEs, even standing on the branch:
+
+     - An **OPEN PR not conclusively ours** halts here exactly as it would
+       below. Being on the branch does not waive the ownership guard.
+     - A **closed or merged PR** means the branch is **spent**. This is the
+       state you are left in after a squash-merge with `--delete-branch`:
+       the remote ref is gone and detection reports no *open* PR, but the
+       local commits are already in `main`. Reusing it would open a PR
+       carrying the previous PR's commits, based behind the current base.
+       Rebase onto the fresh base first, or branch anew — do not push it
+       as-is.
    Before switching away from your current branch at all, check it for
    **unpushed commits** (`task git:log -- --oneline origin/main..HEAD`). A
    stash moves the dirty tree but leaves committed work behind, so switching
