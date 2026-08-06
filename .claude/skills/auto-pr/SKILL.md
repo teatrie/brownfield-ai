@@ -252,7 +252,13 @@ commits, which is exactly when its description sync must run — then
 **skip items 1–6 below entirely and go straight to Step 3a.** Items 5
 and 6 are creation-only: `pr_created` would duplicate an artifact that
 already exists for this PR, and the `in_progress` → `in_review`
-transition would be re-applied to an epic already in `in_review`, which
+**`pr_merged` still applies.** It is mandated inside item 5, which you are
+skipping, but it is a *merge*-time artifact, not a creation-time one — so
+checkpoint it at Step 4 as usual when the PR merges. Only the
+creation-time halves of items 5 and 6 are skipped: `pr_created` would
+duplicate an artifact that already exists for this PR, and the
+`in_progress` → `in_review` transition would be re-applied to an epic
+already in `in_review`, which
 the state machine rejects — halting every subsequent update round.
 
 **CREATE path** (no OPEN PR): follow the procedures in
