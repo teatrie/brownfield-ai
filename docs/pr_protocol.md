@@ -835,10 +835,19 @@ above — **include its mandatory blank lines** (after `</summary>`, before
 <details>
 <summary>⚠️ Superseded — see &lt;link&gt;</summary>
 
-<old comment body>
+<old comment body, with any pr-lifecycle marker neutralized>
 
 </details>
 ```
+
+**Neutralize the old marker when you supersede.** If the superseded body
+still carries its `<!-- pr-lifecycle:… -->` line, the PR keeps two
+comments matching that marker and the next round's lookup can resolve —
+and PATCH — the superseded copy. Rewrite the marker in the retained body
+to its inert form, `<!-- superseded:pr-lifecycle:<suffix> -->`, which
+preserves the audit breadcrumb while no longer matching a lookup. This
+applies to every supersede, and is what actually delivers the
+one-live-comment-per-marker steady state.
 
 Supersede-with-banner MUST operate **ONLY** on comments the step-2 audit
 positively identified as agent-authored by the marker / trailer
@@ -907,9 +916,11 @@ reconciliation round that finds duplicates:
 - **Keep the most recent** comment carrying the marker; that is the one
   edited in place from this round on.
 - **Supersede-with-banner the older duplicates** per step 3, linking to
-  the kept comment. This is the one sanctioned exception to "the three
-  marked comments are never superseded" — that rule assumes the steady
-  state of exactly one.
+  the kept comment, and **neutralize their markers** to
+  `<!-- superseded:pr-lifecycle:<suffix> -->` as that step requires —
+  without which the duplicates keep matching and nothing is collapsed.
+  This is the one sanctioned exception to "the three marked comments are
+  never superseded" — that rule assumes the steady state of exactly one.
 - **Do not delete them.** The step-3 prohibition on deleting prior-round
   comments is unconditional; collapsing duplicates preserves the audit
   trail rather than erasing it.
