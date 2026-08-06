@@ -694,8 +694,12 @@ the round's Code Diff Review Gate), detect whether an open PR already
 exists for the current branch:
 
 ```bash
-task gh:pr -- view --json number,url,title,body,state
+task gh:pr -- view <branch-short-name> --json number,url,title,body,state
 ```
+
+**Pass the branch explicitly.** Omitting it makes `gh` resolve the
+implicitly checked-out branch, which returns the wrong PR — or none — in
+a detached-HEAD or headless context.
 
 `gh pr view <branch>` resolves the branch's **most-recent** PR
 **including merged/closed** ones, so the `state` field is load-bearing:
@@ -722,6 +726,13 @@ positively that this workflow authored the PR — the agent
 marker on one of its comments, or a `pr_created` ledger artifact for this
 PR number. As with the comment audit, **author login is not a valid
 discriminator** (agent PRs are opened under the operator's `gh` token).
+
+The **trailer is the anchor that always holds**, and deliberately so:
+§"Agent Identity & Co-authored-by Trailer" mandates it on every PR body
+we create, so it survives a cross-session resume where no ledger artifact
+is reachable and the prior run died before posting its first comment. Do
+not weaken that mandate — it is what keeps this check from deadlocking
+the autonomous loop into the sign-off path.
 
 If ownership cannot be positively established, **fail SAFE**: do not
 reconcile, do not edit the body, and treat the PR as third-party —
