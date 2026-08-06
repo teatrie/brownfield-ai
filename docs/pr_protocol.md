@@ -744,6 +744,15 @@ route to the third-party review path and halt for user sign-off.
 Both `auto-pr` and `ship` perform this detection at their PR step and
 share this one procedure.
 
+**Re-run the check immediately before acting on it.** The first lookup
+happens before the diff-review gate and before the pre-push confirmation,
+which can pause indefinitely on a human. Treat that result as
+*provisional* — it only tells the skill whether to expect UPDATE work.
+Repeat the state and ownership lookup **after the push, immediately
+before the CREATE/UPDATE branch**, and act on the fresh answer. Otherwise
+a PR merged or closed during the pause still gets mutated as though open,
+and a PR opened during the pause gets a duplicate.
+
 ### Per-round procedure (UPDATE path)
 
 Run these steps **in order** each round the PR is revised.

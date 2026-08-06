@@ -158,8 +158,12 @@ immediately and checkpoint
 task git:push
 ```
 
-**UPDATE path**: if Step 2c's detection found an OPEN PR we own, do
-**NOT** create a second one. Instead run the **per-round procedure** in
+**Re-run the detection now**, per that section's revalidation rule —
+Step 2c's answer is provisional, and the pre-push confirmation may have
+paused for a long time. Branch on the fresh result.
+
+**UPDATE path**: if the PR is still OPEN and ours, do **NOT** create a
+second one. Instead run the **per-round procedure** in
 [pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
 Reconciliation" now — the push above has just landed the round's
 commits, which is exactly when its description sync must run — then
