@@ -1082,6 +1082,12 @@ rebased before CI results can be trusted.
    Use `--force-with-lease` (not `--force`) to guard against
    concurrent pushes to the same branch.
 
+   **Then re-sync the PR description** per §"Per-Round PR
+   Reconciliation" step 1. A rebase changes the effective diff the PR
+   presents, so the body written before it is now stale, and nothing
+   later in this procedure would refresh it — the PR would reach merge
+   describing the pre-rebase state.
+
 3. **Re-run the full verification cycle**: The rebase may have
    introduced subtle changes (dependency version shifts, import
    reordering, conflict-adjacent code). The agent MUST re-run
@@ -1186,6 +1192,12 @@ the fix to a subagent (e.g., `tdd-green`, `bug-fix`, or
 the fix is pushed. After the fix, run the Branch Freshness Check
 before restarting CI monitoring — if `main` advanced during the
 fix cycle, rebase first. Repeat until green.
+
+**Re-sync the PR description after each fix push** that changed the
+implementation, per §"Per-Round PR Reconciliation" step 1. This loop
+pushes and restarts CI without otherwise revisiting the body, so a fix
+that alters behaviour would otherwise reach merge with a description of
+the pre-fix diff.
 
 **CI-Phase Inline Marker Scan**: During each CI fix cycle, capture
 new inline code markers (`TODO`, `HACK`, `FIXME`, `XXX`) introduced
