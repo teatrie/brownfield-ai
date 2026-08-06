@@ -449,6 +449,15 @@ verify:
 
 1. Does the PR contain the required labels (e.g., `ai-assisted`)?
 2. Does the PR have the Co-authored-by trailer at the exact bottom?
+3. Does the body carry a **Work Item** line naming both the ID and the
+   system (see **Work Item Reference** above)? `none — <reason>` is valid;
+   an absent line is not.
+4. Does the body carry an **`## Impact`** section, unless an upstream PR
+   template governs it or the change is genuinely inert? Agent-governance
+   files are never inert.
+5. Is the body bullet-first per §"Writing Style (Mandatory)" — no prose
+   paragraphs where bullets belong, tables folded per the **Collapsible
+   Details Convention**?
 
 **If GREEN**: Proceed. State: "Subagent review passed GREEN."
 

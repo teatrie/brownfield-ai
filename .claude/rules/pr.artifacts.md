@@ -88,8 +88,8 @@ Do NOT:
   `tmp/pr<number>/` for third-party review comments. Never the workspace root,
   never a source directory, never absolute `/tmp/`.
 - **Hidden identity marker** on line 1 of every *managed lifecycle comment*
-  (not the body). Write the full form — a bare suffix fails the reconciliation
-  discriminator and stacks duplicate comments:
+  (not the body). Write the full form — a bare suffix is not a valid
+  discriminator:
   - `<!-- pr-lifecycle:executive-summary -->`
   - `<!-- pr-lifecycle:qa-resolution-log -->`
   - `<!-- pr-lifecycle:ci-resolution-log -->`
@@ -97,9 +97,16 @@ Do NOT:
 
   The list is **exhaustive**. An ad-hoc comment that is not one of these
   artifacts carries **no marker** — do not invent one and do not reuse a
-  `pr-lifecycle:` marker to satisfy the rule, because that makes the comment
-  eligible for Per-Round PR Reconciliation's supersede-with-banner and delete
-  paths. Everything else in this rule still binds such a comment.
+  `pr-lifecycle:` marker to satisfy the rule. Everything else in this rule
+  still binds such a comment.
+
+  **The marker is an identity tag, not deduplication.** Per-Round PR
+  Reconciliation — the procedure that reads these markers to edit, supersede,
+  or delete a prior comment — is **not implemented in this repo**. Every
+  documented path posts a fresh `gh pr comment`, so repeated rounds stack
+  comments today. Write the marker regardless: it is the discriminator a
+  future reconciliation step keys on, and it is what keeps `pr-lifecycle:`
+  (PRs we own) separable from `pr-review:` (PRs we do not).
 - **`**Work Item**:` line** is mandatory in `pr_body.md` — an ID plus the
   system that owns it, per [pr_protocol.md](../../docs/pr_protocol.md)
   §"Work Item Reference". `none — <reason>` is a valid value; an absent line
@@ -147,10 +154,11 @@ When the PR is **not ours** (`pr_review_findings.md`):
 - **Headless (`CI=true`)**: do NOT post. Write the artifact, checkpoint
   `verdict: blocked-needs-signoff`, and halt (CLAUDE.md Principle 16).
 - **Never edit or delete the author's comments.**
-- **Marker namespace is `pr-review:`, never `pr-lifecycle:`** — the latter
-  makes a comment eligible for Per-Round PR Reconciliation's
-  supersede-with-banner and delete paths, which must never touch a PR we do not
-  own.
+- **Marker namespace is `pr-review:`, never `pr-lifecycle:`** — `pr-lifecycle:`
+  is reserved for comments on PRs we own. When Per-Round PR Reconciliation
+  lands (not implemented here yet), its supersede-with-banner and delete paths
+  will act on `pr-lifecycle:` comments; a PR we do not own must never be
+  reachable by them.
 - State the **reviewer roster and models**.
 - Mark unverified claims **explicitly unverified**; never present
   pattern-matched inference as validated.
