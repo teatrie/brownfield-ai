@@ -706,32 +706,50 @@ the UPDATE path is gated on an **OPEN** PR only.
   proceed with **Create PR** as normal (first-round PR generation). No
   reconciliation runs.
 - **An OPEN PR already exists** (a PR is returned AND `state == "OPEN"`)
-  → **UPDATE path**: do NOT create a second PR. Run the **per-round
-  procedure** below each round, then UPDATE (edit) the existing PR
-  rather than re-creating it.
+  → check ownership below, then take the **UPDATE path**: do NOT create a
+  second PR. Run the **per-round procedure** below each round, then
+  UPDATE (edit) the existing PR rather than re-creating it.
+
+**Ownership check — `state` alone is not sufficient.** An OPEN PR on this
+branch may have been opened by a human or another tool. Reconciliation
+overwrites the description and mutates `pr-lifecycle:` comments, so
+entering the UPDATE path on a PR we do not own would breach the
+third-party rule in [CLAUDE.md](../CLAUDE.md) §"Tool Chain & PR
+Protocol", which requires explicit sign-off and forbids the
+`pr-lifecycle:` namespace on such PRs. Before entering UPDATE, establish
+positively that this workflow authored the PR — the agent
+`Co-authored-by:` trailer in its body, an existing `pr-lifecycle:`
+marker on one of its comments, or a `pr_created` ledger artifact for this
+PR number. As with the comment audit, **author login is not a valid
+discriminator** (agent PRs are opened under the operator's `gh` token).
+
+If ownership cannot be positively established, **fail SAFE**: do not
+reconcile, do not edit the body, and treat the PR as third-party —
+route to the third-party review path and halt for user sign-off.
 
 Both `auto-pr` and `ship` perform this detection at their PR step and
 share this one procedure.
 
 ### Per-round procedure (UPDATE path)
 
-Run these steps **in order** each round the PR is revised. The ordering
-is **mandatory**: the description sync runs BEFORE the round's
-diff-review invocation.
+Run these steps **in order** each round the PR is revised.
 
-**1. Description sync (mandatory — runs FIRST, before diff-review).**
-Re-read the current PR body (`task gh:pr -- view <number> --json body`),
-patch it so it matches the current diff (Summary bullets, `## Impact`,
-the `**Work Item**` line, folded change-history per the **Collapsible
+**1. Description sync (mandatory — runs immediately AFTER the round's
+`task git:push`, before the PR Auto-Review gate).** Re-read the current
+PR body (`task gh:pr -- view <number> --json body`), patch it so it
+matches the current diff (Summary bullets, `## Impact`, the
+`**Work Item**` line, folded change-history per the **Collapsible
 Details Convention**), and push the update:
 
 ```bash
 task gh:pr -- edit <number> --body-file tmp/<branch-short-name>/pr_body.md
 ```
 
-This enforces PR-description↔diff consistency, and running it **first**
-means the description a human reviewer opens mid-round matches the diff
-they are looking at rather than trailing a round behind.
+This enforces PR-description↔diff consistency. **Order it after the
+push, never before.** Editing the body while the round's commits are
+still local publishes a description of a diff GitHub is not yet showing,
+and the pre-push user-confirmation gate can hold that mismatch open
+indefinitely — the opposite of the consistency this step exists for.
 
 **It does not currently feed the diff-review gate.** The reviewer prompt
 in [diff-review](../.claude/skills/diff-review/SKILL.md) declares the

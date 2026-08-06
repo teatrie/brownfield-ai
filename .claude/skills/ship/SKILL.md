@@ -212,16 +212,15 @@ Stage **only** the files belonging to this PR group. Use `task git:add -- <file>
 
 ### Step 2a: Code Diff Review (MANDATORY GATE)
 
-**First, run the existing-PR detection** in
+**First, run the existing-PR detection and its ownership check** in
 [pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
 Reconciliation" — that section is the single canonical home of this
-procedure; do NOT copy it here. If it resolves to the **UPDATE path**
-(an OPEN PR already exists for this branch), complete its per-round
-procedure **before** invoking diff-review below, so a human opening the
-PR mid-round sees a description that matches the diff. Note the sync does
-**not** feed the gate — diff-review treats the diff as the sole artifact
-under review. On the **CREATE path** no reconciliation runs and you
-proceed directly.
+procedure; do NOT copy it here. You need the CREATE/UPDATE answer now
+because Step 3 branches on it; the per-round procedure itself runs
+**after** the push, not here. If ownership cannot be positively
+established, halt per that section rather than reconciling.
+
+Then invoke diff-review below on either path.
 
 Then invoke the
 [diff-review](../diff-review/SKILL.md) skill scoped to the files in this PR's
@@ -241,13 +240,15 @@ diff-review gate returns APPROVED.
 task git:push
 ```
 
-**UPDATE path**: if Step 2a's detection found an OPEN PR for this branch,
-do **NOT** create a second one. The description sync already ran as step 1
-of the per-round procedure, so the body is current — **skip items 1–5
-below entirely and go straight to Step 3a.** Item 5 is creation-only: the
-`in_progress` → `in_review` transition would be re-applied to an epic
-already in `in_review`, which the state machine rejects, halting every
-subsequent update round.
+**UPDATE path**: if Step 2a's detection found an OPEN PR we own, do
+**NOT** create a second one. Instead run the **per-round procedure** in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" now — the push above has just landed this group's
+commits, which is exactly when its description sync must run — then
+**skip items 1–5 below entirely and go straight to Step 3a.** Item 5 is
+creation-only: the `in_progress` → `in_review` transition would be
+re-applied to an epic already in `in_review`, which the state machine
+rejects, halting every subsequent update round.
 
 **CREATE path** (no OPEN PR): follow the procedures in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) for:
