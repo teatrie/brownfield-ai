@@ -259,13 +259,24 @@ alternatives, not a sequence: following the existing-branch checkout with
 the new-branch block ends in `checkout -b <branch> main`, which fails
 because the branch already exists.
 
-Existing branch (rerun / UPDATE path) — check out, do not create, then
-sync so the later push is not rejected as non-fast-forward:
+Existing branch (rerun / UPDATE path) — check out, do not create:
 
 ```bash
 task git:checkout -- <branch>
+```
+
+Then sync **only if the remote ref exists** (the probe above already told
+you), so the later push is not rejected as non-fast-forward:
+
+```bash
 task git:pull
 ```
+
+Skip the pull when the branch is local-only — the interrupted-run case,
+where the prior run stopped before its first push. That branch has no
+upstream, so `git pull` fails with `no tracking information` and would
+halt the batch this path exists to resume. Go straight to its initial
+push instead.
 
 New branch — base it on an updated `main`:
 
