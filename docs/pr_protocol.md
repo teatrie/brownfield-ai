@@ -474,18 +474,21 @@ stable `pr-lifecycle:` marker on line 1. Before posting any of them,
 resolve whether a comment bearing that marker already exists on the PR:
 
 ```bash
-task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments
+task gh:api -- --paginate --slurp /repos/{owner}/{repo}/issues/<number>/comments
 ```
 
 If one does, **PATCH it in place** per §"Per-Round PR Reconciliation"
 step 4 instead of posting; the `task gh:pr -- comment` invocations shown
 below are the **first-post** form only.
 
-**`--paginate` is load-bearing.** The endpoint returns 30 comments per
-page by default. A long-running PR — precisely the multi-round case this
-procedure exists for — can carry the marked comment on a later page; an
-unpaginated lookup would conclude no marker exists and post a duplicate,
-defeating the invariant.
+**`--paginate` is load-bearing, and `--slurp` goes with it.** The
+endpoint returns 30 comments per page by default. A long-running PR —
+precisely the multi-round case this procedure exists for — can carry the
+marked comment on a later page; an unpaginated lookup would conclude no
+marker exists and post a duplicate, defeating the invariant. `--paginate`
+alone emits **each page as a separate JSON array**, which is not valid
+JSON when concatenated; `--slurp` wraps them into one outer array so the
+result parses.
 
 This rule lives here, at the point of posting, because it cannot be
 delegated to the pre-push reconciliation pass: all three comments are
@@ -756,6 +759,14 @@ Details Convention**), and push the update:
 task gh:pr -- edit <number> --body-file tmp/<branch-short-name>/pr_body.md
 ```
 
+**Retain the `Co-authored-by:` trailer verbatim.** This edit replaces the
+whole body, and the trailer is the ownership anchor the entry condition
+depends on. Dropping it while rewriting for the diff makes the *next*
+round fail the ownership check and fall through to the third-party
+sign-off path — deadlocking the loop on a PR we do in fact own. The
+`## Impact` section and the `**Work Item**` line must survive the rewrite
+for the same reason the auto-review gate checks them.
+
 This enforces PR-description↔diff consistency. **Order it after the
 push, never before.** Editing the body while the round's commits are
 still local publishes a description of a diff GitHub is not yet showing,
@@ -793,7 +804,7 @@ connection, so on a long-running PR it silently omits older comments and
 the duplicate markers this audit exists to find:
 
 ```bash
-task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments
+task gh:api -- --paginate --slurp /repos/{owner}/{repo}/issues/<number>/comments
 ```
 
 A comment counts as **AGENT-AUTHORED for reconciliation purposes ONLY IF**
@@ -879,7 +890,7 @@ requires: `task gh:pr -- view <number> --json comments` yields
 GraphQL-shaped comment objects with a `url` but no bare numeric id, so
 take `<id>` from the audited comment's `url` fragment
 `#issuecomment-<id>` (or enumerate the comments via
-`task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments`,
+`task gh:api -- --paginate --slurp /repos/{owner}/{repo}/issues/<number>/comments`,
 whose REST objects carry a numeric `id` directly — keep `--paginate`, see
 §"PR Execution Comments"). Only if no comment with the marker exists yet
 does the skill post a fresh one. Reserve
