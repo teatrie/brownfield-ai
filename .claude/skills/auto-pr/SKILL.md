@@ -86,13 +86,18 @@ If there are uncommitted changes:
    **Two rules govern every switch away from your current branch**, whichever
    outcome below applies:
 
-   - **Unpushed commits block the switch.** Check with
-     `task git:log -- --oneline origin/main..HEAD`. A stash moves the dirty
-     tree but leaves committed work behind, so switching would push
-     `<branch>` without the very commits you were asked to publish —
-     silently. If the current branch has unpushed commits and `<branch>` is a
-     different branch, **halt and ask** which to publish. Under `CI=true`,
-     halt per CLAUDE.md Principle 16.
+   - **Unpushed commits block the switch.** Compare against the current
+     branch's **own upstream**, not `main`:
+     `task git:log -- --oneline @{upstream}..HEAD`. Commits merely absent
+     from `main` are the normal state of any unmerged feature branch and
+     must not block anything; only commits absent from the *remote* are at
+     risk. When the branch has **no upstream**, nothing has been pushed, so
+     treat every commit on it as unpushed. A stash moves the dirty tree but
+     leaves committed work behind, so switching would push `<branch>`
+     without the very commits you were asked to publish — silently. If
+     unpushed commits exist and `<branch>` is a different branch, **halt and
+     ask** which to publish. Under `CI=true`, halt per CLAUDE.md
+     Principle 16.
    - **Stash a dirty tree first.** You arrive here from the
      uncommitted-changes path, and `checkout` aborts with
      `Your local changes ... would be overwritten by checkout` when the
