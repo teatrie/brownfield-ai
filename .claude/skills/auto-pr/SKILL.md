@@ -130,8 +130,11 @@ If there are uncommitted changes:
      remote advanced via a reviewer's UI commit or a CI auto-formatter —
      from opening `$EDITOR` and adding a merge commit, and an unsynced local
      branch would otherwise be rejected as non-fast-forward.
-     **`--autostash`** is what lets that rebase start at all against the
-     dirty tree.
+     **`--autostash`** is a fallback here rather than the main mechanism:
+     the stash above already holds your changes, so the tree is clean and
+     the flag is usually a no-op. It matters on the paths where no stash was
+     taken — a tree clean at checkout but dirtied since — where the rebase
+     would otherwise refuse to start.
    - **Not on it, and the ref is someone else's or spent** — closed/merged
      PR, or an OPEN PR whose ownership is not conclusive → do **NOT**
      silently resume and do **NOT** silently create over it. Stop and ask
@@ -143,9 +146,12 @@ If there are uncommitted changes:
      unrelated branch that merely collides with the generated name, and
      pushing to it would graft your commits onto someone else's work. Decide
      on commits, not on the absent PR:
-     - **No commits beyond the base** (`task git:log -- --oneline main..<branch>`
-       is empty) — a bare leftover ref. Reuse it: check it out (stashing per
-       the rule above) and carry on.
+     - **No commits beyond the base** — a bare leftover ref. Reuse it: check
+       it out (stashing per the rule above) and carry on. Name the ref the
+       probe actually found: `task git:log -- --oneline main..<branch>` when
+       the **local** ref exists, `main..origin/<branch>` when only the
+       **remote** one does. A remote-only branch is not a valid local
+       revision, and naming it bare fails with `unknown revision`.
      - **It carries commits** — ambiguous. **Ask** before reusing: offer
        reuse, a different name, or a fresh branch. Under `CI=true`, halt and
        checkpoint per CLAUDE.md Principle 16.

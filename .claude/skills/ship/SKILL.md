@@ -240,11 +240,14 @@ Reconciliation" against `<branch>` first:
   short between the two leaves exactly this state. But an absent PR does
   not prove the branch is ours — the generated name can collide with an
   abandoned or unrelated branch. Decide on commits, as `auto-pr` does:
-  - **No commits beyond the base**
-    (`task git:log -- --oneline main..<branch>` is empty) — a bare
-    leftover ref. Resume it and continue on the CREATE path. Do **not**
-    halt: `ship` is a batch skill, and halting here would demand manual
-    intervention for every interrupted group.
+  - **No commits beyond the base** — a bare leftover ref. Resume it and
+    continue on the CREATE path. Do **not** halt: `ship` is a batch skill,
+    and halting here would demand manual intervention for every
+    interrupted group. Name the ref the probe actually found:
+    `task git:log -- --oneline main..<branch>` when the **local** ref
+    exists, `main..origin/<branch>` when only the **remote** one does — a
+    remote-only branch is not a valid local revision and naming it bare
+    fails with `unknown revision`.
   - **It carries commits** — they may be this group's from the
     interrupted run, or somebody else's. **Ask** before reusing, and halt
     under `CI=true` per CLAUDE.md Principle 16. Committing and pushing on
@@ -328,11 +331,12 @@ even when the remote ref exists, and a bare `git pull` then fails with
 runs with local unpushed commits, so a remote that also advanced leaves
 the branches diverged, and the default merge would both open `$EDITOR`
 for the merge message and litter the PR with a merge commit.
-**`--autostash` is required**: every remaining group's files are still
-uncommitted in the working tree at this point, and a rebase refuses to
-start with a dirty tree (`cannot pull with rebase: You have unstaged
-changes`). Autostash shelves them and restores them once the rebase
-lands, so the later per-group staging still sees them.
+**`--autostash` is a fallback, not the main mechanism.** By this point the
+stash above already holds the group files, so the tree is clean and the
+flag is usually a no-op. It earns its place on the paths where no stash
+was taken — a tree that was clean at checkout but has since been dirtied
+— where a rebase would otherwise refuse to start with `cannot pull with
+rebase: You have unstaged changes`.
 
 Skip the pull entirely when the branch is local-only — the
 interrupted-run case, where the prior run stopped before its first push.
