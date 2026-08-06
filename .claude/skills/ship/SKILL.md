@@ -318,8 +318,10 @@ carry someone else's changes to them. The `--autostash` on the pull does
 **not** cover this; it runs afterwards.
 
 ```bash
+# DIRTY TREE ONLY — skip both stash lines when task git:status is clean.
 task git:run -- stash push --include-untracked
 # ... the checkout from whichever block below, then its sync if any ...
+# DIRTY TREE ONLY — see the warning below before running this.
 task git:run -- stash pop
 ```
 

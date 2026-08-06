@@ -1167,21 +1167,24 @@ triggering the Bash AST parser's "Unhandled node type" warning on
 compound commands — see `docs/learnings.md` §Claude Code Sandbox):
 
 ```bash
-# Step 1: Capture PR title (single Bash call)
-task gh:pr -- view <number> --json title --jq .title
-
-# Step 2: Derive the merge body into a file (use Write tool, NOT command substitution)
+# Step 1: Derive the merge body into a file (use Write tool, NOT command substitution)
 # Transform the PR body — do not copy it verbatim — then write the result
 # to tmp/<branch>/merge_body.md via the Write tool.
 
-# Step 3: Merge (single Bash call — use --body-file, not inline --body)
+# Step 2: Merge (single Bash call — use --body-file, not inline --body)
 task gh:pr -- merge <number> --squash \
-  --subject "<captured title>" \
   --body-file tmp/<branch>/merge_body.md
 
-# Step 4: Return to main (single Bash call)
+# Step 3: Return to main (single Bash call)
 task git:checkout -- main
 ```
+
+**Do not pass `--subject`.** GitHub already uses the PR title as the
+squash subject, so the flag buys nothing — and interpolating a PR title
+into a shell command is an injection vector: titles are attacker-editable
+on a PR we did not author, and a title containing a quote and `;` would
+break out of the argument and run as a command on the host. Omitting the
+flag removes both the risk and the title-capture step it required.
 
 **Step 2 is a transformation, not a copy.** `merge_body.md` becomes a
 squash **commit message**, so it must satisfy the `merge_body.md`
