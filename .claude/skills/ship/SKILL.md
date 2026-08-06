@@ -287,9 +287,18 @@ this order:
    `task git:log -- --oneline @{upstream}..HEAD`.
 2. **No upstream, but `refs/remotes/origin/<current-branch>` exists** —
    compare against that ref instead. It is where a push would have landed.
-3. **Neither** — you **cannot** tell whether the commits are published, and
-   `origin/main..HEAD` will not tell you (it reports every feature commit
-   whether pushed or not). Do not guess in either direction: **ask.**
+3. **Neither ref exists** — first check whether the branch is simply
+   **already merged**: if `task git:log -- --oneline origin/main..HEAD` is
+   **empty**, every commit is contained in the freshly fetched base, so
+   nothing can be lost and the switch is safe. This is the ordinary state
+   between `ship` groups — the previous PR merged with `--delete-branch`,
+   and the prune that follows removes the remote ref so neither probe
+   resolves. Halting here would deadlock a sequential run after its first
+   merge.
+4. **Neither ref, and commits beyond `origin/main`** — now you genuinely
+   cannot tell whether those commits are published (a non-empty
+   `origin/main..HEAD` reports every feature commit, pushed or not). Do not
+   guess in either direction: **ask.**
 
 If unpushed commits exist and the target is a different branch, **halt and
 ask** which to publish. Under `CI=true`, halt per CLAUDE.md Principle 16.

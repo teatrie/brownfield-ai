@@ -732,9 +732,16 @@ the UPDATE path is gated on an **OPEN** PR only.
 
 Three outcomes, not two — a non-`OPEN` state is **not** the same as no PR:
 
-- **No PR at all** (non-zero exit and stderr, not an empty success) →
-  **CREATE path**: proceed with **Create PR** as normal (first-round PR
-  generation). No reconciliation runs.
+- **No PR at all** — `gh` exits non-zero reporting *no pull requests found*
+  for the branch → **CREATE path**: proceed with **Create PR** as normal
+  (first-round PR generation). No reconciliation runs.
+
+  **Read the failure, do not just read the exit code.** Authentication,
+  network, rate-limit and other API errors also exit non-zero with stderr.
+  Treating those as "no PR" would skip the ownership guard entirely and let
+  the run push to — or duplicate — an existing third-party PR. Only the
+  explicit not-found response selects CREATE; **every other failure halts**
+  so the state can be established rather than assumed.
 - **A merged or closed PR** (a PR is returned with a non-`OPEN` `state`) →
   the branch is **spent**. If it was squash-merged, its commits are already
   in the base, so creating from it would open a follow-up PR carrying
