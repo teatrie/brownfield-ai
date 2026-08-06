@@ -425,14 +425,11 @@ identity:
 MUST be created in a subfolder within `tmp/` named after the current
 git branch. NEVER create temporary files in source directories.
 
-Write the generated PR body to a temporary file, then create the PR:
+Write the generated PR body to `tmp/<branch-short-name>/pr_body.md` **with the
+Write tool** — never a `cat` heredoc or shell redirection, per
+[CLAUDE.md](../CLAUDE.md) §10. Then create the PR:
 
 ```bash
-mkdir -p tmp/<branch-short-name>
-cat << 'EOF' > tmp/<branch-short-name>/pr_body.md
-<generated_body>
-EOF
-
 LABELS="${ARGUMENTS_LABELS:-ai-assisted}"
 task gh:pr -- create --base main --label "$LABELS" \
   --title "<title>" \
@@ -477,6 +474,7 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_exec_summa
 **Format**:
 
 ```markdown
+<!-- pr-lifecycle:executive-summary -->
 ## Executive Summary
 
 <Brief description of the plan's purpose and what was implemented.
@@ -500,6 +498,7 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_qa_log.md
 **Format**:
 
 ```markdown
+<!-- pr-lifecycle:qa-resolution-log -->
 ## QA Diff-Review Resolution Log
 
 ### Round Summary
@@ -564,6 +563,7 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_ci_log.md
 **Format**:
 
 ```markdown
+<!-- pr-lifecycle:ci-resolution-log -->
 ## CI Gate Resolution Log
 
 | Run | Status | Action Taken |
@@ -576,6 +576,7 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_ci_log.md
 Multi-run example (with failures, delegated fixes, and rebase):
 
 ```markdown
+<!-- pr-lifecycle:ci-resolution-log -->
 ## CI Gate Resolution Log
 
 | Run | Status | Action Taken |
