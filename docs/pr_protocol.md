@@ -729,12 +729,16 @@ Details Convention**), and push the update:
 task gh:pr -- edit <number> --body-file tmp/<branch-short-name>/pr_body.md
 ```
 
-This enforces PR-description↔diff consistency and — critically —
-**precedes the round's diff-review invocation** so the gate reads the
-freshly-synced body, not the stale prior-round body. On the UPDATE path
-the synced PR body **IS** the additional intent input passed to the
-diff-review gate: because the sync runs first, the intent the reviewers
-read is always current, never a round behind.
+This enforces PR-description↔diff consistency, and running it **first**
+means the description a human reviewer opens mid-round matches the diff
+they are looking at rather than trailing a round behind.
+
+**It does not currently feed the diff-review gate.** The reviewer prompt
+in [diff-review](../.claude/skills/diff-review/SKILL.md) declares the
+diff the **SOLE artifact under review**; this repo has no intent-input
+channel, so the synced body reaches humans and the merge record, not the
+reviewers. Wiring the body in as intent input belongs with the pending
+diff-review dimension expansion — do not assume it already happens.
 
 **Re-sync after any review-driven change.** The sync running first makes
 the body current *for the gate*, not necessarily *at merge*: if

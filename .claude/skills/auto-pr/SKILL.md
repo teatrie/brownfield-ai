@@ -95,11 +95,11 @@ Do not assume the fix worked. Do not push broken files.
 Reconciliation" — that section is the single canonical home of this
 procedure; do NOT copy it here. If it resolves to the **UPDATE path**
 (an OPEN PR already exists for the branch), complete its per-round
-procedure **before** invoking diff-review below: the description sync is
-step 1 precisely so the gate reads the freshly-synced body rather than
-the stale prior-round one, and on the UPDATE path that synced body IS
-the intent input the reviewers receive. On the **CREATE path** no
-reconciliation runs and you proceed directly to the gate.
+procedure **before** invoking diff-review below, so a human opening the
+PR mid-round sees a description that matches the diff. Note the sync does
+**not** feed the gate — diff-review treats the diff as the sole artifact
+under review. On the **CREATE path** no reconciliation runs and you
+proceed directly to the gate.
 
 Then invoke the
 [diff-review](../diff-review/SKILL.md) skill to validate implementation quality.

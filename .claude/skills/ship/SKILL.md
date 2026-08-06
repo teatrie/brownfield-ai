@@ -217,9 +217,11 @@ Stage **only** the files belonging to this PR group. Use `task git:add -- <file>
 Reconciliation" — that section is the single canonical home of this
 procedure; do NOT copy it here. If it resolves to the **UPDATE path**
 (an OPEN PR already exists for this branch), complete its per-round
-procedure **before** invoking diff-review below, so the gate reads the
-freshly-synced body rather than the stale prior-round one. On the
-**CREATE path** no reconciliation runs and you proceed directly.
+procedure **before** invoking diff-review below, so a human opening the
+PR mid-round sees a description that matches the diff. Note the sync does
+**not** feed the gate — diff-review treats the diff as the sole artifact
+under review. On the **CREATE path** no reconciliation runs and you
+proceed directly.
 
 Then invoke the
 [diff-review](../diff-review/SKILL.md) skill scoped to the files in this PR's
@@ -300,7 +302,7 @@ TODOs were captured.
 
 Save each PR's URL and number for the final summary.
 
-**Ledger Checkpoint:** *(Applies only when an active ledger epic was resolved. For an ad-hoc group with no epic, skip every ledger operation in this step — checkpoint, `ledger:status`, and `ledger:set-prs` alike. Do not invent an epic and do not pass an empty ID, which fails after the PRs already exist.)* After each PR is created, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, Work Item reference, and merge order position. After each PR is merged, checkpoint a `pr_merged` artifact with the merge SHA and PR number.
+**Ledger Checkpoint:** *(Applies only when an active ledger epic was resolved. For an ad-hoc group with no epic, skip every ledger operation in this step — checkpoint, `ledger:status`, and `ledger:set-prs` alike. Do not invent an epic and do not pass an empty ID, which fails after the PRs already exist.)* After each PR is created, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, Work Item reference, and merge order position. **`pr_created` is CREATE-only** — on the UPDATE path (Step 2a's detection found an OPEN PR) no PR was created this round, so skip it rather than emitting a duplicate creation artifact for a PR that already has one. After each PR is merged, checkpoint a `pr_merged` artifact with the merge SHA and PR number; that one is unconditional, since a merge happens exactly once regardless of path.
 
 Follow the **CI Wait & Merge** procedure in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md). Ask the user
