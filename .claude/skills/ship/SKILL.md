@@ -244,10 +244,14 @@ Reconciliation" against `<branch>` first:
     continue on the CREATE path. Do **not** halt: `ship` is a batch skill,
     and halting here would demand manual intervention for every
     interrupted group. Name the ref the probe actually found:
-    `task git:log -- --oneline main..<branch>` when the **local** ref
-    exists, `main..origin/<branch>` when only the **remote** one does — a
-    remote-only branch is not a valid local revision and naming it bare
-    fails with `unknown revision`.
+    `task git:log -- --oneline origin/main..<branch>` when the **local**
+    ref exists, `origin/main..origin/<branch>` when only the **remote** one
+    does — a remote-only branch is not a valid local revision and naming it
+    bare fails with `unknown revision`. Compare against **`origin/main`**,
+    not local `main`: the probe just fetched `origin --prune`, so
+    `origin/main` is current while local `main` may lag, and against a
+    stale base a bare branch cut at the fetched tip looks like it carries
+    commits and would halt for nothing.
   - **It carries commits** — they may be this group's from the
     interrupted run, or somebody else's. **Ask** before reusing, and halt
     under `CI=true` per CLAUDE.md Principle 16. Committing and pushing on

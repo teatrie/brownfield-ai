@@ -148,10 +148,14 @@ If there are uncommitted changes:
      on commits, not on the absent PR:
      - **No commits beyond the base** — a bare leftover ref. Reuse it: check
        it out (stashing per the rule above) and carry on. Name the ref the
-       probe actually found: `task git:log -- --oneline main..<branch>` when
-       the **local** ref exists, `main..origin/<branch>` when only the
-       **remote** one does. A remote-only branch is not a valid local
-       revision, and naming it bare fails with `unknown revision`.
+       probe actually found: `task git:log -- --oneline origin/main..<branch>`
+       when the **local** ref exists, `origin/main..origin/<branch>` when
+       only the **remote** one does. A remote-only branch is not a valid
+       local revision, and naming it bare fails with `unknown revision`.
+       Compare against **`origin/main`**, not local `main` — you just
+       fetched `origin --prune`, so `origin/main` is current while local
+       `main` may lag; against a stale base a bare branch cut at the fetched
+       tip looks like it carries commits and would halt for nothing.
      - **It carries commits** — ambiguous. **Ask** before reusing: offer
        reuse, a different name, or a fresh branch. Under `CI=true`, halt and
        checkpoint per CLAUDE.md Principle 16.
