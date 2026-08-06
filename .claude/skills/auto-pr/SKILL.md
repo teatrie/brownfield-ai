@@ -68,9 +68,12 @@ If there are uncommitted changes:
 
    - **Already on `<branch>`** (`task git:status` reports it as current) → it
      is your working branch; the local ref is expected, not a collision.
-     Proceed with no prompt: UPDATE if the detection found an OPEN PR that is
-     conclusively ours, otherwise CREATE. **This is the ordinary case** — a
-     local branch with commits and no PR yet — and it must never halt.
+     Proceed with no prompt when the detection returned **no OPEN PR** (the
+     ordinary case — a local branch with commits and no PR yet, which must
+     never halt) or an **OPEN PR conclusively ours** (UPDATE). Standing on
+     the branch does **not** waive the ownership guard: an **OPEN PR that is
+     not conclusively ours** halts here exactly as it would below — do not
+     treat it as a CREATE.
    - **Not on it, but an OPEN PR is conclusively ours** → resume:
      `task git:checkout -- <branch>` (this also creates the local tracking
      branch when only the remote ref is present), then **`task git:pull` to
