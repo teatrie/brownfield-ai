@@ -127,10 +127,17 @@ If there are uncommitted changes:
      the user whether to reuse the branch, pick another name, or branch
      fresh from the base. Under `CI=true`, halt and checkpoint per
      CLAUDE.md Principle 16.
-   - **Not on it, and no PR exists at all** → the name is free of any PR, so
-     this is a plain CREATE against an unused branch: check it out (stashing
-     per the rule above) and carry on. Ask only if its commits are unrelated
-     to the work in hand.
+   - **Not on it, and no PR exists at all** → the *name* is free of any PR,
+     which is **not** proof the *branch* is free. It may be an abandoned or
+     unrelated branch that merely collides with the generated name, and
+     pushing to it would graft your commits onto someone else's work. Decide
+     on commits, not on the absent PR:
+     - **No commits beyond the base** (`task git:log -- --oneline main..<branch>`
+       is empty) — a bare leftover ref. Reuse it: check it out (stashing per
+       the rule above) and carry on.
+     - **It carries commits** — ambiguous. **Ask** before reusing: offer
+       reuse, a different name, or a fresh branch. Under `CI=true`, halt and
+       checkpoint per CLAUDE.md Principle 16.
 
    **Pull whenever the remote probe succeeded**, on every resume above — not
    only when an owned OPEN PR was found. A branch that exists remotely can
