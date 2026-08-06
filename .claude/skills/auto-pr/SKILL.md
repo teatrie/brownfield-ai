@@ -98,9 +98,7 @@ because Step 3 branches on it; the per-round procedure itself runs
 **after** the push, not here. If ownership cannot be positively
 established, halt per that section rather than reconciling.
 
-Then invoke diff-review below on either path.
-
-Then invoke the
+Then, on either path, invoke the
 [diff-review](../diff-review/SKILL.md) skill to validate implementation quality.
 Pass the **active ledger epic** as `epic_id`, resolved via
 `execution-ledger resume` independently of the PR's Work Item reference — a PR
