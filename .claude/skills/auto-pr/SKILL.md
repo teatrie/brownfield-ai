@@ -33,8 +33,17 @@ If there are uncommitted changes:
 
 1. Resolve the work item per [docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch name, active ledger epic, or ask).
    Create a branch — use the form matching the resolved tracking system. First
-   check `task git:status`: if you are **already on** the intended branch, skip
-   this step, because `checkout -b` on an existing branch fails with
+   test whether it already exists, which is the normal case on a rerun.
+   `git status` reports only the *current* branch, so it cannot answer this on
+   its own — query the ref:
+
+   ```bash
+   task git:run -- rev-parse --verify --quiet refs/heads/<type>/<short-name>
+   ```
+
+   Exit 0 (prints the SHA) means the branch exists: check it out
+   (`task git:checkout -- <type>/<short-name>`) instead of creating it.
+   `checkout -b` on an existing branch fails with
    `fatal: A branch named '...' already exists` and aborts the run. Omitting the
    ID suffix makes that collision more likely, not less.
 

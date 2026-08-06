@@ -193,12 +193,20 @@ Resolve the work item per
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch
 name, or ask).
 
-**Resume an existing branch instead of recreating it.** Run
-`task git:status` first. If the intended branch already exists — which is
-exactly the case when `ship` is rerun against an open PR — check it out
-rather than creating it. `checkout -b` on an existing branch fails with
-`fatal: A branch named '...' already exists` and aborts the run **before**
-Step 2a's existing-PR detection, making the UPDATE path unreachable.
+**Resume an existing branch instead of recreating it.** Test for the
+branch first — `git status` reports only the *current* branch and cannot
+answer this:
+
+```bash
+task git:run -- rev-parse --verify --quiet refs/heads/ship/<short-name>
+```
+
+Exit 0 (prints the SHA) means the branch exists — which is exactly the
+case when `ship` is rerun against an open PR — so check it out rather
+than creating it. Non-zero means it does not. `checkout -b` on an
+existing branch fails with `fatal: A branch named '...' already exists`
+and aborts the run **before** Step 2a's existing-PR detection, making the
+UPDATE path unreachable.
 
 ```bash
 # Existing branch (rerun / UPDATE path): check out, do not create.
