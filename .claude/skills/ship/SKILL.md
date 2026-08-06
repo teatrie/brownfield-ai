@@ -245,10 +245,12 @@ alternatives, not a sequence: following the existing-branch checkout with
 the new-branch block ends in `checkout -b <branch> main`, which fails
 because the branch already exists.
 
-Existing branch (rerun / UPDATE path) — check out, do not create:
+Existing branch (rerun / UPDATE path) — check out, do not create, then
+sync so the later push is not rejected as non-fast-forward:
 
 ```bash
 task git:checkout -- <branch>
+task git:pull
 ```
 
 New branch — base it on an updated `main`:
