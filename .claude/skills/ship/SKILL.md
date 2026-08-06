@@ -212,11 +212,22 @@ task git:run -- rev-parse --verify --quiet refs/heads/<branch>
 task git:run -- rev-parse --verify --quiet refs/remotes/origin/<branch>
 ```
 
-Exit 0 (prints the SHA) on **either** means the branch exists — which is
-exactly the case when `ship` is rerun against an open PR — so check it
-out rather than creating it. `task git:checkout -- <branch>` creates the
-local tracking branch when only the remote ref is present. Only when
-**both** probes fail is the branch genuinely new.
+Exit 0 (prints the SHA) on **either** means a branch of that name exists.
+**A matching ref does not by itself mean "resume"** — it may back a
+closed/unmerged PR, or be an unrelated older branch whose generated name
+collided, and resuming either would push stale commits into a PR they do
+not belong to. Run the existing-PR detection and ownership check in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" against `<branch>` first:
+
+- **OPEN PR, conclusively ours** → resume with
+  `task git:checkout -- <branch>`, which also creates the local tracking
+  branch when only the remote ref is present. This is the UPDATE path.
+- **Anything else** → do **NOT** silently resume or create over it. Stop
+  and ask whether to reuse the branch, pick another name, or branch fresh
+  from the base; under `CI=true`, halt per CLAUDE.md Principle 16.
+
+Only when **both** probes fail is the branch genuinely new.
 
 Skipping the remote probe creates an unrelated branch from `main`, and
 the later push is then rejected as non-fast-forward — so the UPDATE path
@@ -266,13 +277,19 @@ diff-review gate returns APPROVED.
 
 ### Step 3: Push & Create PR
 
+**Re-run the detection and ownership check FIRST — before the push.**
+Step 2a's answer is provisional and the pre-push confirmation may have
+paused indefinitely; per the revalidation rule in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation", act only on a fresh answer. Order it **ahead of**
+`task git:push` because the push is itself a remote mutation: if a
+third-party PR was opened on this branch during the pause, pushing adds
+your commits to *their* PR before any guard has run. If ownership is not
+conclusive, halt per that section rather than pushing.
+
 ```bash
 task git:push
 ```
-
-**Re-run the detection now**, per that section's revalidation rule —
-Step 2a's answer is provisional, and the pre-push confirmation may have
-paused for a long time. Branch on the fresh result.
 
 **UPDATE path**: if the PR is still OPEN and ours, do **NOT** create a
 second one. Instead run the **per-round procedure** in
