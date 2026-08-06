@@ -86,9 +86,11 @@ If there are uncommitted changes:
    **Two rules govern every switch away from your current branch**, whichever
    outcome below applies:
 
-   - **Unpushed commits block the switch.** Compare against the current
-     branch's **own upstream**, not `main`:
-     `task git:log -- --oneline @{upstream}..HEAD`. Commits merely absent
+   - **Unpushed commits block the switch.** Resolve the upstream first with
+     `task git:run -- rev-parse --abbrev-ref @{upstream}`; a non-zero exit
+     means there is none, so treat every commit on the branch as unpushed
+     and skip the comparison. Otherwise compare against that upstream, not
+     `main`: `task git:log -- --oneline @{upstream}..HEAD`. Commits merely absent
      from `main` are the normal state of any unmerged feature branch and
      must not block anything; only commits absent from the *remote* are at
      risk. When the branch has **no upstream**, nothing has been pushed, so
@@ -104,8 +106,16 @@ If there are uncommitted changes:
      target branch differs in any modified path. The `--autostash` on the
      pull does not help — it runs later. Wrap **every** checkout below:
      `task git:run -- stash push --include-untracked`, the checkout, **then
-     any sync**, and only then `task git:run -- stash pop`. Skip the pair on
-     a clean tree, where `stash pop` fails with `No stash entries found`.
+     any sync**, and only then `task git:run -- stash pop`.
+
+     **Skip the pair entirely on a clean tree — this is a data-safety rule,
+     not a tidiness one.** `stash push` on a clean tree is a no-op
+     (`No local changes to save`), but the paired `pop` is **not**
+     harmless: it pops whatever is on top of the stack. It only errors
+     `No stash entries found` when the stack is empty, so on a repo holding
+     any pre-existing stash it would silently apply that unrelated work
+     onto your branch. Decide with `task git:status`, never by running the
+     pop and seeing what happens.
 
      **Pop last, after the sync.** Popping before the pull only forces the
      rebase to autostash the same changes again — and if the pop conflicts,

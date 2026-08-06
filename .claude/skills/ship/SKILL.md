@@ -275,10 +275,11 @@ alternatives, not a sequence: following the existing-branch checkout with
 the new-branch block ends in `checkout -b <branch> origin/main`, which
 fails because the branch already exists.
 
-**Unpushed commits block the switch.** Before either checkout, compare the
-current branch against its **own upstream**:
-`task git:log -- --oneline @{upstream}..HEAD`; treat a missing upstream as
-wholly unpushed. The stash below moves the dirty tree but leaves committed
+**Unpushed commits block the switch.** Before either checkout, resolve the
+upstream with `task git:run -- rev-parse --abbrev-ref @{upstream}`; a
+non-zero exit means there is none, so treat every commit on the branch as
+unpushed and skip the comparison. Otherwise compare the current branch
+against that upstream: `task git:log -- --oneline @{upstream}..HEAD`. The stash below moves the dirty tree but leaves committed
 work on the branch you leave, so switching would publish a group without
 commits it should carry. If unpushed commits exist and the target is a
 different branch, **halt and ask** which to publish. Under `CI=true`, halt
@@ -300,9 +301,14 @@ task git:run -- stash push --include-untracked
 task git:run -- stash pop
 ```
 
-Run the stash pair **only when `task git:status` reports a dirty tree** —
-`stash push` on a clean tree creates no entry, and the `stash pop` then
-fails with `No stash entries found`.
+Run the stash pair **only when `task git:status` reports a dirty tree.**
+This is a data-safety rule, not a tidiness one. `stash push` on a clean
+tree is a no-op (`No local changes to save`), but the paired `pop` is
+**not** harmless: it pops whatever is on top of the stack. It only errors
+`No stash entries found` when the stack is empty, so on a repo holding any
+pre-existing stash it would silently apply that unrelated work onto the
+group. Decide with `task git:status`, never by running the pop and seeing
+what happens.
 
 **Pop last — after the checkout *and* any sync.** Popping before the pull
 would only force the rebase to autostash the same changes again; popping
