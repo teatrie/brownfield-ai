@@ -794,8 +794,29 @@ take `<id>` from the audited comment's `url` fragment
 REST objects carry a numeric `id` directly). Only if no comment with the
 marker exists yet does the skill post a fresh one. Reserve
 supersede-with-banner (step 3) for genuinely one-off comments a later
-round obsoletes; the three marked comments are edited in place, never
-superseded.
+round obsoletes; in the steady state the three marked comments are
+edited in place, never superseded.
+
+**Collapsing pre-existing duplicates.** A PR opened before this procedure
+existed — or one whose earlier rounds posted rather than edited — can
+already carry **several** comments bearing the same marker. Edit-in-place
+alone cannot reach "exactly one per marker" there, so on the first
+reconciliation round that finds duplicates:
+
+- **Keep the most recent** comment carrying the marker; that is the one
+  edited in place from this round on.
+- **Supersede-with-banner the older duplicates** per step 3, linking to
+  the kept comment. This is the one sanctioned exception to "the three
+  marked comments are never superseded" — that rule assumes the steady
+  state of exactly one.
+- **Do not delete them.** The step-3 prohibition on deleting prior-round
+  comments is unconditional; collapsing duplicates preserves the audit
+  trail rather than erasing it.
+- The **HARD GUARDRAIL** below still applies: only comments the step-2
+  audit positively identified as agent-authored may be touched.
+
+Once collapsed, subsequent rounds find exactly one comment per marker and
+take the plain edit-in-place path.
 
 **⚠️ HARD GUARDRAIL — NEVER touch human comments.** Reconciliation
 operates **ONLY** on AGENT-AUTHORED comments. It MUST NEVER delete or

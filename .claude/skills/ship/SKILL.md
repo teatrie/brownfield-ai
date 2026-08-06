@@ -241,8 +241,11 @@ task git:push
 
 **UPDATE path**: if Step 2a's detection found an OPEN PR for this branch,
 do **NOT** create a second one. The description sync already ran as step 1
-of the per-round procedure, so the body is current — skip items 1–4 below
-and continue at the epic status transition (item 5), then go to Step 3a.
+of the per-round procedure, so the body is current — **skip items 1–5
+below entirely and go straight to Step 3a.** Item 5 is creation-only: the
+`in_progress` → `in_review` transition would be re-applied to an epic
+already in `in_review`, which the state machine rejects, halting every
+subsequent update round.
 
 **CREATE path** (no OPEN PR): follow the procedures in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) for:
