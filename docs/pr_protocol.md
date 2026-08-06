@@ -723,23 +723,28 @@ overwrites the description and mutates `pr-lifecycle:` comments, so
 entering the UPDATE path on a PR we do not own would breach the
 third-party rule in [CLAUDE.md](../CLAUDE.md) §"Tool Chain & PR
 Protocol", which requires explicit sign-off and forbids the
-`pr-lifecycle:` namespace on such PRs. Before entering UPDATE, establish
-positively that this workflow authored the PR — the agent
-`Co-authored-by:` trailer in its body, an existing `pr-lifecycle:`
-marker on one of its comments, or a `pr_created` ledger artifact for this
-PR number. As with the comment audit, **author login is not a valid
-discriminator** (agent PRs are opened under the operator's `gh` token).
+`pr-lifecycle:` namespace on such PRs. As with the comment audit,
+**author login is not a valid discriminator** (agent PRs are opened under
+the operator's `gh` token). Evidence is **tiered**:
 
-The **trailer is the anchor that always holds**, and deliberately so:
-§"Agent Identity & Co-authored-by Trailer" mandates it on every PR body
-we create, so it survives a cross-session resume where no ledger artifact
-is reachable and the prior run died before posting its first comment. Do
-not weaken that mandate — it is what keeps this check from deadlocking
-the autonomous loop into the sign-off path.
+- **Conclusive — proceed to UPDATE.** Either a `pr_created` ledger
+  artifact for this PR number, or an existing `pr-lifecycle:` marker on
+  one of its comments. Both are produced only by this workflow.
+- **Suggestive, not sufficient — ask.** The agent `Co-authored-by:`
+  trailer alone. §"Agent Identity & Co-authored-by Trailer" mandates it
+  on every PR body we create, but it is a **generic** AI trailer: a
+  human-authored PR written with the same assistant carries an identical
+  line. It cannot separate "this workflow's PR" from "someone else's
+  AI-assisted PR", so it may not authorize mutation by itself.
+- **Nothing** — treat as third-party.
 
-If ownership cannot be positively established, **fail SAFE**: do not
-reconcile, do not edit the body, and treat the PR as third-party —
-route to the third-party review path and halt for user sign-off.
+On anything short of conclusive, **fail SAFE**: do not reconcile, do not
+edit the body. Present the PR to the user and ask whether it is ours;
+under `CI=true` do not ask — halt and checkpoint
+`verdict: blocked-needs-signoff` per CLAUDE.md Principle 16.
+
+This is deliberately biased toward stopping. A stall costs one question;
+a wrong UPDATE silently rewrites someone else's PR description.
 
 Both `auto-pr` and `ship` perform this detection at their PR step and
 share this one procedure.

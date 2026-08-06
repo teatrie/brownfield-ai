@@ -202,15 +202,25 @@ while creating a suffixed one makes every JIRA/Linear rerun miss:
 
 Call the result `<branch>`. **Resume it instead of recreating it.** Test
 for it first — `git status` reports only the *current* branch and cannot
-answer this:
+answer this. Check the **remote** ref too: after a fresh clone, or once
+the local branch has been pruned, an open PR's branch exists only as
+`refs/remotes/origin/<branch>`.
 
 ```bash
+task git:fetch -- origin
 task git:run -- rev-parse --verify --quiet refs/heads/<branch>
+task git:run -- rev-parse --verify --quiet refs/remotes/origin/<branch>
 ```
 
-Exit 0 (prints the SHA) means the branch exists — which is exactly the
-case when `ship` is rerun against an open PR — so check it out rather
-than creating it. Non-zero means it does not. `checkout -b` on an
+Exit 0 (prints the SHA) on **either** means the branch exists — which is
+exactly the case when `ship` is rerun against an open PR — so check it
+out rather than creating it. `task git:checkout -- <branch>` creates the
+local tracking branch when only the remote ref is present. Only when
+**both** probes fail is the branch genuinely new.
+
+Skipping the remote probe creates an unrelated branch from `main`, and
+the later push is then rejected as non-fast-forward — so the UPDATE path
+cannot resume. `checkout -b` on an
 existing branch fails with `fatal: A branch named '...' already exists`
 and aborts the run **before** Step 2a's existing-PR detection, making the
 UPDATE path unreachable.

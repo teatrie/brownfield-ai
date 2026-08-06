@@ -42,15 +42,19 @@ If there are uncommitted changes:
 
    Call the result `<branch>`. Test whether it already exists — the normal case
    on a rerun. `git status` reports only the *current* branch, so it cannot
-   answer this on its own; query the ref:
+   answer this on its own. Query both refs: after a fresh clone, or once the
+   local branch has been pruned, an open PR's branch exists only on the remote.
 
    ```bash
+   task git:fetch -- origin
    task git:run -- rev-parse --verify --quiet refs/heads/<branch>
+   task git:run -- rev-parse --verify --quiet refs/remotes/origin/<branch>
    ```
 
-   Exit 0 (prints the SHA) means the branch exists: check it out with
-   `task git:checkout -- <branch>` instead of creating it. Non-zero means
-   create it:
+   Exit 0 (prints the SHA) on **either** means the branch exists: check it out
+   with `task git:checkout -- <branch>` instead of creating it — that also
+   creates the local tracking branch when only the remote ref is present. Only
+   when **both** probes fail is the branch new:
 
    ```bash
    task git:checkout -- -b <branch>
