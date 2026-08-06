@@ -76,8 +76,10 @@ If there are uncommitted changes:
      treat it as a CREATE.
    - **Not on it, but an OPEN PR is conclusively ours** → resume:
      `task git:checkout -- <branch>` (this also creates the local tracking
-     branch when only the remote ref is present), then **`task git:pull` to
-     sync**. The remote branch may have advanced — a reviewer's suggestion
+     branch when only the remote ref is present), then sync with
+     **`task git:pull -- origin <branch>`**. Name the remote and branch
+     explicitly: a local branch that lost or never had upstream tracking
+     makes a bare `git pull` fail with `no tracking information`. The remote branch may have advanced — a reviewer's suggestion
      committed from the GitHub UI, a CI auto-formatter push — and pushing a
      stale local branch is rejected as non-fast-forward, halting the run.
      This is the UPDATE path.
@@ -94,9 +96,10 @@ If there are uncommitted changes:
    only when an owned OPEN PR was found. A branch that exists remotely can
    have advanced regardless of PR state, and an unsynced local ref makes the
    later push fail as non-fast-forward, which is the failure this whole
-   probe exists to avoid. Skip the pull only when the branch is local-only:
-   it has no upstream, so `task git:pull` would fail with
-   `no tracking information`.
+   probe exists to avoid. Always name the remote and branch —
+   `task git:pull -- origin <branch>` — since upstream tracking may be
+   absent. Skip the pull only when the branch is local-only: there is
+   nothing on the remote to pull from.
 
    Only when **both** probes fail is the branch genuinely new:
 
@@ -249,17 +252,17 @@ second one. Instead run the **per-round procedure** in
 [pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
 Reconciliation" now — the push above has just landed the round's
 commits, which is exactly when its description sync must run — then
-**skip items 1–6 below entirely and go straight to Step 3a.** Items 5
-and 6 are creation-only: `pr_created` would duplicate an artifact that
-already exists for this PR, and the `in_progress` → `in_review`
-**`pr_merged` still applies.** It is mandated inside item 5, which you are
-skipping, but it is a *merge*-time artifact, not a creation-time one — so
-checkpoint it at Step 4 as usual when the PR merges. Only the
-creation-time halves of items 5 and 6 are skipped: `pr_created` would
-duplicate an artifact that already exists for this PR, and the
+**skip items 1–6 below and go straight to Step 3a.**
+
+What you skip is the **creation-time** work in items 5 and 6:
+`pr_created` would duplicate an artifact this PR already has, and the
 `in_progress` → `in_review` transition would be re-applied to an epic
-already in `in_review`, which
-the state machine rejects — halting every subsequent update round.
+already in `in_review`, which the state machine rejects — halting every
+subsequent update round.
+
+**`pr_merged` is not part of that skip.** It happens to be mandated
+inside item 5, but it is a *merge*-time artifact: checkpoint it at
+Step 4 as usual when the PR merges.
 
 **CREATE path** (no OPEN PR): follow the procedures in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) for:

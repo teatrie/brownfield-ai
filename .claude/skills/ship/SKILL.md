@@ -228,8 +228,10 @@ Reconciliation" against `<branch>` first:
 
 - **OPEN PR, conclusively ours** → resume with
   `task git:checkout -- <branch>`, which also creates the local tracking
-  branch when only the remote ref is present, then **`task git:pull` to
-  sync**. The remote branch may have advanced — a reviewer's suggestion
+  branch when only the remote ref is present, then sync with
+  **`task git:pull -- origin <branch>`**. Name the remote and branch
+  explicitly: a local branch that lost or never had upstream tracking
+  makes a bare `git pull` fail with `no tracking information`. The remote branch may have advanced — a reviewer's suggestion
   committed from the GitHub UI, a CI auto-formatter push — and pushing a
   stale local branch is rejected as non-fast-forward, halting the run.
   This is the UPDATE path.
@@ -269,14 +271,18 @@ Then sync **only if the remote ref exists** (the probe above already told
 you), so the later push is not rejected as non-fast-forward:
 
 ```bash
-task git:pull
+task git:pull -- origin <branch>
 ```
 
-Skip the pull when the branch is local-only — the interrupted-run case,
-where the prior run stopped before its first push. That branch has no
-upstream, so `git pull` fails with `no tracking information` and would
-halt the batch this path exists to resume. Go straight to its initial
-push instead.
+Name the remote and branch explicitly — upstream tracking may be absent
+even when the remote ref exists, and a bare `git pull` then fails with
+`no tracking information`.
+
+Skip the pull entirely when the branch is local-only — the
+interrupted-run case, where the prior run stopped before its first push.
+There is nothing on the remote to pull from, and halting here would strand
+the batch this path exists to resume. Go straight to its initial push
+instead.
 
 New branch — base it on an updated `main`:
 
