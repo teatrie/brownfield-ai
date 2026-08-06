@@ -488,8 +488,8 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_exec_summa
 <!-- pr-lifecycle:executive-summary -->
 ## Executive Summary
 
-<Brief description of the plan's purpose and what was implemented.
-1-3 sentences sourced from plan context.>
+- **<what the plan set out to do>** — <one line, sourced from plan context>
+- **<what was implemented>** — <one line>
 ```
 
 ### Second Comment: QA Diff-Review Resolution Log
