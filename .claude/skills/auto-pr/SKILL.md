@@ -98,16 +98,20 @@ If there are uncommitted changes:
      2. **No upstream, but `refs/remotes/origin/<current-branch>` exists** —
         compare against that ref instead. It is where a push would have
         landed.
-     3. **Neither ref exists** — first check whether the branch is simply
-        **already merged**: if `task git:log -- --oneline origin/main..HEAD`
-        is **empty**, every commit is contained in the freshly fetched base,
-        so nothing can be lost and the switch is safe. That is the state a
-        squash-merge with `--delete-branch` leaves behind once the prune
-        drops the remote ref.
-     4. **Neither ref, and commits beyond `origin/main`** — now you
-        genuinely cannot tell whether those commits are published (a
-        non-empty `origin/main..HEAD` reports every feature commit, pushed
-        or not). Do not guess in either direction: **ask.**
+     3. **Neither ref exists** — ask GitHub about the **current** branch:
+        `task gh:pr -- view <current-branch> --json state`. A **MERGED** (or
+        CLOSED) PR means the work is already accounted for and the branch is
+        spent, so leaving it loses nothing. That is the state a squash-merge
+        with `--delete-branch` leaves behind once the prune drops the remote
+        ref. **Do not test this by ancestry**: a squash merge lands one new
+        commit with a different identity, so the original commits never
+        become ancestors of `main` and `origin/main..HEAD` stays non-empty
+        on exactly the branch you just merged. An empty range is still
+        *sufficient* proof when it happens — just not the common case.
+     4. **Neither ref, and no merged/closed PR** — now you genuinely cannot
+        tell whether those commits are published (a non-empty
+        `origin/main..HEAD` reports every feature commit, pushed or not).
+        Do not guess in either direction: **ask.**
 
      If unpushed commits exist and `<branch>` is a different branch, **halt
      and ask** which to publish. Under `CI=true`, halt per CLAUDE.md
