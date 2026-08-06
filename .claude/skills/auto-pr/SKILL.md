@@ -172,8 +172,19 @@ If there are uncommitted changes:
      unrelated branch that merely collides with the generated name, and
      pushing to it would graft your commits onto someone else's work. Decide
      on commits, not on the absent PR:
-     - **No commits beyond the base** — a bare leftover ref. Reuse it: check
-       it out (stashing per the rule above) and carry on. Name the ref the
+     - **No commits beyond the base** — a bare leftover ref. **Reset it onto
+       the current base rather than checking it out as-is**: the ref was cut
+       from whatever base existed then, so a plain checkout moves `HEAD`
+       backward and the popped changes would build a PR missing recent
+       `main` commits.
+
+       ```bash
+       task git:checkout -- -B <branch> origin/main
+       ```
+
+       `-B` resets an existing branch; it is safe **only** because this case
+       is defined by having no commits beyond the base, so there is nothing
+       to discard. Stash per the rule above, reset, then pop. Name the ref the
        probe actually found: `task git:log -- --oneline origin/main..<branch>`
        when the **local** ref exists, `origin/main..origin/<branch>` when
        only the **remote** one does. A remote-only branch is not a valid

@@ -240,10 +240,21 @@ Reconciliation" against `<branch>` first:
   short between the two leaves exactly this state. But an absent PR does
   not prove the branch is ours — the generated name can collide with an
   abandoned or unrelated branch. Decide on commits, as `auto-pr` does:
-  - **No commits beyond the base** — a bare leftover ref. Resume it and
-    continue on the CREATE path. Do **not** halt: `ship` is a batch skill,
-    and halting here would demand manual intervention for every
-    interrupted group. Name the ref the probe actually found:
+  - **No commits beyond the base** — a bare leftover ref. **Reset it onto
+    the fetched base** rather than falling through to the CREATE block,
+    whose `checkout -b` would abort with `a branch named '...' already
+    exists`, and which would in any case leave the branch on whatever
+    older base it was cut from:
+
+    ```bash
+    task git:checkout -- -B <branch> origin/main
+    ```
+
+    `-B` resets an existing branch; it is safe **only** because this case
+    is defined by having no commits beyond the base, so there is nothing
+    to discard. Then continue on the CREATE path from Step 2. Do **not**
+    halt: `ship` is a batch skill, and halting here would demand manual
+    intervention for every interrupted group. Name the ref the probe actually found:
     `task git:log -- --oneline origin/main..<branch>` when the **local**
     ref exists, `origin/main..origin/<branch>` when only the **remote** one
     does — a remote-only branch is not a valid local revision and naming it
