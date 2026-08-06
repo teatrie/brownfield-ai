@@ -86,21 +86,25 @@ If there are uncommitted changes:
    **Two rules govern every switch away from your current branch**, whichever
    outcome below applies:
 
-   - **Unpushed commits block the switch.** Resolve the upstream first with
-     `task git:run -- rev-parse --abbrev-ref @{upstream}`. If it resolves,
-     compare against it: `task git:log -- --oneline @{upstream}..HEAD`. If it
-     does **not** (non-zero exit — no tracking configured), fall back to
-     `origin/main..HEAD` rather than assuming everything is unpushed: a
-     branch sitting at the fetched base has nothing to lose, and calling it
-     wholly unpushed would halt an ordinary run. Commits merely absent
-     from `main` are the normal state of any unmerged feature branch and
-     must not block anything; only commits absent from the *remote* are at
-     risk. When the branch has **no upstream**, nothing has been pushed, so
-     treat every commit on it as unpushed. A stash moves the dirty tree but
-     leaves committed work behind, so switching would push `<branch>`
-     without the very commits you were asked to publish — silently. If
-     unpushed commits exist and `<branch>` is a different branch, **halt and
-     ask** which to publish. Under `CI=true`, halt per CLAUDE.md
+   - **Unpushed commits block the switch.** A stash moves the dirty tree but
+     leaves committed work on the branch you leave, so switching would push
+     `<branch>` without the very commits you were asked to publish —
+     silently. What counts as "unpushed" is *absent from a remote*, never
+     merely absent from `main`; every unmerged feature branch is absent
+     from `main`. Establish it in this order:
+     1. **Upstream configured** — `task git:run -- rev-parse --abbrev-ref
+        @{upstream}` resolves. Definitive: compare
+        `task git:log -- --oneline @{upstream}..HEAD`.
+     2. **No upstream, but `refs/remotes/origin/<current-branch>` exists** —
+        compare against that ref instead. It is where a push would have
+        landed.
+     3. **Neither** — you **cannot** tell whether the commits are published,
+        and `origin/main..HEAD` will not tell you (it reports every feature
+        commit whether pushed or not). Do not guess in either direction:
+        **ask.**
+
+     If unpushed commits exist and `<branch>` is a different branch, **halt
+     and ask** which to publish. Under `CI=true`, halt per CLAUDE.md
      Principle 16.
    - **Stash a dirty tree first.** You arrive here from the
      uncommitted-changes path, and `checkout` aborts with

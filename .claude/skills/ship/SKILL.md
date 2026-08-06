@@ -275,19 +275,24 @@ alternatives, not a sequence: following the existing-branch checkout with
 the new-branch block ends in `checkout -b <branch> origin/main`, which
 fails because the branch already exists.
 
-**Unpushed commits block the switch.** Before either checkout, resolve the
-upstream with `task git:run -- rev-parse --abbrev-ref @{upstream}`. If it
-resolves, compare against it:
-`task git:log -- --oneline @{upstream}..HEAD`. If it does **not**
-(non-zero exit — no tracking configured), fall back to `origin/main..HEAD`
-rather than assuming everything is unpushed: a branch sitting at the
-fetched base has nothing to lose, and calling it wholly unpushed would
-halt an ordinary run. The stash below moves the dirty tree but leaves committed
-work on the branch you leave, so switching would publish a group without
-commits it should carry. If unpushed commits exist and the target is a
-different branch, **halt and ask** which to publish. Under `CI=true`, halt
-per CLAUDE.md Principle 16. (Commits merely absent from `main` do not
-count — that is every unmerged branch.)
+**Unpushed commits block the switch.** The stash below moves the dirty
+tree but leaves committed work on the branch you leave, so switching would
+publish a group without commits it should carry. What counts as
+"unpushed" is *absent from a remote*, never merely absent from `main` —
+that is every unmerged branch. Before either checkout, establish it in
+this order:
+
+1. **Upstream configured** — `task git:run -- rev-parse --abbrev-ref
+   @{upstream}` resolves. Definitive: compare
+   `task git:log -- --oneline @{upstream}..HEAD`.
+2. **No upstream, but `refs/remotes/origin/<current-branch>` exists** —
+   compare against that ref instead. It is where a push would have landed.
+3. **Neither** — you **cannot** tell whether the commits are published, and
+   `origin/main..HEAD` will not tell you (it reports every feature commit
+   whether pushed or not). Do not guess in either direction: **ask.**
+
+If unpushed commits exist and the target is a different branch, **halt and
+ask** which to publish. Under `CI=true`, halt per CLAUDE.md Principle 16.
 
 **Stash around whichever checkout you run.** `ship` holds every remaining
 group uncommitted, and *any* branch switch — resuming an existing branch
