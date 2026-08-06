@@ -469,6 +469,21 @@ review explicitly reports GREEN.
 
 ## PR Execution Comments
 
+**Post-or-PATCH (applies to all three comments below).** Each carries a
+stable `pr-lifecycle:` marker on line 1. Before posting any of them,
+resolve whether a comment bearing that marker already exists on the PR
+(`task gh:api -- /repos/{owner}/{repo}/issues/<number>/comments`). If one
+does, **PATCH it in place** per §"Per-Round PR Reconciliation" step 4
+instead of posting; the `task gh:pr -- comment` invocations shown below
+are the **first-post** form only.
+
+This rule lives here, at the point of posting, because it cannot be
+delegated to the pre-push reconciliation pass: all three comments are
+written **after** that pass runs, and the CI Gate Resolution Log is
+written later still — after CI completes. Without post-or-PATCH, every
+update round would append another copy and defeat the
+exactly-one-per-marker invariant.
+
 ### First Comment: Executive Summary
 
 After the PR Auto-Review gate passes GREEN, if the agent's execution
@@ -581,7 +596,13 @@ Skip this subsection if no TODOs were captured during the diff-review.
 
 After all CI checks pass GREEN (before the merge decision), post a
 follow-up comment with the CI resolution history. This comment is
-always posted — even for first-run clean passes.
+always written — even for first-run clean passes.
+
+**Post-or-PATCH applies here too, and matters most.** This comment is
+written after CI completes, which is the furthest point from the
+pre-push reconciliation pass, so nothing upstream can dedupe it. On any
+round where a `pr-lifecycle:ci-resolution-log` comment already exists,
+PATCH it rather than posting a second one.
 
 Write to `tmp/<branch-short-name>/pr_ci_log.md`, then:
 
