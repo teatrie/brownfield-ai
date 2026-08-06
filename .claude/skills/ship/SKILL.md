@@ -292,13 +292,19 @@ There is nothing on the remote to pull from, and halting here would strand
 the batch this path exists to resume. Go straight to its initial push
 instead.
 
-New branch — base it on an updated `main`:
+New branch — base it on an updated `main`, **without checking `main` out**:
 
 ```bash
-task git:checkout -- main
-task git:pull
-task git:checkout -- -b <branch> main
+task git:fetch -- origin main
+task git:checkout -- -b <branch> origin/main
 ```
+
+`ship` runs with every remaining group still uncommitted in the working
+tree. Checking `main` out first would carry that tree across, and the
+follow-up pull would hard-abort with `Your local changes to the following
+files would be overwritten by merge` the moment a remote change overlaps
+one of those files. Branching straight off the freshly fetched
+`origin/main` gets the same base without ever moving to `main`.
 
 Use the prefix `ship/` for all branches (e.g.,
 `ship/media-schemas_ACME-1234`).
