@@ -87,6 +87,14 @@ If there are uncommitted changes:
      this is a plain CREATE against an unused branch: check it out and carry
      on. Ask only if its commits are unrelated to the work in hand.
 
+   **Pull whenever the remote probe succeeded**, on every resume above — not
+   only when an owned OPEN PR was found. A branch that exists remotely can
+   have advanced regardless of PR state, and an unsynced local ref makes the
+   later push fail as non-fast-forward, which is the failure this whole
+   probe exists to avoid. Skip the pull only when the branch is local-only:
+   it has no upstream, so `task git:pull` would fail with
+   `no tracking information`.
+
    Only when **both** probes fail is the branch genuinely new:
 
    ```bash
