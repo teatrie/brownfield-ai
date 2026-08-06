@@ -46,4 +46,9 @@ scope unless the user asks for it explicitly.
 ## Tool Chain & PR Protocol
 
 - [Tool Chain](./docs/tool_chain.md) — Task, Terraform, GH CLI.
-- [PR Protocol](./docs/pr_protocol.md) — Mandatory user review before merge.
+- [PR Protocol](./docs/pr_protocol.md) — Mandatory user review before merge. **Binds every `gh pr create|comment|edit|merge`, including ad-hoc calls made outside the `auto-pr` / `ship` skills.**
+  - **Always `--body-file`** — never inline `--body` / `-b` (via `task gh:pr -- ...` per Principle 12).
+  - **Write the artifact with the Write tool** into `tmp/` — never a heredoc or shell redirection.
+  - **Follow the body/comment templates** and the §"Writing Style (Mandatory)" bullet-first rules.
+  - **PRs we did NOT author** — write `tmp/pr<number>/pr_review_findings.md`, use the `pr-review:` marker namespace (never `pr-lifecycle:`), and **never post without explicit user sign-off**. Headless: write the artifact and halt.
+  - Artifact-level style and mechanics are carried by [pr.artifacts.md](./.claude/rules/pr.artifacts.md).

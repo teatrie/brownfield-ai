@@ -287,22 +287,111 @@ if [ ! -f "$PR_TEMPLATE" ]; then
 fi
 ```
 
+## Collapsible Details Convention
+
+PR descriptions and comments (both generated here and posted later)
+keep a short, always-visible summary at the top, then fold any verbose
+supporting material — multi-row tables, harvested change-history,
+per-finding logs — into collapsible `<details>` blocks so reviewers see
+the verdict first and expand only what they need.
+
+Use this shape:
+
+```markdown
+<one-line summary or verdict — always visible>
+
+<details>
+<summary>Short label (with a count when the content is a list/table)</summary>
+
+<verbose content: tables, narrative, logs>
+
+</details>
+```
+
+**GitHub rendering rule (mandatory):** GitHub only renders Markdown
+(tables, lists, headings) inside a `<details>` block when there is a
+**blank line** after the `</summary>` tag and a **blank line** before
+the closing `</details>` tag. Omitting either blank line makes tables
+render as raw pipe-delimited text. Always include both blank lines.
+
+## Writing Style (Mandatory)
+
+Governs **every** PR body, description, and comment produced under this
+protocol — including ad-hoc calls made outside the `auto-pr` / `ship` skills.
+Optimize for a reviewer **scanning**, not reading.
+
+Do:
+
+- **Bullets first.** Default to bullet points. Sub-bullets only where a point
+  genuinely nests. Prose paragraphs are the exception.
+- **One idea per bullet.** Target **≤ 2 lines**. Split anything longer.
+- **Bold the key terms** — file names, flags, verdicts, failure modes, the
+  operative noun. A reader scanning **only the bold text** should get the gist.
+- **Lead with the conclusion.** Verdict, result, or impact first; supporting
+  detail after, or folded into `<details>`.
+- **Stay technical and boring.** Plain declarative statements: what changed,
+  what breaks, what it affects.
+- **Cite anchors** — `path/to/file.py:123`, task names, flag names — instead of
+  prose descriptions of where something lives.
+- **Use tables** for any repeated 3+ column structure. Fold them per the
+  **Collapsible Details Convention** above.
+
+Do NOT:
+
+- **No fluff adjectives** — "comprehensive", "robust", "seamless", "carefully
+  crafted", "significantly improves".
+- **No narrative build-up.** Do not set the scene before making the point.
+- **No restating the diff** in prose. The diff is linked and readable.
+- **No self-congratulation** and no meta-commentary about writing the PR.
+- **No hedging** where the fact is known. State it, or mark it **explicitly
+  unverified**.
+
+<!-- THREE copies of this Writing Style block exist:
+       docs/pr_protocol.md
+       .claude/rules/pr.artifacts.md
+       .github/instructions/pr.artifacts.instructions.md
+     Edit all three or none. This guard is itself part of the copied block and
+     is deliberately self-reference-free so it stays identical in the first two.
+     docs/pr_protocol.md and .claude/rules/pr.artifacts.md stay byte-identical
+     except (a) the Collapsible Details Convention above/below pointer and
+     (b) the "Governs every PR body..." lead sentence, which only
+     docs/pr_protocol.md carries.
+     The mirror normalizes to ASCII punctuation, spells out symbols, and
+     describes HTML tags in prose; it retains inline code spans and bold.
+     (Sibling mirrors vary on bold — do not generalize from them.) Treat any
+     other wording difference in the mirror as intentional; do not "resync". -->
+
 ## Generate PR Body
 
 **If template exists:** Read the template content, fill in sections
 with details of the changes, and mark relevant checkboxes (`[x]`).
 
-**If no template exists:** Use this standard format:
+**If no template exists:** Use this standard format. Bullet-first per
+**Writing Style (Mandatory)** above:
 
 ```markdown
 ## Summary
-<1-3 bullet points describing what this PR contains>
+
+- **<key change>** — <what changed and why, one line>
+- **<key change>** — <one line>
+
+## Impact
+
+- <behaviour change, blast radius, or "Behaviour-neutral — <flag> defaults off">
 
 **Work Item**: <ID> (<System>)
 ```
 
 The Work Item line is mandatory (see **Work Item Reference** above).
 `none — <reason>` is a valid value; an absent line is not.
+
+Omit `## Impact` only when the change is genuinely inert — prose-only docs,
+comments, formatting — or when an upstream PR template governs the body.
+Anything touching runtime behaviour, CI, or infra states its blast radius.
+
+**Agent-governance files are never inert**: `CLAUDE.md`, `.claude/rules/`,
+`.github/instructions/`, `docs/*_protocol.md`, and skills are loaded and acted
+on as instructions, so a change to them alters agent behaviour repo-wide.
 
 **For sequential multi-PR flows** (e.g., `ship`), always include:
 
