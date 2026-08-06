@@ -851,16 +851,27 @@ task gh:api -- --paginate --slurp /repos/{owner}/{repo}/issues/<number>/comments
 ```
 
 A comment counts as **AGENT-AUTHORED for reconciliation purposes ONLY IF**
-it bears a recognizable agent signature a human comment would not carry
-— specifically a `pr-lifecycle:` hidden marker (`<!-- pr-lifecycle:… -->`
-on the first line) OR the agent `Co-authored-by:` trailer. Author
-**login MUST NOT** be used as the discriminator: agent comments are
-posted under the operator's `gh` auth token, so an agent-posted comment
-and a human comment written by that same operator share one GitHub
-author login — author identity is NOT reliably determinable from
-metadata. Any comment lacking the marker / trailer signature is treated
-as HUMAN (out of scope for edit / delete — see the guardrail below). For
-the comments that pass this test, classify each:
+it bears a signature a human comment would not carry — specifically
+either:
+
+- a `pr-lifecycle:` hidden marker (`<!-- pr-lifecycle:… -->` on the first
+  line), or
+- a comment id this session recorded when it posted the comment.
+
+**The `Co-authored-by:` trailer is NOT a valid discriminator here**, for
+the same reason it is only suggestive in the ownership check above: it is
+a generic AI trailer, so a human's AI-assisted comment carries an
+identical line. Treating it as proof would let reconciliation supersede
+or edit a human comment — exactly what the hard guardrail below forbids.
+
+Author **login MUST NOT** be used either: agent comments are posted under
+the operator's `gh` auth token, so an agent-posted comment and a human
+comment written by that same operator share one GitHub author login —
+author identity is NOT reliably determinable from metadata.
+
+Any comment lacking a marker or a session-recorded id is treated as HUMAN
+(out of scope for edit / delete — see the guardrail below). For the
+comments that pass this test, classify each:
 
 - **Current** — still accurate for the present diff; leave as-is (or
   edit-in-place per the marker rule in step 4).
@@ -982,11 +993,13 @@ delete the human's text. The comment audit (step 2) enumerates
 agent-authored comments exclusively; any comment not authored by the
 agent identity is out of scope for delete / supersede / edit. Because
 agent and human comments can share one author login under the operator's
-`gh` auth token, authorship MUST be established by the `pr-lifecycle:`
-marker / `Co-authored-by:` trailer discriminator (step 2), never by
-author login. When agent-vs-human authorship is **ambiguous** — no
-marker, no trailer, shared operator login — reconciliation MUST default
-to treating the comment as **HUMAN** and never edit or delete it.
+`gh` auth token, authorship MUST be established by the step-2
+discriminator — a `pr-lifecycle:` marker or a session-recorded comment id
+— never by author login, and never by the generic `Co-authored-by:`
+trailer, which a human's AI-assisted comment carries identically. When
+agent-vs-human authorship is **ambiguous** — no marker, no recorded id,
+shared operator login — reconciliation MUST default to treating the
+comment as **HUMAN** and never edit or delete it.
 
 ## CI Wait & Merge
 
