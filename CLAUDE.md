@@ -46,4 +46,9 @@ scope unless the user asks for it explicitly.
 ## Tool Chain & PR Protocol
 
 - [Tool Chain](./docs/tool_chain.md) — Task, Terraform, GH CLI.
-- [PR Protocol](./docs/pr_protocol.md) — Mandatory user review before merge.
+- [PR Protocol](./docs/pr_protocol.md) — Mandatory user review before merge. **Binds every *agent-issued* `gh pr create|comment|edit|merge`, including ad-hoc calls made outside the `auto-pr` / `ship` skills.** Deterministic tooling that renders a body from a checked-in template (e.g. `src/brownfield_ai/tools/ralph/pr.py`) is out of scope — it has no drafting step and no Write tool.
+  - **Always `--body-file`** when the call supplies body text — never inline `--body` / `-b` (via `task gh:pr -- ...` per Principle 12). A metadata-only edit (labels, reviewers, title) passes **no** body flag at all; do not add one, as that would overwrite the current body.
+  - **Write the artifact with the Write tool** into `tmp/` — never a heredoc or shell redirection.
+  - **Follow the body/comment templates** and the §"Writing Style (Mandatory)" bullet-first rules.
+  - **PRs we did NOT author** — write `tmp/pr<number>/pr_review_findings.md`; mark it `<!-- pr-review:review-findings -->` on line 1 (never a `pr-lifecycle:` marker — that namespace is reserved for PRs we own and is what a future reconciliation step will supersede and delete); state the **reviewer roster and models**; mark unverified claims **explicitly unverified**; report findings without resolving them; and **never post without explicit user sign-off**. Headless: write the artifact and halt.
+  - Artifact-level style and mechanics are carried by [pr.artifacts.md](./.claude/rules/pr.artifacts.md).

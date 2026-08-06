@@ -287,22 +287,111 @@ if [ ! -f "$PR_TEMPLATE" ]; then
 fi
 ```
 
+## Collapsible Details Convention
+
+PR descriptions and comments (both generated here and posted later)
+keep a short, always-visible summary at the top, then fold any verbose
+supporting material — multi-row tables, harvested change-history,
+per-finding logs — into collapsible `<details>` blocks so reviewers see
+the verdict first and expand only what they need.
+
+Use this shape:
+
+```markdown
+<one-line summary or verdict — always visible>
+
+<details>
+<summary>Short label (with a count when the content is a list/table)</summary>
+
+<verbose content: tables, narrative, logs>
+
+</details>
+```
+
+**GitHub rendering rule (mandatory):** GitHub only renders Markdown
+(tables, lists, headings) inside a `<details>` block when there is a
+**blank line** after the `</summary>` tag and a **blank line** before
+the closing `</details>` tag. Omitting either blank line makes tables
+render as raw pipe-delimited text. Always include both blank lines.
+
+## Writing Style (Mandatory)
+
+Governs **every** PR body, description, and comment produced under this
+protocol — including ad-hoc calls made outside the `auto-pr` / `ship` skills.
+Optimize for a reviewer **scanning**, not reading.
+
+Do:
+
+- **Bullets first.** Default to bullet points. Sub-bullets only where a point
+  genuinely nests. Prose paragraphs are the exception.
+- **One idea per bullet.** Target **≤ 2 lines**. Split anything longer.
+- **Bold the key terms** — file names, flags, verdicts, failure modes, the
+  operative noun. A reader scanning **only the bold text** should get the gist.
+- **Lead with the conclusion.** Verdict, result, or impact first; supporting
+  detail after, or folded into `<details>`.
+- **Stay technical and boring.** Plain declarative statements: what changed,
+  what breaks, what it affects.
+- **Cite anchors** — `path/to/file.py:123`, task names, flag names — instead of
+  prose descriptions of where something lives.
+- **Use tables** for any repeated 3+ column structure. Fold them per the
+  **Collapsible Details Convention** above.
+
+Do NOT:
+
+- **No fluff adjectives** — "comprehensive", "robust", "seamless", "carefully
+  crafted", "significantly improves".
+- **No narrative build-up.** Do not set the scene before making the point.
+- **No restating the diff** in prose. The diff is linked and readable.
+- **No self-congratulation** and no meta-commentary about writing the PR.
+- **No hedging** where the fact is known. State it, or mark it **explicitly
+  unverified**.
+
+<!-- THREE copies of this Writing Style block exist:
+       docs/pr_protocol.md
+       .claude/rules/pr.artifacts.md
+       .github/instructions/pr.artifacts.instructions.md
+     Edit all three or none. This guard is itself part of the copied block and
+     is deliberately self-reference-free so it stays identical in the first two.
+     docs/pr_protocol.md and .claude/rules/pr.artifacts.md stay byte-identical
+     except (a) the Collapsible Details Convention above/below pointer and
+     (b) the "Governs every PR body..." lead sentence, which only
+     docs/pr_protocol.md carries.
+     The mirror normalizes to ASCII punctuation, spells out symbols, and
+     describes HTML tags in prose; it retains inline code spans and bold.
+     (Sibling mirrors vary on bold — do not generalize from them.) Treat any
+     other wording difference in the mirror as intentional; do not "resync". -->
+
 ## Generate PR Body
 
 **If template exists:** Read the template content, fill in sections
 with details of the changes, and mark relevant checkboxes (`[x]`).
 
-**If no template exists:** Use this standard format:
+**If no template exists:** Use this standard format. Bullet-first per
+**Writing Style (Mandatory)** above:
 
 ```markdown
 ## Summary
-<1-3 bullet points describing what this PR contains>
+
+- **<key change>** — <what changed and why, one line>
+- **<key change>** — <one line>
+
+## Impact
+
+- <behaviour change, blast radius, or "Behaviour-neutral — <flag> defaults off">
 
 **Work Item**: <ID> (<System>)
 ```
 
 The Work Item line is mandatory (see **Work Item Reference** above).
 `none — <reason>` is a valid value; an absent line is not.
+
+Omit `## Impact` only when the change is genuinely inert — prose-only docs,
+comments, formatting — or when an upstream PR template governs the body.
+Anything touching runtime behaviour, CI, or infra states its blast radius.
+
+**Agent-governance files are never inert**: `CLAUDE.md`, `.claude/rules/`,
+`.github/instructions/`, `docs/*_protocol.md`, and skills are loaded and acted
+on as instructions, so a change to them alters agent behaviour repo-wide.
 
 **For sequential multi-PR flows** (e.g., `ship`), always include:
 
@@ -336,14 +425,13 @@ identity:
 MUST be created in a subfolder within `tmp/` named after the current
 git branch. NEVER create temporary files in source directories.
 
-Write the generated PR body to a temporary file, then create the PR:
+Write the generated PR body to `tmp/<branch-short-name>/pr_body.md` **with the
+Write tool** — never a `cat` heredoc or shell redirection, per
+[CLAUDE.md](../CLAUDE.md) §10. Claude Code's Write tool creates missing parent
+directories; on a runtime whose file-write tool does not, run
+`mkdir -p tmp/<branch-short-name>` first. Then create the PR:
 
 ```bash
-mkdir -p tmp/<branch-short-name>
-cat << 'EOF' > tmp/<branch-short-name>/pr_body.md
-<generated_body>
-EOF
-
 LABELS="${ARGUMENTS_LABELS:-ai-assisted}"
 task gh:pr -- create --base main --label "$LABELS" \
   --title "<title>" \
@@ -363,6 +451,15 @@ verify:
 
 1. Does the PR contain the required labels (e.g., `ai-assisted`)?
 2. Does the PR have the Co-authored-by trailer at the exact bottom?
+3. Does the body carry a **Work Item** line naming both the ID and the
+   system (see **Work Item Reference** above)? `none — <reason>` is valid;
+   an absent line is not.
+4. Does the body carry an **`## Impact`** section, unless an upstream PR
+   template governs it or the change is genuinely inert? Agent-governance
+   files are never inert.
+5. Is the body bullet-first per §"Writing Style (Mandatory)" — no prose
+   paragraphs where bullets belong, tables folded per the **Collapsible
+   Details Convention**?
 
 **If GREEN**: Proceed. State: "Subagent review passed GREEN."
 
@@ -388,10 +485,11 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_exec_summa
 **Format**:
 
 ```markdown
+<!-- pr-lifecycle:executive-summary -->
 ## Executive Summary
 
-<Brief description of the plan's purpose and what was implemented.
-1-3 sentences sourced from plan context.>
+- **<what the plan set out to do>** — <one line, sourced from plan context>
+- **<what was implemented>** — <one line>
 ```
 
 ### Second Comment: QA Diff-Review Resolution Log
@@ -411,16 +509,23 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_qa_log.md
 **Format**:
 
 ```markdown
+<!-- pr-lifecycle:qa-resolution-log -->
 ## QA Diff-Review Resolution Log
 
-### Round Summary
+**Final gate verdict**: APPROVED (Round 1 — 1 code-change applied, 6 no-action findings validated via Finding Resolution Review)
+
+<details>
+<summary>Round summary (2 reviewers, 7 findings)</summary>
 
 | Round | Reviewer | Verdict | Findings | Resolutions |
 |-------|----------|---------|----------|-------------|
 | 1 | Opus | APPROVED WITH NOTES | 7 | 1 code-change, 6 no-action |
 | 1 | Sonnet | APPROVED WITH NOTES | 7 | 0 code-change, 7 no-action |
 
-### Finding Details
+</details>
+
+<details>
+<summary>Finding details (3)</summary>
 
 | # | Severity | File | Finding | Resolution | Justification | Review |
 |---|----------|------|---------|------------|---------------|--------|
@@ -428,22 +533,27 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_qa_log.md
 | O-2 | SIGNIFICANT | `diff-review/SKILL.md` | 6→16 convergence jump lacks rationale | no-action | Req-007 unifies all limits; CI 6-cycle cap is separate domain | ACCEPTED (2/2) |
 | O-3 | MINOR | `pr_protocol.md` | Substring matching fragility | no-action | Known limitation accepted in Req-001 | ACCEPTED (2/2) |
 
-### Finding Resolution Review
+</details>
+
+<details>
+<summary>Finding resolution review (2 no-action findings)</summary>
 
 | # | Finding | Opus | Sonnet |
 |---|---------|------|--------|
 | O-2 | Convergence jump 6→16 | ACCEPTED | ACCEPTED |
 | O-3 | Substring matching fragility | ACCEPTED | ACCEPTED |
 
-**Final gate verdict**: APPROVED (Round 1 — 1 code-change applied, 6 no-action findings validated via Finding Resolution Review)
+</details>
 ```
 
-The Round Summary table provides the high-level overview. The Finding
-Details table lists every finding with its severity, resolution type,
-justification, and review outcome. The Finding Resolution Review table
-shows the per-reviewer verdict for each no-action finding. Populate
-all three tables from the agent's execution context. The examples
-above are illustrative — actual row counts match the review.
+The verdict leads; the tables fold beneath it per the **Collapsible
+Details Convention** above. The Round Summary table provides the
+high-level overview. The Finding Details table lists every finding with
+its severity, resolution type, justification, and review outcome. The
+Finding Resolution Review table shows the per-reviewer verdict for each
+no-action finding. Populate all three tables from the agent's execution
+context. The examples above are illustrative — actual row counts match
+the review.
 
 #### Captured TODOs
 
@@ -451,12 +561,19 @@ After the QA Diff-Review Resolution Log tables, if the diff-review step
 returned a TODO summary (list of captured TODO IDs, titles, categories,
 and priorities — see [diff-review/SKILL.md](../.claude/skills/diff-review/SKILL.md)
 Step 5.3 for the return contract), append a **Captured TODOs**
-subsection:
+subsection, folded per the **Collapsible Details Convention** above:
+
+```markdown
+<details>
+<summary>Captured TODOs (2)</summary>
 
 | ID | Title | Category | Priority |
 |----|-------|----------|----------|
 | TODO-0001 | Missing validation for edge case | diff-review | 2 |
 | TODO-0002 | HACK: temporary workaround | inline-code | 2 |
+
+</details>
+```
 
 Skip this subsection if no TODOs were captured during the diff-review.
 
@@ -475,19 +592,31 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_ci_log.md
 **Format**:
 
 ```markdown
+<!-- pr-lifecycle:ci-resolution-log -->
 ## CI Gate Resolution Log
+
+**Result**: All CI gates GREEN.
+
+<details>
+<summary>Run history (1)</summary>
 
 | Run | Status | Action Taken |
 |-----|--------|-------------|
 | 1 | PASS | — |
 
-**Result**: All CI gates GREEN.
+</details>
 ```
 
 Multi-run example (with failures, delegated fixes, and rebase):
 
 ```markdown
+<!-- pr-lifecycle:ci-resolution-log -->
 ## CI Gate Resolution Log
+
+**Result**: All CI gates GREEN after 2 fix cycles and 1 rebase.
+
+<details>
+<summary>Run history (4)</summary>
 
 | Run | Status | Action Taken |
 |-----|--------|-------------|
@@ -496,19 +625,27 @@ Multi-run example (with failures, delegated fixes, and rebase):
 | 3 | FAIL — test `test_foo` assertion error | Delegated to tdd-green; updated expected value |
 | 4 | PASS | — |
 
-**Result**: All CI gates GREEN after 2 fix cycles and 1 rebase.
+</details>
 ```
 
 #### Captured TODOs (CI Phase)
 
 If the CI-Phase Inline Marker Scan (see **CI Failure Handling** below)
 accumulated any entries, include them in the CI Gate Resolution Log
-comment after the resolution table:
+comment after the run-history block, folded per the **Collapsible
+Details Convention** above:
+
+```markdown
+<details>
+<summary>Captured TODOs (2)</summary>
 
 | ID | Title | Category | Priority |
 |----|-------|----------|----------|
 | TODO-0005 | HACK: skip validation for empty input | ci-fix | 2 |
 | TODO-0006 | TODO: refactor retry logic | ci-fix | 5 |
+
+</details>
+```
 
 Skip this subsection if no new inline markers were found across all CI
 fix cycles.
