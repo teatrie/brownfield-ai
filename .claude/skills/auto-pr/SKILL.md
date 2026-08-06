@@ -32,28 +32,33 @@ Run `task git:status` and `task git:log -- --oneline origin/main..HEAD` to under
 If there are uncommitted changes:
 
 1. Resolve the work item per [docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch name, active ledger epic, or ask).
-   Create a branch — use the form matching the resolved tracking system. First
-   test whether it already exists, which is the normal case on a rerun.
-   `git status` reports only the *current* branch, so it cannot answer this on
-   its own — query the ref:
+   **Resolve the full branch name once, then reuse that exact string** for the
+   probe, the checkout, and the creation. The form depends on the tracking
+   system, and probing an unsuffixed name while creating a suffixed one makes
+   every JIRA/Linear rerun miss:
+
+   - Execution Ledger, GitHub Issues, or none → `<type>/<short-name>`
+   - JIRA or Linear → `<type>/<short-name>_<ID>` (ID suffix required)
+
+   Call the result `<branch>`. Test whether it already exists — the normal case
+   on a rerun. `git status` reports only the *current* branch, so it cannot
+   answer this on its own; query the ref:
 
    ```bash
-   task git:run -- rev-parse --verify --quiet refs/heads/<type>/<short-name>
+   task git:run -- rev-parse --verify --quiet refs/heads/<branch>
    ```
 
-   Exit 0 (prints the SHA) means the branch exists: check it out
-   (`task git:checkout -- <type>/<short-name>`) instead of creating it.
+   Exit 0 (prints the SHA) means the branch exists: check it out with
+   `task git:checkout -- <branch>` instead of creating it. Non-zero means
+   create it:
+
+   ```bash
+   task git:checkout -- -b <branch>
+   ```
+
    `checkout -b` on an existing branch fails with
    `fatal: A branch named '...' already exists` and aborts the run. Omitting the
    ID suffix makes that collision more likely, not less.
-
-   ```bash
-   # Execution Ledger, GitHub Issues, or none — no ID suffix:
-   task git:checkout -- -b <type>/<short-name>
-
-   # JIRA or Linear — ID suffix required:
-   task git:checkout -- -b <type>/<short-name>_<ID>
-   ```
 
 2. **Artifact & Hygiene Review (Delegated)**: Before staging, you MUST delegate to a subagent (e.g., `explore` or `tdd-refactor`) to specifically review the `git status` output for temporary artifacts, debug files, or anomalies (e.g., `testItEOF`, `*.tmp`, `x[a-z][a-z]` split artifacts, out-of-place logs).
    - If the subagent has very high confidence the file is a temporary garbage artifact, the Orchestrator MUST safely remove it (e.g., `rm <file>`).

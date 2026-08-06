@@ -193,12 +193,19 @@ Resolve the work item per
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch
 name, or ask).
 
-**Resume an existing branch instead of recreating it.** Test for the
-branch first — `git status` reports only the *current* branch and cannot
+**Resolve the full branch name once, then reuse that exact string** for
+the probe, the checkout, and the creation — probing an unsuffixed name
+while creating a suffixed one makes every JIRA/Linear rerun miss:
+
+- Execution Ledger, GitHub Issues, or none → `ship/<short-name>`
+- JIRA or Linear → `ship/<short-name>_<ID>` (ID suffix required)
+
+Call the result `<branch>`. **Resume it instead of recreating it.** Test
+for it first — `git status` reports only the *current* branch and cannot
 answer this:
 
 ```bash
-task git:run -- rev-parse --verify --quiet refs/heads/ship/<short-name>
+task git:run -- rev-parse --verify --quiet refs/heads/<branch>
 ```
 
 Exit 0 (prints the SHA) means the branch exists — which is exactly the
@@ -210,16 +217,12 @@ UPDATE path unreachable.
 
 ```bash
 # Existing branch (rerun / UPDATE path): check out, do not create.
-task git:checkout -- ship/<short-name>
+task git:checkout -- <branch>
 
 # New branch: base it on an updated main.
 task git:checkout -- main
 task git:pull
-# Execution Ledger, GitHub Issues, or none — no ID suffix:
-task git:checkout -- -b ship/<short-name> main
-
-# JIRA or Linear — ID suffix required:
-task git:checkout -- -b ship/<short-name>_<ID> main
+task git:checkout -- -b <branch> main
 ```
 
 Use the prefix `ship/` for all branches (e.g.,
