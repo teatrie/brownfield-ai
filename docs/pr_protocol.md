@@ -366,10 +366,21 @@ Do NOT:
 **If template exists:** Read the template content, fill in sections
 with details of the changes, and mark relevant checkboxes (`[x]`).
 
+**Ownership marker (mandatory, both paths).** Line 1 of every PR body we
+create is the hidden marker `<!-- pr-lifecycle:pr-body -->`, ahead of any
+template content. It is the **unconditional, workflow-specific** proof of
+authorship the §"Per-Round PR Reconciliation" ownership check relies on:
+the ledger artifact is skipped for ad-hoc runs and the execution comments
+are conditional, so neither is guaranteed to exist, while the
+`Co-authored-by:` trailer is generic enough that a human's AI-assisted PR
+carries it too. Without this marker a later round cannot prove the PR is
+ours and stalls for sign-off. Preserve it through every description sync.
+
 **If no template exists:** Use this standard format. Bullet-first per
 **Writing Style (Mandatory)** above:
 
 ```markdown
+<!-- pr-lifecycle:pr-body -->
 ## Summary
 
 - **<key change>** — <what changed and why, one line>
@@ -727,9 +738,15 @@ Protocol", which requires explicit sign-off and forbids the
 **author login is not a valid discriminator** (agent PRs are opened under
 the operator's `gh` token). Evidence is **tiered**:
 
-- **Conclusive — proceed to UPDATE.** Either a `pr_created` ledger
-  artifact for this PR number, or an existing `pr-lifecycle:` marker on
-  one of its comments. Both are produced only by this workflow.
+- **Conclusive — proceed to UPDATE.** Any one of: the
+  `<!-- pr-lifecycle:pr-body -->` marker on line 1 of the PR body, a
+  `pr_created` ledger artifact for this PR number, or an existing
+  `pr-lifecycle:` marker on one of its comments. All three are produced
+  only by this workflow. The **body marker is the one that always
+  exists** — §"Generate PR Body" mandates it on every PR we create,
+  whereas the ledger artifact is skipped for ad-hoc runs and the
+  execution comments are conditional, so a run that stopped right after
+  creation has only the body marker to prove itself by.
 - **Suggestive, not sufficient — ask.** The agent `Co-authored-by:`
   trailer alone. §"Agent Identity & Co-authored-by Trailer" mandates it
   on every PR body we create, but it is a **generic** AI trailer: a
@@ -778,13 +795,14 @@ Details Convention**), and push the update:
 task gh:pr -- edit <number> --body-file tmp/<branch-short-name>/pr_body.md
 ```
 
-**Retain the `Co-authored-by:` trailer verbatim.** This edit replaces the
-whole body, and the trailer is the ownership anchor the entry condition
-depends on. Dropping it while rewriting for the diff makes the *next*
-round fail the ownership check and fall through to the third-party
-sign-off path — deadlocking the loop on a PR we do in fact own. The
-`## Impact` section and the `**Work Item**` line must survive the rewrite
-for the same reason the auto-review gate checks them.
+**Retain the `<!-- pr-lifecycle:pr-body -->` marker on line 1 and the
+`Co-authored-by:` trailer verbatim.** This edit replaces the whole body,
+and the marker is the ownership anchor the entry condition depends on.
+Dropping it while rewriting for the diff makes the *next* round fail the
+ownership check and fall through to the sign-off path — stalling the loop
+on a PR we do in fact own. The `## Impact` section and the
+`**Work Item**` line must survive the rewrite for the same reason the
+auto-review gate checks them.
 
 This enforces PR-description↔diff consistency. **Order it after the
 push, never before.** Editing the body while the round's commits are
