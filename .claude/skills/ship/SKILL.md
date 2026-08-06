@@ -299,8 +299,12 @@ paused indefinitely; per the revalidation rule in
 Reconciliation", act only on a fresh answer. Order it **ahead of**
 `task git:push` because the push is itself a remote mutation: if a
 third-party PR was opened on this branch during the pause, pushing adds
-your commits to *their* PR before any guard has run. If ownership is not
-conclusive, halt per that section rather than pushing.
+your commits to *their* PR before any guard has run.
+
+The halt applies **only when an OPEN PR exists and ownership is not
+conclusive** — that is the case where pushing would touch someone else's
+PR. **No OPEN PR at all is the ordinary CREATE case**: there is nothing
+to own, nothing to halt on, so push and continue below.
 
 ```bash
 task git:push
