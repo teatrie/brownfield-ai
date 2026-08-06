@@ -102,13 +102,13 @@ Do NOT:
   `pr-lifecycle:` marker to satisfy the rule. Everything else in this rule
   still binds such a comment.
 
-  **The marker is an identity tag, not deduplication.** Per-Round PR
-  Reconciliation — the procedure that reads these markers to edit, supersede,
-  or delete a prior comment — is **not implemented in this repo**. Every
-  documented path posts a fresh `gh pr comment`, so repeated rounds stack
-  comments today. Write the marker regardless: it is the discriminator a
-  future reconciliation step keys on, and it is what keeps `pr-lifecycle:`
-  (PRs we own) separable from `pr-review:` (PRs we do not).
+  **The marker is what makes deduplication possible.**
+  [pr_protocol.md](../../docs/pr_protocol.md) §"Per-Round PR Reconciliation"
+  step 4 resolves the existing comment bearing the marker and edits it in
+  place, so exactly one of each marker exists per PR. A missing or
+  bare-suffix marker defeats that lookup and stacks duplicates. The marker is
+  also what keeps `pr-lifecycle:` (PRs we own) separable from `pr-review:`
+  (PRs we do not).
 - **`**Work Item**:` line** is mandatory in `pr_body.md` — an ID plus the
   system that owns it, per [pr_protocol.md](../../docs/pr_protocol.md)
   §"Work Item Reference". `none — <reason>` is a valid value; an absent line
@@ -157,10 +157,11 @@ When the PR is **not ours** (`pr_review_findings.md`):
   `verdict: blocked-needs-signoff`, and halt (CLAUDE.md Principle 16).
 - **Never edit or delete the author's comments.**
 - **Marker namespace is `pr-review:`, never `pr-lifecycle:`** — `pr-lifecycle:`
-  is reserved for comments on PRs we own. When Per-Round PR Reconciliation
-  lands (not implemented here yet), its supersede-with-banner and delete paths
-  will act on `pr-lifecycle:` comments; a PR we do not own must never be
-  reachable by them.
+  is reserved for comments on PRs we own, and
+  [pr_protocol.md](../../docs/pr_protocol.md) §"Per-Round PR Reconciliation"
+  acts on exactly those: edit-in-place, supersede-with-banner, and delete.
+  `pr-review:` comments are **out of reconciliation scope entirely** — a PR we
+  do not own must never be reachable by those paths.
 - State the **reviewer roster and models**.
 - Mark unverified claims **explicitly unverified**; never present
   pattern-matched inference as validated.

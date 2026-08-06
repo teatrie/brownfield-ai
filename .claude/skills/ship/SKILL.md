@@ -212,7 +212,16 @@ Stage **only** the files belonging to this PR group. Use `task git:add -- <file>
 
 ### Step 2a: Code Diff Review (MANDATORY GATE)
 
-Before pushing, invoke the
+**First, run the existing-PR detection** in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" — that section is the single canonical home of this
+procedure; do NOT copy it here. If it resolves to the **UPDATE path**
+(an OPEN PR already exists for this branch), complete its per-round
+procedure **before** invoking diff-review below, so the gate reads the
+freshly-synced body rather than the stale prior-round one. On the
+**CREATE path** no reconciliation runs and you proceed directly.
+
+Then invoke the
 [diff-review](../diff-review/SKILL.md) skill scoped to the files in this PR's
 commit group. Pass the **active ledger epic** as `epic_id`, resolved via
 `execution-ledger resume` independently of the Work Item reference — a group
@@ -230,7 +239,12 @@ diff-review gate returns APPROVED.
 task git:push
 ```
 
-Follow the procedures in
+**UPDATE path**: if Step 2a's detection found an OPEN PR for this branch,
+do **NOT** create a second one. The description sync already ran as step 1
+of the per-round procedure, so the body is current — skip items 1–4 below
+and continue at the epic status transition (item 5), then go to Step 3a.
+
+**CREATE path** (no OPEN PR): follow the procedures in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) for:
 
 1. **Template Detection** — locate and use PR template if present.
@@ -264,6 +278,14 @@ separate comments: (1) Executive Summary as the first comment, and
 second comment. Each is conditional — skip whichever is not available
 in the execution context. Ad-hoc PRs without plan context skip this
 step entirely.
+
+**On the UPDATE path, edit in place rather than posting.** Each of these
+comments carries a stable `pr-lifecycle:` marker on line 1; per
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" step 4, resolve the existing comment bearing the marker
+and PATCH it, so exactly one of each marker exists per PR. The marker is
+skill-agnostic by design: a PR that alternates between `ship` and
+`auto-pr` across rounds still resolves to one comment per type.
 
 If the diff-review step (invoked during the Final QA Phase) returned a
 TODO summary, follow the **Captured TODOs** procedure in
