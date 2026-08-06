@@ -23,7 +23,9 @@ Prefer an always-run job with internal `if:` step gates over native `paths:` tri
 
 ## 4. OIDC, secrets, and permissions
 
-Map required secrets at the workflow-level `env:` block (for example the AWS role and region, and any PAT the shared setup action consumes). Declaring any `permissions:` key resets all others to `none`: a workflow using OIDC needs both `id-token: write` and `contents: read` (the latter for checkout); a lint-only job that touches no cloud needs only `contents: read`.
+Map the values a workflow needs at the workflow-level `env:` block (for example the AWS role and region), because a job that assumes an AWS role via OIDC needs them present. Scope secrets to their consumer: the `secrets` context is available in workflow-level `env:`, so mapping one there parses, but the value is then readable by every job and step including third-party actions — map a PAT or other long-lived token at the job- or step-level `env:` that consumes it, and reserve workflow-level `env:` for non-sensitive identifiers such as a role ARN or a region.
+
+Declaring any `permissions:` key resets all others to `none`: a workflow using OIDC needs both `id-token: write` and `contents: read` (the latter for checkout); a lint-only job that touches no cloud needs only `contents: read`.
 
 ## 5. Computing a changed-file set
 

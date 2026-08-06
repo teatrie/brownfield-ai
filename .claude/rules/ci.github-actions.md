@@ -84,9 +84,15 @@ so it never wedges branch protection.
 
 ## 4. OIDC, secrets, and permissions
 
-- Map the secrets a workflow needs at the **workflow-level `env:`** block
-  (e.g. `AWS_ROLE`, `AWS_REGION`, and any PAT the shared setup action
-  consumes). A job that assumes an AWS role via OIDC needs these present.
+- Map the values a workflow needs at the **workflow-level `env:`** block
+  (e.g. `AWS_ROLE`, `AWS_REGION`). A job that assumes an AWS role via OIDC
+  needs these present.
+- **Scope secrets to their consumer.** The `secrets` context *is* available in
+  workflow-level `env:`, so mapping one there parses — but the value is then
+  readable by **every job and step**, including third-party actions. Map a PAT
+  or other long-lived token at the **job-** or **step-level `env:`** that
+  consumes it, and reserve workflow-level `env:` for non-sensitive identifiers
+  such as a role ARN or a region.
 - Declaring **any** `permissions:` key resets all others to `none`. A workflow
   using OIDC needs **both** `id-token: write` **and** `contents: read`
   (the latter for `actions/checkout`). A lint-only job that touches no cloud
