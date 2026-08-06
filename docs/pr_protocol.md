@@ -1170,8 +1170,9 @@ compound commands — see `docs/learnings.md` §Claude Code Sandbox):
 # Step 1: Capture PR title (single Bash call)
 task gh:pr -- view <number> --json title --jq .title
 
-# Step 2: Capture PR body to a file (use Write tool, NOT command substitution)
-# Write the output of the above to tmp/<branch>/merge_body.md via the Write tool
+# Step 2: Derive the merge body into a file (use Write tool, NOT command substitution)
+# Transform the PR body — do not copy it verbatim — then write the result
+# to tmp/<branch>/merge_body.md via the Write tool.
 
 # Step 3: Merge (single Bash call — use --body-file, not inline --body)
 task gh:pr -- merge <number> --squash \
@@ -1181,6 +1182,16 @@ task gh:pr -- merge <number> --squash \
 # Step 4: Return to main (single Bash call)
 task git:checkout -- main
 ```
+
+**Step 2 is a transformation, not a copy.** `merge_body.md` becomes a
+squash **commit message**, so it must satisfy the `merge_body.md`
+exception in [pr.artifacts.md](../.claude/rules/pr.artifacts.md): plain
+text only — no bold, no `<details>`, no tables, and **no identity
+marker**. In particular **strip the `<!-- pr-lifecycle:pr-body -->`
+marker** that §"Generate PR Body" requires on every PR body; copied
+through, it would land a stray HTML comment in `git log` on every squash
+merge. Strip it here only — the marker must survive in the PR body
+itself, where the ownership check depends on it.
 
 ```bash
 # Step 5: Pull latest (single Bash call)
