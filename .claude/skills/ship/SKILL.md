@@ -261,6 +261,16 @@ alternatives, not a sequence: following the existing-branch checkout with
 the new-branch block ends in `checkout -b <branch> origin/main`, which
 fails because the branch already exists.
 
+**Unpushed commits block the switch.** Before either checkout, compare the
+current branch against its **own upstream**:
+`task git:log -- --oneline @{upstream}..HEAD`; treat a missing upstream as
+wholly unpushed. The stash below moves the dirty tree but leaves committed
+work on the branch you leave, so switching would publish a group without
+commits it should carry. If unpushed commits exist and the target is a
+different branch, **halt and ask** which to publish. Under `CI=true`, halt
+per CLAUDE.md Principle 16. (Commits merely absent from `main` do not
+count — that is every unmerged branch.)
+
 **Stash around whichever checkout you run.** `ship` holds every remaining
 group uncommitted, and *any* branch switch — resuming an existing branch
 or cutting a new one from `origin/main` — aborts with
