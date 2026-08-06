@@ -26,6 +26,13 @@ mechanical** constraints that apply to every such artifact. Body *structure*
 diff-review follow-up, or a direct ad-hoc request. There is no skill-triggered
 exemption.
 
+**Scope: agent-authored artifacts.** These constraints govern an *agent*
+drafting a body or comment. Deterministic tooling that renders a PR body from
+a checked-in template — `src/brownfield_ai/tools/ralph/pr.py` is the live
+example — is out of scope: it has no drafting step, and the Write-tool
+mechanic below presupposes one. Do not "fix" such a caller to satisfy this
+rule.
+
 ## Writing Style (Mandatory)
 
 Optimize for a reviewer **scanning**, not reading.
