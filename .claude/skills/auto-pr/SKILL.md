@@ -46,10 +46,16 @@ If there are uncommitted changes:
    local branch has been pruned, an open PR's branch exists only on the remote.
 
    ```bash
-   task git:fetch -- origin
+   task git:fetch -- origin --prune
    task git:run -- rev-parse --verify --quiet refs/heads/<branch>
    task git:run -- rev-parse --verify --quiet refs/remotes/origin/<branch>
    ```
+
+   **`--prune` is required.** A plain fetch keeps
+   `refs/remotes/origin/<branch>` after the remote branch is deleted — as it
+   is on every squash-merge with `--delete-branch`. Without pruning, the probe
+   reports a branch that no longer exists remotely and routes an ordinary
+   CREATE run into the collision/sign-off path.
 
    Exit 0 (prints the SHA) on **either** means a branch of that name exists.
    **A matching ref does not by itself mean "resume".** It may back a
@@ -98,10 +104,13 @@ If there are uncommitted changes:
 
 If there are only unpushed commits (clean working tree):
 
-1. Resolve the work item, then create a branch from HEAD using the same
-   two-form convention given in step 1 of "If there are uncommitted changes"
-   above — no ID suffix for Execution Ledger, GitHub Issues, or none;
-   `_<ID>` suffix for JIRA or Linear.
+1. Resolve the work item, then apply **the whole of** step 1 of "If there are
+   uncommitted changes" above — the two-form branch-name resolution, the
+   local-and-remote existence probe, the existing-PR/ownership check, and the
+   resume-or-create decision. This is the most common update-round entry
+   state: a clean tree on an existing branch with unpushed commits. Creating
+   from HEAD unconditionally would fail on `checkout -b` when the branch is
+   already local, and would never reach the UPDATE reconciliation path.
 
 ## Step 2b: Pre-Push Validation Gate
 

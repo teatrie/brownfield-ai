@@ -207,10 +207,16 @@ the local branch has been pruned, an open PR's branch exists only as
 `refs/remotes/origin/<branch>`.
 
 ```bash
-task git:fetch -- origin
+task git:fetch -- origin --prune
 task git:run -- rev-parse --verify --quiet refs/heads/<branch>
 task git:run -- rev-parse --verify --quiet refs/remotes/origin/<branch>
 ```
+
+**`--prune` is required.** A plain fetch keeps
+`refs/remotes/origin/<branch>` after the remote branch is deleted — as it
+is on every squash-merge with `--delete-branch`. Without pruning, the
+probe reports a branch that no longer exists remotely and routes an
+ordinary CREATE run into the collision/sign-off path.
 
 Exit 0 (prints the SHA) on **either** means a branch of that name exists.
 **A matching ref does not by itself mean "resume"** — it may back a
