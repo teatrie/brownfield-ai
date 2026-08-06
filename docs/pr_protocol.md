@@ -904,13 +904,14 @@ applies to every supersede, and is what actually delivers the
 one-live-comment-per-marker steady state.
 
 Supersede-with-banner MUST operate **ONLY** on comments the step-2 audit
-positively identified as agent-authored by the marker / trailer
-discriminator above, OR comments the agent itself posted **this session**
-(tracked by comment id). If a comment cannot be positively identified as
-agent-authored, it is treated as HUMAN and left untouched
-(reply-and-link only per the guardrail) — fail **SAFE** toward "human,
-do not edit." No author-login inference is ever load-bearing on this
-mutation path.
+positively identified as agent-authored — that is, carrying a
+`pr-lifecycle:` marker, or posted by the agent **this session** and
+tracked by comment id. A generic `Co-authored-by:` trailer does **not**
+qualify (step 2), since a human's AI-assisted comment carries the same
+line. If a comment cannot be positively identified as agent-authored, it
+is treated as HUMAN and left untouched (reply-and-link only per the
+guardrail) — fail **SAFE** toward "human, do not edit." No author-login
+inference is ever load-bearing on this mutation path.
 
 **Delete ONLY** pure same-round duplicates or noise the agent itself just
 posted **this round** (e.g. a double-posted comment from a retried tool

@@ -236,11 +236,20 @@ existing branch fails with `fatal: A branch named '...' already exists`
 and aborts the run **before** Step 2a's existing-PR detection, making the
 UPDATE path unreachable.
 
-```bash
-# Existing branch (rerun / UPDATE path): check out, do not create.
-task git:checkout -- <branch>
+**Run exactly one of the two blocks below — never both.** They are
+alternatives, not a sequence: following the existing-branch checkout with
+the new-branch block ends in `checkout -b <branch> main`, which fails
+because the branch already exists.
 
-# New branch: base it on an updated main.
+Existing branch (rerun / UPDATE path) — check out, do not create:
+
+```bash
+task git:checkout -- <branch>
+```
+
+New branch — base it on an updated `main`:
+
+```bash
 task git:checkout -- main
 task git:pull
 task git:checkout -- -b <branch> main
