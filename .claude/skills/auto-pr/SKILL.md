@@ -66,18 +66,26 @@ If there are uncommitted changes:
    [pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
    Reconciliation" against `<branch>`:
 
-   - **OPEN PR, conclusively ours** → resume:
+   - **Already on `<branch>`** (`task git:status` reports it as current) → it
+     is your working branch; the local ref is expected, not a collision.
+     Proceed with no prompt: UPDATE if the detection found an OPEN PR that is
+     conclusively ours, otherwise CREATE. **This is the ordinary case** — a
+     local branch with commits and no PR yet — and it must never halt.
+   - **Not on it, but an OPEN PR is conclusively ours** → resume:
      `task git:checkout -- <branch>` (this also creates the local tracking
      branch when only the remote ref is present), then **`task git:pull` to
      sync**. The remote branch may have advanced — a reviewer's suggestion
      committed from the GitHub UI, a CI auto-formatter push — and pushing a
      stale local branch is rejected as non-fast-forward, halting the run.
      This is the UPDATE path.
-   - **Anything else** — closed/merged PR, no PR, or ownership not conclusive
-     → do **NOT** silently resume and do **NOT** silently create over it.
-     Stop and ask the user whether to reuse the branch, pick another name, or
-     branch fresh from the base. Under `CI=true`, halt and checkpoint per
-     CLAUDE.md Principle 16.
+   - **Not on it, and the ref is someone else's or spent** — closed/merged PR,
+     or an OPEN PR whose ownership is not conclusive → do **NOT** silently
+     resume and do **NOT** silently create over it. Stop and ask the user
+     whether to reuse the branch, pick another name, or branch fresh from the
+     base. Under `CI=true`, halt and checkpoint per CLAUDE.md Principle 16.
+   - **Not on it, and no PR exists at all** → the name is free of any PR, so
+     this is a plain CREATE against an unused branch: check it out and carry
+     on. Ask only if its commits are unrelated to the work in hand.
 
    Only when **both** probes fail is the branch genuinely new:
 

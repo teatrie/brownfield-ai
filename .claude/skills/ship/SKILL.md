@@ -233,9 +233,17 @@ Reconciliation" against `<branch>` first:
   committed from the GitHub UI, a CI auto-formatter push — and pushing a
   stale local branch is rejected as non-fast-forward, halting the run.
   This is the UPDATE path.
-- **Anything else** → do **NOT** silently resume or create over it. Stop
-  and ask whether to reuse the branch, pick another name, or branch fresh
-  from the base; under `CI=true`, halt per CLAUDE.md Principle 16.
+- **No PR at all** → this is an **interrupted prior run** of this same
+  group: `ship` creates the branch before it creates the PR, so a run cut
+  short between the two leaves exactly this state. Check the branch out
+  and continue on the CREATE path. Do **not** halt — `ship` is a batch
+  skill, and halting here would demand manual intervention for every
+  interrupted group. Ask only if the branch's commits are unrelated to
+  the group in hand.
+- **Closed/merged PR, or an OPEN PR not conclusively ours** → do **NOT**
+  silently resume or create over it. Stop and ask whether to reuse the
+  branch, pick another name, or branch fresh from the base; under
+  `CI=true`, halt per CLAUDE.md Principle 16.
 
 Only when **both** probes fail is the branch genuinely new.
 

@@ -806,6 +806,14 @@ Details Convention**), and push the update:
 task gh:pr -- edit <number> --body-file tmp/<branch-short-name>/pr_body.md
 ```
 
+**Merge; do not blindly regenerate.** This edit replaces the **whole**
+body, so anything a human added through the GitHub UI — review context, a
+checklist, a deployment note — is erased unless you carry it forward.
+That is why step 1 re-reads the current body first: diff your regenerated
+sections against it, update only what the diff changed, and **preserve
+every section you did not author**. Silently dropping a reviewer's note is
+the same class of harm as editing their comment.
+
 **Retain the `<!-- pr-lifecycle:pr-body -->` marker on line 1 and the
 `Co-authored-by:` trailer verbatim.** This edit replaces the whole body,
 and the marker is the ownership anchor the entry condition depends on.
