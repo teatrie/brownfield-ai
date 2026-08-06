@@ -80,13 +80,19 @@ Do NOT:
 - **`tmp/` placement.** `tmp/<branch-short-name>/` for PRs we author;
   `tmp/pr<number>/` for third-party review comments. Never the workspace root,
   never a source directory, never absolute `/tmp/`.
-- **Hidden identity marker** on line 1 of every *comment* (not the body). Write
-  the full form — a bare suffix fails the reconciliation discriminator and
-  stacks duplicate comments:
+- **Hidden identity marker** on line 1 of every *managed lifecycle comment*
+  (not the body). Write the full form — a bare suffix fails the reconciliation
+  discriminator and stacks duplicate comments:
   - `<!-- pr-lifecycle:executive-summary -->`
   - `<!-- pr-lifecycle:qa-resolution-log -->`
   - `<!-- pr-lifecycle:ci-resolution-log -->`
   - `<!-- pr-review:review-findings -->` — third-party only, see below.
+
+  The list is **exhaustive**. An ad-hoc comment that is not one of these
+  artifacts carries **no marker** — do not invent one and do not reuse a
+  `pr-lifecycle:` marker to satisfy the rule, because that makes the comment
+  eligible for Per-Round PR Reconciliation's supersede-with-banner and delete
+  paths. Everything else in this rule still binds such a comment.
 - **`**Work Item**:` line** is mandatory in `pr_body.md` — an ID plus the
   system that owns it, per [pr_protocol.md](../../docs/pr_protocol.md)
   §"Work Item Reference". `none — <reason>` is a valid value; an absent line

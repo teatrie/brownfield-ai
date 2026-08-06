@@ -66,11 +66,15 @@ Do NOT:
 - **`tmp/` placement.** `tmp/<branch-short-name>/` for PRs we author;
   `tmp/pr<number>/` for third-party review comments. Never the workspace root,
   never a source directory, never absolute `/tmp/`.
-- **Hidden identity marker** on line 1 of every *comment* (not the body): an
-  HTML comment carrying `pr-lifecycle:executive-summary`,
+- **Hidden identity marker** on line 1 of every *managed lifecycle comment*
+  (not the body): an HTML comment carrying `pr-lifecycle:executive-summary`,
   `pr-lifecycle:qa-resolution-log`, or `pr-lifecycle:ci-resolution-log`.
   Third-party review comments use the separate `pr-review:review-findings`
   namespace -- see below. A missing marker causes duplicate stacked comments.
+  That list is exhaustive: an ad-hoc comment that is not one of these
+  artifacts carries no marker. Do not invent one and do not reuse a
+  `pr-lifecycle:` marker, which would make the comment eligible for the
+  automated supersede and delete paths. Everything else here still binds it.
 - **Mandatory Work Item line** in `pr_body.md` -- an ID plus the system that
   owns it, per the Work Item Reference section of `docs/pr_protocol.md`. A
   `none` value with a stated reason is valid; an absent line is not.

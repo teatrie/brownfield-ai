@@ -501,14 +501,20 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_qa_log.md
 <!-- pr-lifecycle:qa-resolution-log -->
 ## QA Diff-Review Resolution Log
 
-### Round Summary
+**Final gate verdict**: APPROVED (Round 1 — 1 code-change applied, 6 no-action findings validated via Finding Resolution Review)
+
+<details>
+<summary>Round summary (2 reviewers, 7 findings)</summary>
 
 | Round | Reviewer | Verdict | Findings | Resolutions |
 |-------|----------|---------|----------|-------------|
 | 1 | Opus | APPROVED WITH NOTES | 7 | 1 code-change, 6 no-action |
 | 1 | Sonnet | APPROVED WITH NOTES | 7 | 0 code-change, 7 no-action |
 
-### Finding Details
+</details>
+
+<details>
+<summary>Finding details (3)</summary>
 
 | # | Severity | File | Finding | Resolution | Justification | Review |
 |---|----------|------|---------|------------|---------------|--------|
@@ -516,22 +522,27 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_qa_log.md
 | O-2 | SIGNIFICANT | `diff-review/SKILL.md` | 6→16 convergence jump lacks rationale | no-action | Req-007 unifies all limits; CI 6-cycle cap is separate domain | ACCEPTED (2/2) |
 | O-3 | MINOR | `pr_protocol.md` | Substring matching fragility | no-action | Known limitation accepted in Req-001 | ACCEPTED (2/2) |
 
-### Finding Resolution Review
+</details>
+
+<details>
+<summary>Finding resolution review (2 no-action findings)</summary>
 
 | # | Finding | Opus | Sonnet |
 |---|---------|------|--------|
 | O-2 | Convergence jump 6→16 | ACCEPTED | ACCEPTED |
 | O-3 | Substring matching fragility | ACCEPTED | ACCEPTED |
 
-**Final gate verdict**: APPROVED (Round 1 — 1 code-change applied, 6 no-action findings validated via Finding Resolution Review)
+</details>
 ```
 
-The Round Summary table provides the high-level overview. The Finding
-Details table lists every finding with its severity, resolution type,
-justification, and review outcome. The Finding Resolution Review table
-shows the per-reviewer verdict for each no-action finding. Populate
-all three tables from the agent's execution context. The examples
-above are illustrative — actual row counts match the review.
+The verdict leads; the tables fold beneath it per the **Collapsible
+Details Convention** above. The Round Summary table provides the
+high-level overview. The Finding Details table lists every finding with
+its severity, resolution type, justification, and review outcome. The
+Finding Resolution Review table shows the per-reviewer verdict for each
+no-action finding. Populate all three tables from the agent's execution
+context. The examples above are illustrative — actual row counts match
+the review.
 
 #### Captured TODOs
 
@@ -539,12 +550,19 @@ After the QA Diff-Review Resolution Log tables, if the diff-review step
 returned a TODO summary (list of captured TODO IDs, titles, categories,
 and priorities — see [diff-review/SKILL.md](../.claude/skills/diff-review/SKILL.md)
 Step 5.3 for the return contract), append a **Captured TODOs**
-subsection:
+subsection, folded per the **Collapsible Details Convention** above:
+
+```markdown
+<details>
+<summary>Captured TODOs (2)</summary>
 
 | ID | Title | Category | Priority |
 |----|-------|----------|----------|
 | TODO-0001 | Missing validation for edge case | diff-review | 2 |
 | TODO-0002 | HACK: temporary workaround | inline-code | 2 |
+
+</details>
+```
 
 Skip this subsection if no TODOs were captured during the diff-review.
 
@@ -566,11 +584,16 @@ task gh:pr -- comment <number> --body-file tmp/<branch-short-name>/pr_ci_log.md
 <!-- pr-lifecycle:ci-resolution-log -->
 ## CI Gate Resolution Log
 
+**Result**: All CI gates GREEN.
+
+<details>
+<summary>Run history (1)</summary>
+
 | Run | Status | Action Taken |
 |-----|--------|-------------|
 | 1 | PASS | — |
 
-**Result**: All CI gates GREEN.
+</details>
 ```
 
 Multi-run example (with failures, delegated fixes, and rebase):
@@ -579,6 +602,11 @@ Multi-run example (with failures, delegated fixes, and rebase):
 <!-- pr-lifecycle:ci-resolution-log -->
 ## CI Gate Resolution Log
 
+**Result**: All CI gates GREEN after 2 fix cycles and 1 rebase.
+
+<details>
+<summary>Run history (4)</summary>
+
 | Run | Status | Action Taken |
 |-----|--------|-------------|
 | 1 | FAIL — lint error in `file.py:42` | Delegated to tdd-refactor; fixed import order |
@@ -586,19 +614,27 @@ Multi-run example (with failures, delegated fixes, and rebase):
 | 3 | FAIL — test `test_foo` assertion error | Delegated to tdd-green; updated expected value |
 | 4 | PASS | — |
 
-**Result**: All CI gates GREEN after 2 fix cycles and 1 rebase.
+</details>
 ```
 
 #### Captured TODOs (CI Phase)
 
 If the CI-Phase Inline Marker Scan (see **CI Failure Handling** below)
 accumulated any entries, include them in the CI Gate Resolution Log
-comment after the resolution table:
+comment after the run-history block, folded per the **Collapsible
+Details Convention** above:
+
+```markdown
+<details>
+<summary>Captured TODOs (2)</summary>
 
 | ID | Title | Category | Priority |
 |----|-------|----------|----------|
 | TODO-0005 | HACK: skip validation for empty input | ci-fix | 2 |
 | TODO-0006 | TODO: refactor retry logic | ci-fix | 5 |
+
+</details>
+```
 
 Skip this subsection if no new inline markers were found across all CI
 fix cycles.
