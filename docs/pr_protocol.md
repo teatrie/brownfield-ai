@@ -736,9 +736,26 @@ the synced PR body **IS** the additional intent input passed to the
 diff-review gate: because the sync runs first, the intent the reviewers
 read is always current, never a round behind.
 
+**Re-sync after any review-driven change.** The sync running first makes
+the body current *for the gate*, not necessarily *at merge*: if
+diff-review returns a `code-change` finding, its resolution loop mutates
+the diff after this step has already run, leaving the body describing the
+pre-fix state. Whenever review resolution changes the diff, run this sync
+again once the gate returns APPROVE — the UPDATE path skips body
+generation at the PR step, so this is the only place the description↔diff
+invariant can be re-established.
+
 **2. Comment audit.** Enumerate the **AGENT-AUTHORED** comments on the
-PR (`task gh:pr -- view <number> --json comments`) and classify each. A
-comment counts as **AGENT-AUTHORED for reconciliation purposes ONLY IF**
+PR and classify each. Use the **paginated REST endpoint**, not
+`gh pr view --json comments` — the latter returns a bounded GraphQL
+connection, so on a long-running PR it silently omits older comments and
+the duplicate markers this audit exists to find:
+
+```bash
+task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments
+```
+
+A comment counts as **AGENT-AUTHORED for reconciliation purposes ONLY IF**
 it bears a recognizable agent signature a human comment would not carry
 — specifically a `pr-lifecycle:` hidden marker (`<!-- pr-lifecycle:… -->`
 on the first line) OR the agent `Co-authored-by:` trailer. Author
