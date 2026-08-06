@@ -74,9 +74,16 @@ If there are uncommitted changes:
      the branch does **not** waive the ownership guard: an **OPEN PR that is
      not conclusively ours** halts here exactly as it would below — do not
      treat it as a CREATE.
-   - **Not on it, but an OPEN PR is conclusively ours** → resume:
+   - **Not on it, but an OPEN PR is conclusively ours** → resume. **Stash
+     first when the tree is dirty** — you arrived here from the
+     uncommitted-changes path, and `checkout` aborts with
+     `Your local changes ... would be overwritten by checkout` if the target
+     branch differs in any modified path; the `--autostash` below runs too
+     late to help. `task git:run -- stash push --include-untracked`, then
      `task git:checkout -- <branch>` (this also creates the local tracking
-     branch when only the remote ref is present), then sync with
+     branch when only the remote ref is present), then
+     `task git:run -- stash pop`. Skip the stash pair on a clean tree —
+     `stash pop` fails with `No stash entries found`. Then sync with
      **`task git:pull -- --rebase --autostash origin <branch>`**. Name the remote and branch
      explicitly: a local branch that lost or never had upstream tracking
      makes a bare `git pull` fail with `no tracking information`.

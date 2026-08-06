@@ -261,11 +261,23 @@ alternatives, not a sequence: following the existing-branch checkout with
 the new-branch block ends in `checkout -b <branch> main`, which fails
 because the branch already exists.
 
-Existing branch (rerun / UPDATE path) — check out, do not create:
+Existing branch (rerun / UPDATE path) — check out, do not create. **Stash
+first**: the remaining groups are still uncommitted, and `checkout` aborts
+with `Your local changes ... would be overwritten by checkout` whenever
+the target branch differs in any modified path — likely precisely here,
+since a prior PR's branch holds an older version of the current group's
+files. The `--autostash` on the pull below does **not** help; it runs
+after this step.
 
 ```bash
+task git:run -- stash push --include-untracked
 task git:checkout -- <branch>
+task git:run -- stash pop
 ```
+
+Run the stash pair **only when `task git:status` reports a dirty tree** —
+`stash push` on a clean tree creates no entry, and the `stash pop` then
+fails with `No stash entries found`.
 
 Then sync **only if the remote ref exists** (the probe above already told
 you), so the later push is not rejected as non-fast-forward:
