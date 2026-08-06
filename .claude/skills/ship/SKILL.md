@@ -222,7 +222,11 @@ Reconciliation" against `<branch>` first:
 
 - **OPEN PR, conclusively ours** → resume with
   `task git:checkout -- <branch>`, which also creates the local tracking
-  branch when only the remote ref is present. This is the UPDATE path.
+  branch when only the remote ref is present, then **`task git:pull` to
+  sync**. The remote branch may have advanced — a reviewer's suggestion
+  committed from the GitHub UI, a CI auto-formatter push — and pushing a
+  stale local branch is rejected as non-fast-forward, halting the run.
+  This is the UPDATE path.
 - **Anything else** → do **NOT** silently resume or create over it. Stop
   and ask whether to reuse the branch, pick another name, or branch fresh
   from the base; under `CI=true`, halt per CLAUDE.md Principle 16.

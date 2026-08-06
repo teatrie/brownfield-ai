@@ -62,7 +62,11 @@ If there are uncommitted changes:
 
    - **OPEN PR, conclusively ours** → resume:
      `task git:checkout -- <branch>` (this also creates the local tracking
-     branch when only the remote ref is present). This is the UPDATE path.
+     branch when only the remote ref is present), then **`task git:pull` to
+     sync**. The remote branch may have advanced — a reviewer's suggestion
+     committed from the GitHub UI, a CI auto-formatter push — and pushing a
+     stale local branch is rejected as non-fast-forward, halting the run.
+     This is the UPDATE path.
    - **Anything else** — closed/merged PR, no PR, or ownership not conclusive
      → do **NOT** silently resume and do **NOT** silently create over it.
      Stop and ask the user whether to reuse the branch, pick another name, or
@@ -74,6 +78,13 @@ If there are uncommitted changes:
    ```bash
    task git:checkout -- -b <branch>
    ```
+
+   This branches from the **current HEAD**, by design: `auto-pr` packages the
+   working tree you are already sitting on, so the uncommitted changes must
+   come with you. `ship` differs — it groups a dirty tree into several PRs and
+   so bases each new branch on a freshly pulled `main`. Confirm HEAD is where
+   you intend before creating: from an unrelated feature branch this carries
+   that branch's history into the PR.
 
    `checkout -b` on an existing branch fails with
    `fatal: A branch named '...' already exists` and aborts the run. Omitting the
