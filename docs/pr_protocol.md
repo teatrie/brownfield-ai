@@ -730,10 +730,17 @@ checked-out branch, wrong or empty under detached HEAD or headless.
 **including merged/closed** ones, so the `state` field is load-bearing:
 the UPDATE path is gated on an **OPEN** PR only.
 
-- **No OPEN PR** (no PR at all → non-zero exit and stderr, not an empty
-  success; a merged/closed PR → a non-`OPEN` `state`) → **CREATE path**:
-  proceed with **Create PR** as normal (first-round PR generation). No
-  reconciliation runs.
+Three outcomes, not two — a non-`OPEN` state is **not** the same as no PR:
+
+- **No PR at all** (non-zero exit and stderr, not an empty success) →
+  **CREATE path**: proceed with **Create PR** as normal (first-round PR
+  generation). No reconciliation runs.
+- **A merged or closed PR** (a PR is returned with a non-`OPEN` `state`) →
+  the branch is **spent**. If it was squash-merged, its commits are already
+  in the base, so creating from it would open a follow-up PR carrying
+  already-merged history, based behind the current base. **Halt** and
+  return to branch selection: rebase the work onto the fresh base or move
+  it to a new branch. Never treat this as a first-round create.
 - **An OPEN PR already exists** (a PR is returned AND `state == "OPEN"`)
   → check ownership below, then take the **UPDATE path**: do NOT create a
   second PR. Run the **per-round procedure** below each round, then
