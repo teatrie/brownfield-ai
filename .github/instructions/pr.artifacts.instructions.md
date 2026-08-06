@@ -75,13 +75,20 @@ Do NOT:
 - **`tmp/` placement.** `tmp/<branch-short-name>/` for PRs we author;
   `tmp/pr<number>/` for third-party review comments. Never the workspace root,
   never a source directory, never absolute `/tmp/`.
-- **Hidden identity marker** on line 1 of every *managed lifecycle comment*
-  (not the body): an HTML comment carrying `pr-lifecycle:executive-summary`,
-  `pr-lifecycle:qa-resolution-log`, or `pr-lifecycle:ci-resolution-log`.
-  Third-party review comments use the separate `pr-review:review-findings`
-  namespace -- see below. That list is exhaustive: an ad-hoc comment that is
-  not one of these artifacts carries no marker. Do not invent one and do not
-  reuse a `pr-lifecycle:` marker. Everything else here still binds it.
+- **Hidden identity marker** on line 1: an HTML comment carrying
+  `pr-lifecycle:pr-body` on every `pr_body.md` we create, or
+  `pr-lifecycle:executive-summary`, `pr-lifecycle:qa-resolution-log`, or
+  `pr-lifecycle:ci-resolution-log` on the corresponding managed lifecycle
+  comment. Third-party review comments use the separate
+  `pr-review:review-findings` namespace -- see below. That list is
+  exhaustive: an ad-hoc comment that is not one of these artifacts carries no
+  marker. Do not invent one and do not reuse a `pr-lifecycle:` marker.
+  Everything else here still binds it.
+- **The body marker is the ownership anchor**, not a dedup key. It is the
+  only signal guaranteed present on a PR we created, so the Per-Round PR
+  Reconciliation procedure in `docs/pr_protocol.md` uses it to prove the PR
+  is ours before mutating it. Preserve it verbatim through every description
+  sync; `merge_body.md` is exempt (see below).
 - **The marker is what makes deduplication possible.** The Per-Round PR
   Reconciliation procedure in `docs/pr_protocol.md` resolves the existing
   comment bearing the marker and edits it in place, so exactly one of each

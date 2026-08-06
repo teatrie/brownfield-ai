@@ -89,9 +89,9 @@ Do NOT:
 - **`tmp/` placement.** `tmp/<branch-short-name>/` for PRs we author;
   `tmp/pr<number>/` for third-party review comments. Never the workspace root,
   never a source directory, never absolute `/tmp/`.
-- **Hidden identity marker** on line 1 of every *managed lifecycle comment*
-  (not the body). Write the full form — a bare suffix is not a valid
-  discriminator:
+- **Hidden identity marker** on line 1. Write the full form — a bare suffix is
+  not a valid discriminator:
+  - `<!-- pr-lifecycle:pr-body -->` — on every **`pr_body.md` we create**.
   - `<!-- pr-lifecycle:executive-summary -->`
   - `<!-- pr-lifecycle:qa-resolution-log -->`
   - `<!-- pr-lifecycle:ci-resolution-log -->`
@@ -101,6 +101,12 @@ Do NOT:
   artifacts carries **no marker** — do not invent one and do not reuse a
   `pr-lifecycle:` marker to satisfy the rule. Everything else in this rule
   still binds such a comment.
+
+  The **body marker is the ownership anchor**, not a dedup key: it is the
+  only signal guaranteed present on a PR we created, so
+  [pr_protocol.md](../../docs/pr_protocol.md) §"Per-Round PR Reconciliation"
+  uses it to prove the PR is ours before mutating it. Preserve it verbatim
+  through every description sync; `merge_body.md` is exempt (see below).
 
   **The marker is what makes deduplication possible.**
   [pr_protocol.md](../../docs/pr_protocol.md) §"Per-Round PR Reconciliation"
