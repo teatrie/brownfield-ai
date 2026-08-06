@@ -471,11 +471,21 @@ review explicitly reports GREEN.
 
 **Post-or-PATCH (applies to all three comments below).** Each carries a
 stable `pr-lifecycle:` marker on line 1. Before posting any of them,
-resolve whether a comment bearing that marker already exists on the PR
-(`task gh:api -- /repos/{owner}/{repo}/issues/<number>/comments`). If one
-does, **PATCH it in place** per §"Per-Round PR Reconciliation" step 4
-instead of posting; the `task gh:pr -- comment` invocations shown below
-are the **first-post** form only.
+resolve whether a comment bearing that marker already exists on the PR:
+
+```bash
+task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments
+```
+
+If one does, **PATCH it in place** per §"Per-Round PR Reconciliation"
+step 4 instead of posting; the `task gh:pr -- comment` invocations shown
+below are the **first-post** form only.
+
+**`--paginate` is load-bearing.** The endpoint returns 30 comments per
+page by default. A long-running PR — precisely the multi-round case this
+procedure exists for — can carry the marked comment on a later page; an
+unpaginated lookup would conclude no marker exists and post a duplicate,
+defeating the invariant.
 
 This rule lives here, at the point of posting, because it cannot be
 delegated to the pre-push reconciliation pass: all three comments are
@@ -811,9 +821,10 @@ requires: `task gh:pr -- view <number> --json comments` yields
 GraphQL-shaped comment objects with a `url` but no bare numeric id, so
 take `<id>` from the audited comment's `url` fragment
 `#issuecomment-<id>` (or enumerate the comments via
-`task gh:api -- /repos/{owner}/{repo}/issues/<number>/comments`, whose
-REST objects carry a numeric `id` directly). Only if no comment with the
-marker exists yet does the skill post a fresh one. Reserve
+`task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments`,
+whose REST objects carry a numeric `id` directly — keep `--paginate`, see
+§"PR Execution Comments"). Only if no comment with the marker exists yet
+does the skill post a fresh one. Reserve
 supersede-with-banner (step 3) for genuinely one-off comments a later
 round obsoletes; in the steady state the three marked comments are
 edited in place, never superseded.
