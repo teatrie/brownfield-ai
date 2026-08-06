@@ -427,7 +427,9 @@ git branch. NEVER create temporary files in source directories.
 
 Write the generated PR body to `tmp/<branch-short-name>/pr_body.md` **with the
 Write tool** — never a `cat` heredoc or shell redirection, per
-[CLAUDE.md](../CLAUDE.md) §10. Then create the PR:
+[CLAUDE.md](../CLAUDE.md) §10. Claude Code's Write tool creates missing parent
+directories; on a runtime whose file-write tool does not, run
+`mkdir -p tmp/<branch-short-name>` first. Then create the PR:
 
 ```bash
 LABELS="${ARGUMENTS_LABELS:-ai-assisted}"
