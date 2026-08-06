@@ -87,10 +87,12 @@ If there are uncommitted changes:
    outcome below applies:
 
    - **Unpushed commits block the switch.** Resolve the upstream first with
-     `task git:run -- rev-parse --abbrev-ref @{upstream}`; a non-zero exit
-     means there is none, so treat every commit on the branch as unpushed
-     and skip the comparison. Otherwise compare against that upstream, not
-     `main`: `task git:log -- --oneline @{upstream}..HEAD`. Commits merely absent
+     `task git:run -- rev-parse --abbrev-ref @{upstream}`. If it resolves,
+     compare against it: `task git:log -- --oneline @{upstream}..HEAD`. If it
+     does **not** (non-zero exit — no tracking configured), fall back to
+     `origin/main..HEAD` rather than assuming everything is unpushed: a
+     branch sitting at the fetched base has nothing to lose, and calling it
+     wholly unpushed would halt an ordinary run. Commits merely absent
      from `main` are the normal state of any unmerged feature branch and
      must not block anything; only commits absent from the *remote* are at
      risk. When the branch has **no upstream**, nothing has been pushed, so

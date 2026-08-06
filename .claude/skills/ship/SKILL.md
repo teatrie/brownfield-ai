@@ -276,10 +276,13 @@ the new-branch block ends in `checkout -b <branch> origin/main`, which
 fails because the branch already exists.
 
 **Unpushed commits block the switch.** Before either checkout, resolve the
-upstream with `task git:run -- rev-parse --abbrev-ref @{upstream}`; a
-non-zero exit means there is none, so treat every commit on the branch as
-unpushed and skip the comparison. Otherwise compare the current branch
-against that upstream: `task git:log -- --oneline @{upstream}..HEAD`. The stash below moves the dirty tree but leaves committed
+upstream with `task git:run -- rev-parse --abbrev-ref @{upstream}`. If it
+resolves, compare against it:
+`task git:log -- --oneline @{upstream}..HEAD`. If it does **not**
+(non-zero exit — no tracking configured), fall back to `origin/main..HEAD`
+rather than assuming everything is unpushed: a branch sitting at the
+fetched base has nothing to lose, and calling it wholly unpushed would
+halt an ordinary run. The stash below moves the dirty tree but leaves committed
 work on the branch you leave, so switching would publish a group without
 commits it should carry. If unpushed commits exist and the target is a
 different branch, **halt and ask** which to publish. Under `CI=true`, halt
