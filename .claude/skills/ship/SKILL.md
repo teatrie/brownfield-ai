@@ -424,10 +424,14 @@ Reconciliation", act only on a fresh answer. Order it **ahead of**
 third-party PR was opened on this branch during the pause, pushing adds
 your commits to *their* PR before any guard has run.
 
-The halt applies **only when an OPEN PR exists and ownership is not
-conclusive** — that is the case where pushing would touch someone else's
-PR. **No OPEN PR at all is the ordinary CREATE case**: there is nothing
-to own, nothing to halt on, so push and continue below.
+Halt on **either** of two outcomes: an OPEN PR whose ownership is not
+conclusive (pushing would touch someone else's PR), or a PR that was open
+at Step 2a and has since **closed or merged** — that branch is now spent,
+and pushing would raise a follow-up PR carrying already-merged history.
+The canonical rule is in that section; do not collapse the two.
+
+**Only "no PR has ever existed for this branch" is the ordinary CREATE
+case**: nothing to own, nothing to halt on, so push and continue below.
 
 ```bash
 task git:push
