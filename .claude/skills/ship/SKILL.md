@@ -272,13 +272,25 @@ carry someone else's changes to them. The `--autostash` on the pull does
 
 ```bash
 task git:run -- stash push --include-untracked
-# ... the checkout from whichever block below ...
+# ... the checkout from whichever block below, then its sync if any ...
 task git:run -- stash pop
 ```
 
 Run the stash pair **only when `task git:status` reports a dirty tree** —
 `stash push` on a clean tree creates no entry, and the `stash pop` then
 fails with `No stash entries found`.
+
+**Pop last — after the checkout *and* any sync.** Popping before the pull
+would only force the rebase to autostash the same changes again; popping
+onto the final tree is a single restore.
+
+**Handle a conflicting pop, do not push through it.** On the existing-branch
+path the resumed branch may already hold an earlier version of this group's
+files, so the pop can conflict. `git stash pop` **keeps the stash entry**
+when it conflicts, so nothing is lost. Stop there: report the conflicting
+paths and let the user reconcile them, rather than staging a half-merged
+tree. Under `CI=true`, halt and checkpoint per CLAUDE.md Principle 16. Do
+**not** `stash drop` to clear the conflict.
 
 Existing branch (rerun / UPDATE path) — check out, do not create:
 
