@@ -758,14 +758,22 @@ channel, so the synced body reaches humans and the merge record, not the
 reviewers. Wiring the body in as intent input belongs with the pending
 diff-review dimension expansion — do not assume it already happens.
 
-**Re-sync after any review-driven change.** The sync running first makes
-the body current *for the gate*, not necessarily *at merge*: if
-diff-review returns a `code-change` finding, its resolution loop mutates
-the diff after this step has already run, leaving the body describing the
-pre-fix state. Whenever review resolution changes the diff, run this sync
-again once the gate returns APPROVE — the UPDATE path skips body
-generation at the PR step, so this is the only place the description↔diff
-invariant can be re-established.
+**Re-sync after every subsequent push, through merge.** One pass makes
+the body current *at that moment*, not *at merge*. Every later push
+re-opens the gap, and the UPDATE path skips body generation at the PR
+step, so this sync is the only place the description↔diff invariant is
+ever re-established. Run it again after **each** of:
+
+- **diff-review resolution** — a `code-change` finding mutates the diff
+  after this step ran; re-sync once the gate returns APPROVE.
+- **a CI-fix push** — CI Failure Handling delegates a fix, pushes, and
+  restarts CI without re-entering this procedure; a fix that changes the
+  implementation otherwise ships with a body describing the pre-fix diff.
+- **a rebase push** — a rebase onto the base branch can change the
+  effective diff the PR presents.
+
+The invariant is checked at merge, not at first sync: if the last thing
+pushed is not described by the body, this step has not been satisfied.
 
 **2. Comment audit.** Enumerate the **AGENT-AUTHORED** comments on the
 PR and classify each. Use the **paginated REST endpoint**, not
