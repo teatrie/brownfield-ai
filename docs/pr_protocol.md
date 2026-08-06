@@ -787,9 +787,17 @@ UPDATE work. Repeat the state and ownership lookup **immediately before
 Order it ahead of the push, not after. The push is itself a remote
 mutation: if a third-party PR was opened on this branch during the pause,
 pushing appends your commits to *their* PR before any ownership guard has
-run. Revalidating afterwards is too late. A PR merged or closed during
-the pause likewise must not be mutated as though still open, and a PR
-opened during it must not receive a duplicate.
+run. Revalidating afterwards is too late. A PR opened during the pause
+must not receive a duplicate.
+
+**A PR that closed or merged during the pause is not a CREATE.** Separate
+"no PR has ever existed for this branch" from "the PR we detected is now
+closed or merged". The second means the branch is **spent** — if it was
+squash-merged, its commits are already in the base — so pushing more
+commits to it would raise a follow-up PR carrying the merged history,
+based behind the current base. **Halt** there: return to branch selection
+so the work is rebased onto the fresh base or moved to a new branch. Do
+not treat it as a first-round create.
 
 ### Per-round procedure (UPDATE path)
 

@@ -235,13 +235,20 @@ Reconciliation" against `<branch>` first:
   committed from the GitHub UI, a CI auto-formatter push — and pushing a
   stale local branch is rejected as non-fast-forward, halting the run.
   This is the UPDATE path.
-- **No PR at all** → this is an **interrupted prior run** of this same
+- **No PR at all** → most likely an **interrupted prior run** of this same
   group: `ship` creates the branch before it creates the PR, so a run cut
-  short between the two leaves exactly this state. Check the branch out
-  and continue on the CREATE path. Do **not** halt — `ship` is a batch
-  skill, and halting here would demand manual intervention for every
-  interrupted group. Ask only if the branch's commits are unrelated to
-  the group in hand.
+  short between the two leaves exactly this state. But an absent PR does
+  not prove the branch is ours — the generated name can collide with an
+  abandoned or unrelated branch. Decide on commits, as `auto-pr` does:
+  - **No commits beyond the base**
+    (`task git:log -- --oneline main..<branch>` is empty) — a bare
+    leftover ref. Resume it and continue on the CREATE path. Do **not**
+    halt: `ship` is a batch skill, and halting here would demand manual
+    intervention for every interrupted group.
+  - **It carries commits** — they may be this group's from the
+    interrupted run, or somebody else's. **Ask** before reusing, and halt
+    under `CI=true` per CLAUDE.md Principle 16. Committing and pushing on
+    top would graft this group onto unrelated history.
 - **Closed/merged PR, or an OPEN PR not conclusively ours** → do **NOT**
   silently resume or create over it. Stop and ask whether to reuse the
   branch, pick another name, or branch fresh from the base; under
