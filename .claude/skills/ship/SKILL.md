@@ -226,43 +226,30 @@ not belong to. Run the existing-PR detection and ownership check in
 [pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
 Reconciliation" against `<branch>` first:
 
-- **OPEN PR, conclusively ours** → resume with
-  `task git:checkout -- <branch>`, which also creates the local tracking
-  branch when only the remote ref is present, then sync with
-  **`task git:pull -- --rebase --autostash origin <branch>`**. Name the remote and branch
-  explicitly: a local branch that lost or never had upstream tracking
-  makes a bare `git pull` fail with `no tracking information`. The remote branch may have advanced — a reviewer's suggestion
-  committed from the GitHub UI, a CI auto-formatter push — and pushing a
-  stale local branch is rejected as non-fast-forward, halting the run.
-  This is the UPDATE path.
+**Classify only here — run no git commands yet.** Every checkout and pull
+lives in the guarded blocks further down, after the stash; running one
+now would abort on the dirty tree this skill always carries.
+
+- **OPEN PR, conclusively ours** → **RESUME**. Take the *existing-branch*
+  block below. This is the UPDATE path.
 - **No PR at all** → most likely an **interrupted prior run** of this same
   group: `ship` creates the branch before it creates the PR, so a run cut
   short between the two leaves exactly this state. But an absent PR does
   not prove the branch is ours — the generated name can collide with an
-  abandoned or unrelated branch. Decide on commits, as `auto-pr` does:
-  - **No commits beyond the base** — a bare leftover ref. **Reset it onto
-    the fetched base** rather than falling through to the CREATE block,
-    whose `checkout -b` would abort with `a branch named '...' already
-    exists`, and which would in any case leave the branch on whatever
-    older base it was cut from:
-
-    ```bash
-    task git:checkout -- -B <branch> origin/main
-    ```
-
-    `-B` resets an existing branch; it is safe **only** because this case
-    is defined by having no commits beyond the base, so there is nothing
-    to discard. Then continue on the CREATE path from Step 2. Do **not**
-    halt: `ship` is a batch skill, and halting here would demand manual
-    intervention for every interrupted group. Name the ref the probe actually found:
-    `task git:log -- --oneline origin/main..<branch>` when the **local**
-    ref exists, `origin/main..origin/<branch>` when only the **remote** one
-    does — a remote-only branch is not a valid local revision and naming it
-    bare fails with `unknown revision`. Compare against **`origin/main`**,
-    not local `main`: the probe just fetched `origin --prune`, so
-    `origin/main` is current while local `main` may lag, and against a
-    stale base a bare branch cut at the fetched tip looks like it carries
-    commits and would halt for nothing.
+  abandoned or unrelated branch. Decide on commits, as `auto-pr` does,
+  naming the ref the probe actually found:
+  `task git:log -- --oneline origin/main..<branch>` when the **local** ref
+  exists, `origin/main..origin/<branch>` when only the **remote** one does
+  — a remote-only branch is not a valid local revision and naming it bare
+  fails with `unknown revision`. Compare against **`origin/main`**, not
+  local `main`: the probe just fetched `origin --prune`, so `origin/main`
+  is current while local `main` may lag, and against a stale base a bare
+  branch cut at the fetched tip looks like it carries commits and would
+  halt for nothing.
+  - **No commits beyond the base** → **RESET**. A bare leftover ref: take
+    the *reset* block below, then continue on the CREATE path from Step 2.
+    Do **not** halt — `ship` is a batch skill, and halting here would
+    demand manual intervention for every interrupted group.
   - **It carries commits** — they may be this group's from the
     interrupted run, or somebody else's. **Ask** before reusing, and halt
     under `CI=true` per CLAUDE.md Principle 16. Committing and pushing on
@@ -271,8 +258,8 @@ Reconciliation" against `<branch>` first:
   silently resume or create over it. Stop and ask whether to reuse the
   branch, pick another name, or branch fresh from the base; under
   `CI=true`, halt per CLAUDE.md Principle 16.
-
-Only when **both** probes fail is the branch genuinely new.
+- **Both probes failed** → **CREATE**. The branch is genuinely new: take
+  the *new-branch* block below.
 
 Skipping the remote probe creates an unrelated branch from `main`, and
 the later push is then rejected as non-fast-forward — so the UPDATE path
@@ -281,7 +268,7 @@ existing branch fails with `fatal: A branch named '...' already exists`
 and aborts the run **before** Step 2a's existing-PR detection, making the
 UPDATE path unreachable.
 
-**Run exactly one of the two blocks below — never both.** They are
+**Run exactly one of the three blocks below — never more.** They are
 alternatives, not a sequence: following the existing-branch checkout with
 the new-branch block ends in `checkout -b <branch> origin/main`, which
 fails because the branch already exists.
@@ -357,11 +344,15 @@ paths and let the user reconcile them, rather than staging a half-merged
 tree. Under `CI=true`, halt and checkpoint per CLAUDE.md Principle 16. Do
 **not** `stash drop` to clear the conflict.
 
-Existing branch (rerun / UPDATE path) — check out, do not create:
+**RESUME** — existing branch (rerun / UPDATE path); check out, do not
+create:
 
 ```bash
 task git:checkout -- <branch>
 ```
+
+This also creates the local tracking branch when only the remote ref is
+present.
 
 Then sync **only if the remote ref exists** (the probe above already told
 you), so the later push is not rejected as non-fast-forward:
@@ -389,7 +380,22 @@ There is nothing on the remote to pull from, and halting here would strand
 the batch this path exists to resume. Go straight to its initial push
 instead.
 
-New branch — base it on an updated `main`, **without checking `main` out**:
+**RESET** — bare leftover ref (exists, but carries nothing beyond the
+base); point it at the fetched base rather than reusing whatever base it
+was cut from:
+
+```bash
+task git:checkout -- -B <branch> origin/main
+```
+
+`-B` resets an existing branch, so it must not be used as a general
+substitute for `-b`. It is safe **only** in this outcome, which is defined
+by the branch having no commits beyond the base — there is nothing to
+discard. Do not take the new-branch block here: its `checkout -b` would
+abort with `a branch named '...' already exists`.
+
+**CREATE** — new branch; base it on an updated `main`, **without checking
+`main` out**:
 
 ```bash
 task git:fetch -- origin --prune
