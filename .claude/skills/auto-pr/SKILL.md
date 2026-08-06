@@ -83,46 +83,49 @@ If there are uncommitted changes:
        carrying the previous PR's commits, based behind the current base.
        Rebase onto the fresh base first, or branch anew — do not push it
        as-is.
-   Before switching away from your current branch at all, check it for
-   **unpushed commits** (`task git:log -- --oneline origin/main..HEAD`). A
-   stash moves the dirty tree but leaves committed work behind, so switching
-   would push `<branch>` without the very commits you were asked to publish —
-   silently. If the current branch has unpushed commits and `<branch>` is a
-   different branch, **halt and ask** which one to publish rather than
-   switching. Under `CI=true`, halt per CLAUDE.md Principle 16.
+   **Two rules govern every switch away from your current branch**, whichever
+   outcome below applies:
 
-   - **Not on it, but an OPEN PR is conclusively ours** → resume. **Stash
-     first when the tree is dirty** — you arrived here from the
+   - **Unpushed commits block the switch.** Check with
+     `task git:log -- --oneline origin/main..HEAD`. A stash moves the dirty
+     tree but leaves committed work behind, so switching would push
+     `<branch>` without the very commits you were asked to publish —
+     silently. If the current branch has unpushed commits and `<branch>` is a
+     different branch, **halt and ask** which to publish. Under `CI=true`,
+     halt per CLAUDE.md Principle 16.
+   - **Stash a dirty tree first.** You arrive here from the
      uncommitted-changes path, and `checkout` aborts with
-     `Your local changes ... would be overwritten by checkout` if the target
-     branch differs in any modified path; the `--autostash` below runs too
-     late to help. `task git:run -- stash push --include-untracked`, then
-     `task git:checkout -- <branch>` (this also creates the local tracking
-     branch when only the remote ref is present), then
-     `task git:run -- stash pop`. Skip the stash pair on a clean tree —
-     `stash pop` fails with `No stash entries found`. Then sync with
-     **`task git:pull -- --rebase --autostash origin <branch>`**. Name the remote and branch
-     explicitly: a local branch that lost or never had upstream tracking
-     makes a bare `git pull` fail with `no tracking information`.
-     **`--rebase` is deliberate** — this path runs with local unpushed
-     commits, so a remote that also advanced leaves the branches diverged,
-     and the default merge would both open `$EDITOR` for the merge message
-     and litter the PR with a merge commit. **`--autostash` is required**:
-     you reach this step from the *uncommitted changes* path, and a rebase
-     refuses to start with a dirty tree
-     (`cannot pull with rebase: You have unstaged changes`). Autostash
-     shelves them and restores them once the rebase lands. The remote branch may have advanced — a reviewer's suggestion
-     committed from the GitHub UI, a CI auto-formatter push — and pushing a
-     stale local branch is rejected as non-fast-forward, halting the run.
-     This is the UPDATE path.
-   - **Not on it, and the ref is someone else's or spent** — closed/merged PR,
-     or an OPEN PR whose ownership is not conclusive → do **NOT** silently
-     resume and do **NOT** silently create over it. Stop and ask the user
-     whether to reuse the branch, pick another name, or branch fresh from the
-     base. Under `CI=true`, halt and checkpoint per CLAUDE.md Principle 16.
+     `Your local changes ... would be overwritten by checkout` when the
+     target branch differs in any modified path. The `--autostash` on the
+     pull does not help — it runs later. Wrap **every** checkout below:
+     `task git:run -- stash push --include-untracked`, the checkout, then
+     `task git:run -- stash pop`. Skip the pair on a clean tree, where
+     `stash pop` fails with `No stash entries found`.
+
+   Then, by outcome:
+
+   - **Not on it, but an OPEN PR is conclusively ours** → resume with
+     `task git:checkout -- <branch>` (which also creates the local tracking
+     branch when only the remote ref is present), then sync with
+     **`task git:pull -- --rebase --autostash origin <branch>`**. This is the
+     UPDATE path. Name the remote and branch explicitly: a branch that lost
+     or never had upstream tracking makes a bare `git pull` fail with
+     `no tracking information`. **`--rebase`** keeps the diverged case — the
+     remote advanced via a reviewer's UI commit or a CI auto-formatter —
+     from opening `$EDITOR` and adding a merge commit, and an unsynced local
+     branch would otherwise be rejected as non-fast-forward.
+     **`--autostash`** is what lets that rebase start at all against the
+     dirty tree.
+   - **Not on it, and the ref is someone else's or spent** — closed/merged
+     PR, or an OPEN PR whose ownership is not conclusive → do **NOT**
+     silently resume and do **NOT** silently create over it. Stop and ask
+     the user whether to reuse the branch, pick another name, or branch
+     fresh from the base. Under `CI=true`, halt and checkpoint per
+     CLAUDE.md Principle 16.
    - **Not on it, and no PR exists at all** → the name is free of any PR, so
-     this is a plain CREATE against an unused branch: check it out and carry
-     on. Ask only if its commits are unrelated to the work in hand.
+     this is a plain CREATE against an unused branch: check it out (stashing
+     per the rule above) and carry on. Ask only if its commits are unrelated
+     to the work in hand.
 
    **Pull whenever the remote probe succeeded**, on every resume above — not
    only when an owned OPEN PR was found. A branch that exists remotely can
