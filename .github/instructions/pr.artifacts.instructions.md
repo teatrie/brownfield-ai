@@ -64,7 +64,9 @@ Do NOT:
 ## Mandatory Mechanics
 
 - **`--body-file` only.** Never pass inline `--body` / `-b` to
-  `gh pr create|comment|edit|merge`.
+  `gh pr create|comment|edit|merge`. This governs calls that **supply body
+  text**; a metadata-only `gh pr edit` (labels, reviewers, title) passes no
+  body flag at all -- adding one would overwrite the current body.
 - **File-authoring tool only.** Create the artifact with the editor's
   file-write tool, never a `cat` heredoc or shell redirection.
 - **Note on reach**: context-injection timing for path-scoped instructions
