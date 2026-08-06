@@ -708,12 +708,18 @@ the round's Code Diff Review Gate), detect whether an open PR already
 exists for the current branch:
 
 ```bash
-task gh:pr -- view <branch-short-name> --json number,url,title,body,state
+task gh:pr -- view <branch> --json number,url,title,body,state
 ```
 
-**Pass the branch explicitly.** Omitting it makes `gh` resolve the
-implicitly checked-out branch, which returns the wrong PR — or none — in
-a detached-HEAD or headless context.
+**Pass the branch explicitly, and pass the FULL name.** `<branch>` is the
+complete head ref the calling skill resolved — prefix and any `_<ID>`
+suffix included, e.g. `ship/media-schemas_ACME-1234` — **not** the
+`<branch-short-name>` used for `tmp/` artifact directories elsewhere in
+this document. A short name does not identify the head ref, so the lookup
+would report no PR and route to CREATE while an open PR exists, producing
+a duplicate-creation attempt instead of reconciliation. Omitting the
+argument entirely is worse still: `gh` then resolves the implicitly
+checked-out branch, wrong or empty under detached HEAD or headless.
 
 `gh pr view <branch>` resolves the branch's **most-recent** PR
 **including merged/closed** ones, so the `state` field is load-bearing:
