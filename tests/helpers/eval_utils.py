@@ -3,12 +3,16 @@ import os
 import re
 import shutil
 import subprocess
+from functools import partial
 
 import pytest
 import yaml
 
 from helpers import aws_env
 from helpers.runners import get_runner
+
+# Names never worth carrying into a sandbox from a skill's eval workspace.
+_WORKSPACE_ARTIFACT_NAMES: frozenset[str] = frozenset({"tmp", "__pycache__", ".pytest_cache"})
 
 # ============================================================================
 # Eval Data Extraction
@@ -161,6 +165,28 @@ def _setup_eval_environment(eval_config: dict, eval_env: dict) -> None:
     exec(setup, env, env)
 
 
+def _workspace_copy_ignore(workspace_path: str, dir_path: str, contents: list) -> list:
+    """Select names to skip when copying a skill's eval workspace into the sandbox.
+
+    ``evals`` is dropped at the workspace root only. It holds the case
+    definitions, ``expected_output`` among them, so copying it would place the
+    answer key inside the very sandbox the agent is evaluated in. Nested
+    directories of that name are unrelated and are copied as normal.
+
+    Args:
+        workspace_path: The skill's eval workspace being copied from.
+        dir_path: The directory ``shutil.copytree`` is currently visiting.
+        contents: Entry names in ``dir_path``.
+
+    Returns:
+        list: The subset of ``contents`` to skip.
+    """
+    ignored = [c for c in contents if c in _WORKSPACE_ARTIFACT_NAMES]
+    if os.path.abspath(dir_path) == os.path.abspath(workspace_path) and "evals" in contents:
+        ignored.append("evals")
+    return ignored
+
+
 def _setup_isolated_sandbox(skill_name: str, eval_case_name: str, original_workspace_path: str) -> str:
     """Set up an isolated functional sandbox boundary simulating the project root."""
     # Determine the workspace root first (needed for sandbox path)
@@ -215,11 +241,13 @@ def _setup_isolated_sandbox(skill_name: str, eval_case_name: str, original_works
         shutil.copytree(skill_src_scripts, os.path.join(skill_dest, "scripts"), dirs_exist_ok=True)
 
     # Copy workspace specific files over
-    def ignore_workspace_artifacts(dir_path: str, contents: list) -> list:
-        return [c for c in contents if c in {"tmp", "__pycache__", ".pytest_cache"}]
-
     if os.path.exists(original_workspace_path):
-        shutil.copytree(original_workspace_path, sandbox_path, ignore=ignore_workspace_artifacts, dirs_exist_ok=True)
+        shutil.copytree(
+            original_workspace_path,
+            sandbox_path,
+            ignore=partial(_workspace_copy_ignore, original_workspace_path),
+            dirs_exist_ok=True,
+        )
 
     # Note: git init was removed — it created .git/ files that the
     # Claude Code sandbox cannot delete, making sandbox cleanup fail

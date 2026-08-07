@@ -1,0 +1,168 @@
+# Sentinel-style evals for the `ship` write-path skill.
+#
+# `ship` branches, commits, pushes and merges a queue of PRs sequentially. The
+# eval sandbox is created under `tmp/` inside this workspace and carries no
+# `.git` of its own, so a git command run there walks up and finds the *real*
+# repository — a naive eval would fire real mutations at it.
+#
+# These cases therefore port the technique from
+# `tests/skills/github-search/evals/evals.yml` case `complex_search_clone_required`:
+# drive the agent through the real decision path, then have it emit a sentinel
+# line INSTEAD OF the destructive command, and assert on the sentinel. See the
+# header of `tests/skills/auto-pr/evals/evals.yml` for the shared rationale and
+# the limits of what this can catch.
+#
+# Several cases deliberately mirror an `auto-pr` case. That duplication is the
+# point: the same rule is written out separately in both skills, and a fix
+# landing in one and not the other is this trio's dominant failure mode.
+skill_name: ship
+evals:
+- case: create_bases_new_branch_on_origin_main
+  user_prompt: |-
+    My tree has a pile of unrelated changes in it. Group them and start
+    shipping the first PR.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone. Skip Phase 1 grouping analysis: take the
+    grouping as already approved.
+
+    Treat the following as the already-observed state:
+
+    - The work item is Execution Ledger epic PORT-002. No JIRA or Linear
+      issue is involved.
+    - The first approved group is the database migrations; its short name is
+      media-schemas.
+    - task git:status reports a dirty tree carrying every remaining group.
+    - task git:fetch -- origin --prune has already run, and both ref probes
+      for the branch name you resolve exit 1.
+    - Existing-PR detection finds no PR at all for that branch name.
+
+    Apply Phase 2 Step 1 of the skill. Emit the sentinel below INSTEAD OF
+    running any checkout or push, as the last two lines of your reply.
+    base names the revision the new branch is cut from; checkout_main reports
+    whether you would check main out first:
+
+    DECISION: <CREATE|RESUME|RESET|HALT> branch=<branch> base=<revision> checkout_main=<yes|no>
+    MUTATIONS: NONE
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("DECISION:")]
+    assert lines, "no DECISION sentinel line in agent output"
+    verdict = lines[-1]
+    assert "CREATE" in verdict
+    assert "ship/" in verdict, "ship branches carry the ship/ prefix"
+    assert "base=origin/main" in verdict, "a bare fetch leaves refs/remotes/origin/main stale unless --prune is used"
+    assert "checkout_main=no" in verdict, "checking main out would carry the remaining groups across"
+    assert "MUTATIONS: NONE" in output
+  files: []
+- case: bare_leftover_ref_resets_without_halting
+  user_prompt: |-
+    Pick the shipping run back up where it stopped.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone. Skip Phase 1 grouping analysis: take the
+    grouping as already approved.
+
+    Treat the following as the already-observed state:
+
+    - The work item is Execution Ledger epic PORT-002. The current group's
+      branch name is ship/media-schemas.
+    - task git:status reports a dirty tree carrying every remaining group.
+    - task git:fetch -- origin --prune has already run. The local ref probe
+      for ship/media-schemas exits 0; the remote ref probe exits 1.
+    - Existing-PR detection finds no PR at all for that branch name.
+    - task git:log -- --oneline origin/main..ship/media-schemas prints
+      nothing.
+
+    Apply Phase 2 Step 1 of the skill. Emit the sentinel below INSTEAD OF
+    running any checkout or push, as the last two lines of your reply:
+
+    DECISION: <CREATE|RESUME|RESET|HALT> branch=<branch>
+    MUTATIONS: NONE
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("DECISION:")]
+    assert lines, "no DECISION sentinel line in agent output"
+    verdict = lines[-1]
+    assert "RESET" in verdict, "a bare leftover ref is reset onto the fetched base"
+    assert "HALT" not in verdict, "ship is a batch skill; halting per interrupted group demands manual intervention every time"
+    assert "MUTATIONS: NONE" in output
+  files: []
+- case: merged_prior_group_does_not_deadlock_the_batch
+  user_prompt: |-
+    The first PR is merged. Keep going with the next group.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone. Skip Phase 1 grouping analysis: take the
+    grouping as already approved.
+
+    Treat the following as the already-observed state:
+
+    - The previous group's PR was merged with --squash --delete-branch.
+    - You are standing on that previous branch, ship/db-migrations, and the
+      next group's branch is ship/media-schemas.
+    - task git:fetch -- origin --prune has already run.
+    - task git:run -- rev-parse --abbrev-ref @ upstream fails: no upstream
+      is configured for ship/db-migrations.
+    - The probe for refs/remotes/origin/ship/db-migrations exits 1 — the
+      prune removed it.
+    - task gh:pr -- view ship/db-migrations --json state reports MERGED.
+    - task git:log -- --oneline origin/main..HEAD lists three commits.
+
+    Apply the unpushed-commits rule in Phase 2 Step 1 of the skill, for the
+    switch away from ship/db-migrations. Emit the sentinel below as the last
+    two lines of your reply. PROCEED means the switch is safe; HALT means you
+    would stop and ask the user which branch to publish:
+
+    DECISION: <PROCEED|HALT> reason=<short reason>
+    MUTATIONS: NONE
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("DECISION:")]
+    assert lines, "no DECISION sentinel line in agent output"
+    verdict = lines[-1]
+    assert "PROCEED" in verdict, "a MERGED PR proves the branch is spent; a squash merge leaves origin/main..HEAD non-empty"
+    assert "HALT" not in verdict, "halting here deadlocks every sequential run after its first merge"
+    assert "MUTATIONS: NONE" in output
+  files: []
+- case: open_pr_ours_takes_update_path_and_skips_epic_transition
+  user_prompt: |-
+    Push the corrections for this group up.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone. Skip Phase 1 grouping analysis: take the
+    grouping as already approved.
+
+    Treat the following as the already-observed state:
+
+    - The work item is Execution Ledger epic PORT-002, currently at status
+      in_review.
+    - The current group's branch name is ship/media-schemas.
+    - task git:fetch -- origin --prune has already run, and both ref probes
+      for ship/media-schemas exit 0.
+    - Existing-PR detection finds PR 57, state OPEN, head branch
+      ship/media-schemas, and the ownership check confirms conclusively that
+      it is ours.
+
+    Apply Phase 2 Steps 1 and 3 of the skill. Emit the sentinel below INSTEAD
+    OF running the push or any gh command, as the last three lines of your
+    reply. LEDGER_TRANSITION reports whether you would run
+    task ledger:status -- PORT-002 --new-status in_review this round:
+
+    DECISION: <CREATE|RESUME|RESET|HALT> pr=<PR number, or none>
+    LEDGER_TRANSITION: <RUN|SKIP>
+    MUTATIONS: NONE
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("DECISION:")]
+    assert lines, "no DECISION sentinel line in agent output"
+    verdict = lines[-1]
+    assert "RESUME" in verdict, "an OPEN PR conclusively ours resumes the branch rather than creating a second PR"
+    assert "57" in verdict
+    assert "LEDGER_TRANSITION: SKIP" in output, "re-applying in_progress -> in_review halts every update round"
+    assert "MUTATIONS: NONE" in output
+  files: []

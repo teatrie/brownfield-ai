@@ -69,7 +69,7 @@ run_pytest_venv() {
 }
 
 if [ "$TARGET" == "scripts" ]; then
-    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|docker/shared/|\.claude/settings(\.local)?\.json)" || true)
+    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|docker/shared/|\.claude/settings(\.local)?\.json)" || true)
 
     if [ -n "$CHANGED_SCRIPTS" ]; then
         declare -a TEST_TARGETS_ARRAY=()
@@ -78,6 +78,28 @@ if [ "$TARGET" == "scripts" ]; then
                 # Include test files directly if they are Python files and still exist
                 if [[ "$file" == *.py ]] && [ -f "$file" ]; then
                     TEST_TARGETS_ARRAY+=("$file")
+                fi
+            elif [[ "$file" == tests/helpers/* ]]; then
+                # tests/helpers/ is a helper *package*, not a leaf suite: its
+                # modules are imported by other suites rather than exercised in
+                # place. It matched no branch here at all, so every test under
+                # it ran only in the full `task test:scripts` and never in the
+                # staged or pre-push gate. A changed test file routes to itself
+                # as in the branch above; a changed helper module routes to the
+                # whole helpers suite plus tests/ci/, whose router contracts
+                # import helpers.router_harness and would otherwise be blind to
+                # it. Deriving tests/helpers/test_<basename>.py instead would
+                # resolve for eval_utils and runners but silently route
+                # router_harness.py and aws_env.py to nothing — the same
+                # un-routing this branch exists to close. Known limit: the
+                # skills suite also imports helpers.eval_utils and
+                # helpers.runners, but it is routed by the `skills` target and
+                # each of its cases spends a live agent call, so helper edits
+                # are deliberately not fanned into it.
+                if [ -f "$file" ] && [[ "$(basename "$file")" == test_*.py ]]; then
+                    TEST_TARGETS_ARRAY+=("$file")
+                else
+                    TEST_TARGETS_ARRAY+=("tests/helpers/" "tests/ci/")
                 fi
             elif [[ "$file" == scripts/* ]] || [[ "$file" == ci/* ]]; then
                 # Map script to its test file. Strip the source extension and

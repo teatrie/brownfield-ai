@@ -73,7 +73,12 @@ tasks:
   skills:
     desc: Run tests for all skills
     deps: [setup]
-    env:
+    # Anchored and reused by skills:staged / skills:changed. All three reach
+    # the same host-side runner, so all three must resolve agent credentials
+    # identically: without the explicit empty default, an unset
+    # ANTHROPIC_API_KEY lets the CLI fall back to a stale externally-configured
+    # key and every eval fails "Invalid API key" instead of using OAuth.
+    env: &agent-eval-env
       COPILOT_GITHUB_TOKEN:
         sh: >-
           echo "${COPILOT_GITHUB_TOKEN:-$(gh auth token 2>/dev/null)}"
@@ -130,6 +135,7 @@ tasks:
   skills:changed:
     desc: Run tests only for changed skills
     deps: [setup]
+    env: *agent-eval-env
     cmds:
       - ./ci/test_changed.sh skills
 
@@ -141,6 +147,7 @@ tasks:
   skills:staged:
     desc: Run tests mostly natively only for staged skills
     deps: [setup]
+    env: *agent-eval-env
     cmds:
       - ./ci/test_staged.sh skills
 

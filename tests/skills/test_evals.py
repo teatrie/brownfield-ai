@@ -20,5 +20,15 @@ def test_aws_vault_auth(eval_case):
     run_skill_eval(eval_case)
 
 
+@pytest.mark.parametrize("eval_case", get_eval_cases("auto-pr"), ids=lambda c: f"auto-pr-{c['eval_config'].get('case', 'unknown')}")
+def test_auto_pr(eval_case):
+    run_skill_eval(eval_case)
+
+
+@pytest.mark.parametrize("eval_case", get_eval_cases("ship"), ids=lambda c: f"ship-{c['eval_config'].get('case', 'unknown')}")
+def test_ship(eval_case):
+    run_skill_eval(eval_case)
+
+
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
