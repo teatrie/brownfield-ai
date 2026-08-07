@@ -21,6 +21,12 @@ Invariants covered:
    criteria drift in the Codex TOML surfaces (``.codex/config.toml``
    and ``docker/agent-cli/codex-config.toml``), covered by
    parametrized cross-product of both paths and both detection axes.
+8. ``TEMPLATE_NAMES`` is auto-discovered from the templates directory
+   rather than hardcoded (TODO-0103).
+9. ``--fix`` regenerates ``diff.md`` from its canonical sources
+   (TODO-0173): the output is a fixed point over the committed copy,
+   it tracks SKILL.md edits, it ignores drift in the mirror it is
+   repairing, and it writes only under ``tmp/``.
 """
 
 from __future__ import annotations
@@ -734,3 +740,167 @@ def test_lint_script_ignores_underscore_prefixed_files(tmp_path: Path) -> None:
         f"underscore-prefixed file must be skipped by discovery; exit={result.returncode}; stderr={result.stderr!r}"
     )
     assert "_stray" not in result.stderr, f"_stray.md should not appear in any lint error; stderr={result.stderr!r}"
+
+
+# ---------------------------------------------------------------------------
+# 9. TODO-0173 — `--fix` regenerates the diff.md mirror.
+# ---------------------------------------------------------------------------
+
+
+def _run_fix(tmp_path: Path, script_copy: Path) -> subprocess.CompletedProcess[str]:
+    """Invoke the staged lint script in ``--fix`` mode against ``tmp_path``."""
+    return subprocess.run(
+        [sys.executable, str(script_copy), "--fix"],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+
+
+def _fix_output(tmp_path: Path) -> Path:
+    """Return the path ``--fix`` writes to inside a staged workspace."""
+    return tmp_path / "tmp" / "diff_md_out" / "diff.md"
+
+
+def test_fix_reproduces_committed_template_exactly(tmp_path: Path) -> None:
+    """Regeneration is a fixed point over the committed ``diff.md``.
+
+    This is the load-bearing assertion for TODO-0173: it establishes that
+    the committed mirror IS the generator's output, not merely something
+    consistent with it. Without it, ``--fix`` could emit a subtly different
+    (reordered, re-indented) file that still passed the parity check, and
+    the first person to run the re-sync would land a large spurious diff.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    result = _run_fix(tmp_path, script_copy)
+    assert result.returncode == 0, f"--fix failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert _fix_output(tmp_path).read_text() == DIFF_TEMPLATE.read_text(), (
+        "regenerated diff.md differs from the committed copy — the generator and the "
+        "committed mirror have diverged; run `task lint:reviewer-templates-fix` and review"
+    )
+
+
+def test_fix_propagates_a_skill_edit_into_the_mirror(tmp_path: Path) -> None:
+    """An edit to SKILL.md's shared block appears in the regenerated mirror.
+
+    Mutation check: without it, a ``--fix`` that ignored SKILL.md entirely
+    (e.g. copying the existing template through) would still satisfy the
+    fixed-point test above.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    skill_path = tmp_path / ".claude" / "skills" / "diff-review" / "SKILL.md"
+
+    text = skill_path.read_text()
+    edited = text.replace(
+        "> 11. Runtime infrastructure dependencies",
+        "> 11. NEWLY EDITED infrastructure dependencies",
+        1,
+    )
+    assert text != edited, "skill mutation was a no-op — fix fixture"
+    skill_path.write_text(edited)
+
+    result = _run_fix(tmp_path, script_copy)
+    assert result.returncode == 0, f"--fix failed: stderr={result.stderr!r}"
+    assert "11. NEWLY EDITED infrastructure dependencies" in _fix_output(tmp_path).read_text(), (
+        "--fix did not source the diff-dimensions block from SKILL.md"
+    )
+
+
+def test_fix_ignores_a_drifted_mirror(tmp_path: Path) -> None:
+    """A drifted ``diff.md`` cannot seed its own regeneration.
+
+    The mirror is the file being repaired, so reading it would let existing
+    drift survive the repair — the failure mode that makes an autofix worse
+    than no autofix. Both a SHARED-region and an INVARIANT-region mutation
+    are asserted away, since the two are sourced from different files.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    diff_path = tmp_path / ".claude" / "prompts" / "reviewer" / "diff.md"
+
+    text = diff_path.read_text()
+    drifted = text.replace("11. Runtime infrastructure dependencies", "11. CORRUPTED dependencies", 1).replace(
+        "Apply these 10 review criteria strictly:",
+        "CORRUPTED CRITERIA HEADER:",
+        1,
+    )
+    assert text != drifted, "mirror mutation was a no-op — fix fixture"
+    diff_path.write_text(drifted)
+
+    result = _run_fix(tmp_path, script_copy)
+    assert result.returncode == 0, f"--fix failed: stderr={result.stderr!r}"
+    regenerated = _fix_output(tmp_path).read_text()
+    assert "CORRUPTED" not in regenerated, "regeneration carried drift over from the mirror it was repairing"
+    assert regenerated == DIFF_TEMPLATE.read_text(), "repairing a drifted mirror did not restore the committed content"
+
+
+def test_fix_output_repairs_the_check(tmp_path: Path) -> None:
+    """Copying the ``--fix`` output into place makes a failing check pass.
+
+    Closes the loop the task target automates: detect -> regenerate ->
+    copy -> clean. Without this the two modes could each work in isolation
+    while the output was not actually the input the checker wants.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    diff_path = tmp_path / ".claude" / "prompts" / "reviewer" / "diff.md"
+
+    diff_path.write_text(diff_path.read_text().replace("11. Runtime infrastructure", "11. DRIFTED infrastructure", 1))
+    before = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert before.returncode == 1, "fixture did not produce a failing check"
+
+    assert _run_fix(tmp_path, script_copy).returncode == 0
+    shutil.copy(_fix_output(tmp_path), diff_path)
+
+    after = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert after.returncode == 0, f"check still failing after applying --fix output: stderr={after.stderr!r}"
+
+
+def test_fix_does_not_write_the_template_in_place(tmp_path: Path) -> None:
+    """``--fix`` writes only under ``tmp/``, never the template itself.
+
+    The container running this script mounts the workspace read-only; an
+    in-place write would fail there while passing on a developer host. The
+    host-side copy in ``task lint:reviewer-templates-fix`` is what moves
+    the file, and this locks that split in place.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    diff_path = tmp_path / ".claude" / "prompts" / "reviewer" / "diff.md"
+
+    drifted = diff_path.read_text().replace("11. Runtime infrastructure", "11. DRIFTED infrastructure", 1)
+    diff_path.write_text(drifted)
+
+    assert _run_fix(tmp_path, script_copy).returncode == 0
+    assert diff_path.read_text() == drifted, "--fix mutated the template in place instead of writing to tmp/"
+
+
+def test_fix_fails_when_skill_lacks_a_shared_block(tmp_path: Path) -> None:
+    """A SKILL.md missing a shared region fails ``--fix`` rather than emitting a truncated mirror.
+
+    Fail-closed: silently dropping the region would produce a template that
+    lints clean against the same truncated source while reviewers lose the
+    dimensions entirely.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    skill_path = tmp_path / ".claude" / "skills" / "diff-review" / "SKILL.md"
+
+    text = skill_path.read_text()
+    stripped = text.replace("<!-- SHARED:diff-scope start -->", "", 1)
+    assert text != stripped, "marker removal was a no-op — fix fixture"
+    skill_path.write_text(stripped)
+
+    result = _run_fix(tmp_path, script_copy)
+    assert result.returncode == 1, f"expected --fix to fail on a missing shared block; got exit {result.returncode}"
+    assert "diff-scope" in result.stderr, f"expected stderr to name the missing block; got {result.stderr!r}"
+    assert not _fix_output(tmp_path).exists(), "--fix wrote output despite failing"
