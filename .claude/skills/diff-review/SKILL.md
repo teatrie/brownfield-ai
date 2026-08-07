@@ -134,6 +134,7 @@ with these KEY=value args after `--`).
 > description-accuracy carve-out. Findings that target unchanged
 > files will be rejected as out of scope.
 >
+> <!-- SHARED:diff-scope start -->
 > **Bounded exception (high-risk file classes only):** for a file the diff
 > *already touches* in a high-risk class (shell `**/*.sh`; CI
 > `.github/workflows/**` + `ci/**`; go-task `Taskfile*.yml` + `taskfiles/**/*.yml`;
@@ -154,8 +155,8 @@ with these KEY=value args after `--`).
 > epic/ticket/plan summary (and, when the PR already exists, its body). It exists
 > ONLY to help you interpret WHY the changed lines look the way they do — it is
 > **NOT a completeness checklist** and **NOT a requirements list to verify
-> against**. The CRITICAL SCOPE CONSTRAINT above still governs (subject to the
-> Bounded exception above): findings must target lines added, removed, or
+> against**. The changed-lines-only scope rule above still governs (subject to
+> the Bounded exception above): findings must target lines added, removed, or
 > modified in the diff, and the Intent / Background block MUST NOT expand that
 > scope. Do NOT audit whether every intent item was delivered. **Do NOT generate
 > findings for intent items not reflected in the diff** — the sole carve-out is
@@ -170,16 +171,19 @@ with these KEY=value args after `--`).
 > Intent / Background is supplied, proceed with the diff alone — this input is
 > optional.
 >
+> **Item 2 amplification.** For each modified file path, enumerate every
+> `.claude/rules/*.md` whose `paths:` glob matches the path, then verify the
+> diff satisfies each matching rule's directives. Multiple rule files can apply
+> to one path — for example, any `.py` file matches both `lang.python.md` and
+> `brownfield_ai.python.md`, which glob `**/*.py` independently. Flag any
+> matching rule whose directives are not satisfied by the diff.
+> <!-- SHARED:diff-scope end -->
+>
 > "Review this code diff against the base branch for:
 >
 > 1. Security vulnerabilities (OWASP top 10, credential leaks, injection risks)
-> 2. CLAUDE.md and coding standard violations. **For each modified file
->    path, enumerate every `.claude/rules/*.md` whose `paths:` glob
->    matches the path, then verify the diff satisfies each matching
->    rule's directives. Multiple rule files can apply to one path — for
->    example, any `.py` file matches both `lang.python.md` and
->    `brownfield_ai.python.md`, which glob `**/*.py` independently. Flag
->    any matching rule whose directives are not satisfied by the diff.**
+> 2. CLAUDE.md and coding standard violations (see the item 2 amplification
+>    below)
 > 3. Accidental file deletions or unintended modifications
 > 4. Architectural consistency with existing patterns
 > 5. Missing or degraded documentation (docstrings, type hints). Also enforce
@@ -212,6 +216,8 @@ with these KEY=value args after `--`).
 > 10. Boy Scout Rule: did touched legacy functions get upgraded to modern
 >     standards per `docs/coding_standards.md`? (e.g., added type hints,
 >     PEP-257 docstrings, replaced raw boto3 with `get_client`)
+>
+>     <!-- SHARED:diff-dimensions start -->
 > 11. Runtime infrastructure dependencies: flag code that dynamically
 >     creates Docker containers, pulls images, or depends on Docker daemon
 >     availability outside of CI/build tooling. Flag new runtime
@@ -239,9 +245,9 @@ with these KEY=value args after `--`).
 >     intentionally mandated by a cited convention (cf. item 12) is exempt.
 >     The diff shows only changed files, so apply this to duplication
 >     introduced across the PR's own files, or to added code you recognize as
->     duplicating an existing repo pattern/convention. If the diff was split
->     (Step 1.4) you hold only part of the PR — this dimension is then carried by
->     the separate whole-PR added-lines pass described there, not by the
+>     duplicating an existing repo pattern/convention. If the diff was split for
+>     size, you hold only part of the PR — this dimension is then carried by the
+>     separate whole-PR added-lines pass the Orchestrator runs, not by the
 >     per-split reviewers.
 > 14. Interpolation across the render/execute boundary (injection). Flag any
 >     value spliced into a command / query / eval string that a templating
@@ -294,7 +300,7 @@ with these KEY=value args after `--`).
 >     renamed, nor gate-narrowing; scope strictly to edits touching the bridge
 >     construct itself, and a prior "frozen/thin" invariant does not exempt it.
 >     Reading CI/gate config to establish coverage is sanctioned context (per
->     the Step 2 scope note), not an out-of-scope audit; the finding targets the
+>     the scope rules above), not an out-of-scope audit; the finding targets the
 >     in-diff file. Resolution is a `code-change` (extend the gate/glob) or a
 >     `doc-or-todo` recording an explicit "this file stays frozen/thin"
 >     invariant — never silent acceptance.
@@ -317,7 +323,7 @@ with these KEY=value args after `--`).
 >     slated for later deletion) but leaves the README sentence that points
 >     at it, merging a dangling reference into the base branch. Reading
 >     unchanged files to resolve a reference is sanctioned context (per the
->     Step 2 scope note), not an out-of-scope audit — the finding targets the
+>     scope rules above), not an out-of-scope audit — the finding targets the
 >     in-diff deletion or the in-diff added reference. Resolution is a
 >     `code-change` (remove or re-point the dangling reference, or add the
 >     missing referent) — never silent acceptance.
@@ -333,7 +339,7 @@ with these KEY=value args after `--`).
 >     miss: a comment crediting a task-level `env:` with feeding a dynamic `sh:`
 >     var (it does not — item 14). For each such claim emit an Experiment Request
 >     with a minimal replica (a throwaway Taskfile, a one-line `docker run`) that
->     isolates it; the Orchestrator MUST dispatch it (Step 3 experimentation) and
+>     isolates it; the Orchestrator MUST dispatch it in its experimentation step and
 >     reconcile the comment/fix to the observed behavior before the gate closes.
 >     "Looks right" about tool internals is not verified.
 > 18. PR-description ↔ diff consistency. Using the PR body supplied with the diff,
@@ -379,7 +385,7 @@ with these KEY=value args after `--`).
 >     substring match where two real entries share a prefix (a `test:scripts`
 >     match also selecting `test:scripts:changed`), causing over-selection.
 >     Reading the inventory (the sibling set, the referenced config) is
->     sanctioned context per the Step 2 scope note, not an out-of-scope audit;
+>     sanctioned context per the scope rules above, not an out-of-scope audit;
 >     the finding targets the in-diff matching/enumeration line.
 > 21. **Test efficacy (mutation check).** For each added or changed test,
 >     determine whether it would still pass if the implementation change under
@@ -392,6 +398,8 @@ with these KEY=value args after `--`).
 >     (case-insensitive match but case-sensitive key; trimmed compare but
 >     untrimmed store). Where a revert-and-rerun would settle it, use the
 >     Experiment Request mechanism.
+>
+>     <!-- SHARED:diff-dimensions end -->
 >
 > Approach this review with adversarial rigor — assume the code has
 > defects until you have proven otherwise. Examine ALL edge cases,

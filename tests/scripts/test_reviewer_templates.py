@@ -38,6 +38,13 @@ INVARIANTS: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer" / "_invariants
 TEMPLATES_DIR: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer"
 LINT_SCRIPT: Path = REPO_ROOT / "scripts" / "lint_reviewer_templates.py"
 CODEX_TOML: Path = REPO_ROOT / ".codex" / "config.toml"
+SKILL_PATH: Path = REPO_ROOT / ".claude" / "skills" / "diff-review" / "SKILL.md"
+DIFF_TEMPLATE: Path = TEMPLATES_DIR / "diff.md"
+
+SHARED_NAMES: tuple[str, ...] = (
+    "diff-scope",
+    "diff-dimensions",
+)
 
 TEMPLATE_NAMES: tuple[str, ...] = (
     "diff",
@@ -97,6 +104,53 @@ def _extract_subject_handling(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 # 1. Canonical invariants file present + parses.
 # ---------------------------------------------------------------------------
+
+
+def _extract_shared(text: str, name: str, *, blockquote: bool) -> str | None:
+    """Mirror of ``lint_reviewer_templates._extract_shared``.
+
+    Duplicated here intentionally, like ``_extract``, so the test does
+    not depend on the lint module's private API.
+    """
+    pattern = re.compile(
+        re.escape(f"<!-- SHARED:{name} start -->") + r"(.*?)" + re.escape(f"<!-- SHARED:{name} end -->"),
+        re.DOTALL,
+    )
+    match = pattern.search(text)
+    if match is None:
+        return None
+    body = match.group(1)
+    if blockquote:
+        body = "\n".join("" if ln == ">" else ln.removeprefix("> ") for ln in body.splitlines())
+    lines = [ln.rstrip() for ln in body.splitlines()]
+    while lines and lines[0] == "":
+        lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+def _stage_workspace(tmp_path: Path) -> Path:
+    """Stage a minimal workspace the lint script can run against.
+
+    Copies every committed reviewer template, the lint script, and the
+    diff-review ``SKILL.md`` that owns the canonical ``SHARED:`` blocks.
+    ``SKILL.md`` is required: the shared-block check is fail-closed, so a
+    workspace missing it is a lint error rather than a skipped check.
+
+    Returns the path of the staged lint script.
+    """
+    reviewer_dir = tmp_path / ".claude" / "prompts" / "reviewer"
+    reviewer_dir.mkdir(parents=True)
+    for source in TEMPLATES_DIR.iterdir():
+        shutil.copy(source, reviewer_dir / source.name)
+    skill_dir = tmp_path / ".claude" / "skills" / "diff-review"
+    skill_dir.mkdir(parents=True)
+    shutil.copy(SKILL_PATH, skill_dir / SKILL_PATH.name)
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    shutil.copy(LINT_SCRIPT, scripts_dir / LINT_SCRIPT.name)
+    return scripts_dir / LINT_SCRIPT.name
 
 
 def test_invariants_file_exists_and_parses() -> None:
@@ -216,15 +270,8 @@ def test_lint_script_detects_drift(tmp_path: Path) -> None:
     template's ``criteria`` block, then invoke the script against the
     copy (by setting ``cwd`` to the copy root).
     """
+    script_copy = _stage_workspace(tmp_path)
     reviewer_dir = tmp_path / ".claude" / "prompts" / "reviewer"
-    reviewer_dir.mkdir(parents=True)
-    for source in TEMPLATES_DIR.iterdir():
-        shutil.copy(source, reviewer_dir / source.name)
-    # Also need a scripts/ dir with the lint script for the relative path
-    # resolution (REPO_ROOT is computed from the script's parent.parent).
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    shutil.copy(LINT_SCRIPT, scripts_dir / LINT_SCRIPT.name)
 
     # Mutate diff.md's criteria block — replace one line.
     diff_path = reviewer_dir / "diff.md"
@@ -237,7 +284,6 @@ def test_lint_script_detects_drift(tmp_path: Path) -> None:
     diff_path.write_text(drifted)
     assert text != drifted, "drift mutation was a no-op — fix fixture"
 
-    script_copy = scripts_dir / LINT_SCRIPT.name
     result = subprocess.run(
         [sys.executable, str(script_copy)],
         capture_output=True,
@@ -318,19 +364,12 @@ def test_lint_script_detects_codex_toml_drift(
     templates + lint script is built and the drifted TOML is written
     only under ``tmp_path``.
     """
-    reviewer_dir = tmp_path / ".claude" / "prompts" / "reviewer"
-    reviewer_dir.mkdir(parents=True)
-    for source in TEMPLATES_DIR.iterdir():
-        shutil.copy(source, reviewer_dir / source.name)
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    shutil.copy(LINT_SCRIPT, scripts_dir / LINT_SCRIPT.name)
+    script_copy = _stage_workspace(tmp_path)
 
     toml_path = tmp_path / toml_rel_path
     toml_path.parent.mkdir(parents=True, exist_ok=True)
     toml_path.write_text(_build_drifted_toml(payload))
 
-    script_copy = scripts_dir / LINT_SCRIPT.name
     result = subprocess.run(
         [sys.executable, str(script_copy)],
         capture_output=True,
@@ -343,6 +382,99 @@ def test_lint_script_detects_codex_toml_drift(
     )
     assert toml_rel_path in result.stderr, f"expected stderr to identify the drifted TOML path {toml_rel_path!r}; got {result.stderr!r}"
     assert error_class in result.stderr, f"expected stderr to mention error class {error_class!r}; got {result.stderr!r}"
+
+
+# ---------------------------------------------------------------------------
+# 7c. Diff-only SHARED blocks stay mirrored between SKILL.md and diff.md.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", SHARED_NAMES)
+def test_shared_block_present_in_both_copies(name: str) -> None:
+    """Both the skill and the diff template carry every shared block."""
+    skill_body = _extract_shared(SKILL_PATH.read_text(), name, blockquote=True)
+    template_body = _extract_shared(DIFF_TEMPLATE.read_text(), name, blockquote=False)
+    assert skill_body is not None, f"SHARED:{name} missing from {SKILL_PATH}"
+    assert template_body is not None, f"SHARED:{name} missing from {DIFF_TEMPLATE}"
+
+
+@pytest.mark.parametrize("name", SHARED_NAMES)
+def test_shared_block_matches_after_blockquote_strip(name: str) -> None:
+    """The two copies are identical once the skill's ``> `` prefix is removed.
+
+    Bridge reviewers (codex/gemini/copilot) read only the template, while
+    Claude reviewers read only the skill. If these drift, the two families
+    review against different rubrics while the gate treats their verdicts
+    as equivalent.
+    """
+    skill_body = _extract_shared(SKILL_PATH.read_text(), name, blockquote=True)
+    template_body = _extract_shared(DIFF_TEMPLATE.read_text(), name, blockquote=False)
+    assert skill_body == template_body, f"SHARED:{name} diverged between {SKILL_PATH.name} and {DIFF_TEMPLATE.name}"
+
+
+def test_shared_dimensions_cover_items_11_through_21() -> None:
+    """The dimensions block carries every diff-only numbered item.
+
+    Guards the reason the block exists: items 1-10 live in the shared
+    ``criteria`` invariant, so 11-21 are exactly what the template would
+    otherwise be missing.
+    """
+    body = _extract_shared(DIFF_TEMPLATE.read_text(), "diff-dimensions", blockquote=False)
+    assert body is not None, "diff-dimensions block missing"
+    for item in range(11, 22):
+        assert re.search(rf"^{item}\. ", body, re.MULTILINE), f"item {item} missing from the diff-dimensions block"
+
+
+def test_lint_script_detects_shared_block_drift(tmp_path: Path) -> None:
+    """Mutating the template's shared block fails the lint.
+
+    Mutation check: without this the guard could pass vacuously (e.g. if
+    both extractions returned ``None`` and compared equal).
+    """
+    script_copy = _stage_workspace(tmp_path)
+    diff_path = tmp_path / ".claude" / "prompts" / "reviewer" / "diff.md"
+
+    text = diff_path.read_text()
+    drifted = text.replace(
+        "11. Runtime infrastructure dependencies",
+        "11. DRIFTED infrastructure dependencies",
+        1,
+    )
+    assert text != drifted, "drift mutation was a no-op — fix fixture"
+    diff_path.write_text(drifted)
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, (
+        f"expected shared-block drift detection; got exit {result.returncode}; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "diff-dimensions" in result.stderr, f"expected stderr to name the drifted shared block; got {result.stderr!r}"
+
+
+def test_lint_script_detects_missing_shared_block(tmp_path: Path) -> None:
+    """Deleting a shared marker pair from the template fails the lint."""
+    script_copy = _stage_workspace(tmp_path)
+    diff_path = tmp_path / ".claude" / "prompts" / "reviewer" / "diff.md"
+
+    text = diff_path.read_text()
+    stripped = text.replace("<!-- SHARED:diff-scope start -->", "", 1)
+    assert text != stripped, "marker removal was a no-op — fix fixture"
+    diff_path.write_text(stripped)
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, f"expected missing-block detection; got exit {result.returncode}; stderr={result.stderr!r}"
+    assert "diff-scope" in result.stderr, f"expected stderr to name the missing shared block; got {result.stderr!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -387,14 +519,8 @@ def test_lint_script_detects_new_template_without_source_edit(tmp_path: Path) ->
     directory-driven, so a new template is automatically in-scope for
     invariant-block checks.
     """
+    script_copy = _stage_workspace(tmp_path)
     reviewer_dir = tmp_path / ".claude" / "prompts" / "reviewer"
-    reviewer_dir.mkdir(parents=True)
-    # Copy ALL committed templates + _invariants.md so canonical loads.
-    for source in TEMPLATES_DIR.iterdir():
-        shutil.copy(source, reviewer_dir / source.name)
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    shutil.copy(LINT_SCRIPT, scripts_dir / LINT_SCRIPT.name)
 
     # Fabricate a new template by cloning diff.md under a new stem.
     # Because we clone an already-canonical template, all three
@@ -402,7 +528,6 @@ def test_lint_script_detects_new_template_without_source_edit(tmp_path: Path) ->
     new_template = reviewer_dir / "newtype.md"
     new_template.write_text((reviewer_dir / "diff.md").read_text())
 
-    script_copy = scripts_dir / LINT_SCRIPT.name
     result = subprocess.run(
         [sys.executable, str(script_copy)],
         capture_output=True,
@@ -427,19 +552,13 @@ def test_lint_script_ignores_underscore_prefixed_files(tmp_path: Path) -> None:
     errors or false clean exits depending on the block-extraction
     behavior. Lock the skip rule in place.
     """
+    script_copy = _stage_workspace(tmp_path)
     reviewer_dir = tmp_path / ".claude" / "prompts" / "reviewer"
-    reviewer_dir.mkdir(parents=True)
-    for source in TEMPLATES_DIR.iterdir():
-        shutil.copy(source, reviewer_dir / source.name)
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    shutil.copy(LINT_SCRIPT, scripts_dir / LINT_SCRIPT.name)
 
     # Add an underscore-prefixed non-template file that, if it were
     # discovered as a REVIEW_TYPE, would fail lint (no invariant blocks).
     (reviewer_dir / "_stray.md").write_text("not a template; should be skipped.\n")
 
-    script_copy = scripts_dir / LINT_SCRIPT.name
     result = subprocess.run(
         [sys.executable, str(script_copy)],
         capture_output=True,

@@ -10,11 +10,20 @@ Also verifies the ``.codex/config.toml`` ``[profiles.reviewer.instructions]``
 section contains zero numbered criteria — the 10-point criteria now
 live only in the committed templates.
 
+Finally, asserts the ``SHARED:`` blocks carrying the diff-only review
+dimensions are identical between ``.claude/skills/diff-review/SKILL.md``
+and ``.claude/prompts/reviewer/diff.md``. Those dimensions cannot live in
+the shared ``criteria`` invariant (they would leak into the plan, spec, and
+epic templates), so they are mirrored instead — and a mirror without a
+check drifts. The SKILL.md copy sits inside a Markdown blockquote, so its
+``> `` prefix is stripped before comparison.
+
 Exit codes:
 
-* 0 — all invariant blocks match canonical, no stale criteria in TOML.
-* 1 — one or more templates have drift, are missing an invariant
-  block, or the TOML contains numbered criteria.
+* 0 — all invariant blocks match canonical, shared blocks match, no
+  stale criteria in TOML.
+* 1 — one or more templates have drift, are missing an invariant or
+  shared block, or the TOML contains numbered criteria.
 
 Run via the task wrapper (``task run:adhoc -- scripts/lint_reviewer_templates.py``)
 or directly from CI.
@@ -90,6 +99,14 @@ INVARIANT_BLOCK_NAMES: tuple[str, ...] = (
     "adversarial-rigor",
 )
 
+#: Blocks mirrored between the diff-review skill and the diff template.
+SHARED_BLOCK_NAMES: tuple[str, ...] = (
+    "diff-scope",
+    "diff-dimensions",
+)
+SKILL_PATH: Path = REPO_ROOT / ".claude" / "skills" / "diff-review" / "SKILL.md"
+SHARED_TEMPLATE_PATH: Path = TEMPLATES_DIR / "diff.md"
+
 
 def _normalize_block(body: str) -> str:
     """Normalize a delimited block body for byte-for-byte comparison.
@@ -109,16 +126,14 @@ def _normalize_block(body: str) -> str:
     return "\n".join(stripped) + "\n"
 
 
-def _extract_block(text: str, name: str) -> str | None:
-    """Extract the body between ``<!-- INVARIANT:<name> start -->`` and
-    ``<!-- INVARIANT:<name> end -->`` delimiters.
+def _extract_raw(text: str, name: str, *, namespace: str) -> str | None:
+    """Extract the un-normalized body between a ``<!-- <namespace>:<name> ... -->`` pair.
 
-    Returns the normalized block body, or ``None`` if either delimiter
-    is missing. Returns ``None`` (not an empty string) when the block
-    is absent so callers can distinguish missing from empty.
+    Returns ``None`` (not an empty string) when either delimiter is
+    missing, so callers can distinguish absent from empty.
     """
-    start_marker = f"<!-- INVARIANT:{name} start -->"
-    end_marker = f"<!-- INVARIANT:{name} end -->"
+    start_marker = f"<!-- {namespace}:{name} start -->"
+    end_marker = f"<!-- {namespace}:{name} end -->"
     pattern = re.compile(
         re.escape(start_marker) + r"(.*?)" + re.escape(end_marker),
         re.DOTALL,
@@ -126,7 +141,45 @@ def _extract_block(text: str, name: str) -> str | None:
     match = pattern.search(text)
     if match is None:
         return None
-    return _normalize_block(match.group(1))
+    return match.group(1)
+
+
+def _strip_blockquote(body: str) -> str:
+    """Remove one level of Markdown blockquote prefix from every line.
+
+    The SKILL.md copy of each shared block lives inside the reviewer
+    prompt blockquote; the template copy does not. Stripping ``> ``
+    (and a bare ``>`` for blank lines) is what makes the two comparable.
+    """
+    lines: list[str] = []
+    for line in body.splitlines():
+        if line.startswith("> "):
+            lines.append(line[2:])
+        elif line == ">":
+            lines.append("")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _extract_block(text: str, name: str) -> str | None:
+    """Extract and normalize an ``INVARIANT:<name>`` block body."""
+    raw = _extract_raw(text, name, namespace="INVARIANT")
+    if raw is None:
+        return None
+    return _normalize_block(raw)
+
+
+def _extract_shared(text: str, name: str, *, blockquote: bool) -> str | None:
+    """Extract and normalize a ``SHARED:<name>`` block body.
+
+    :param blockquote: Strip one blockquote level before normalizing,
+        for the SKILL.md copy that carries a ``> `` prefix.
+    """
+    raw = _extract_raw(text, name, namespace="SHARED")
+    if raw is None:
+        return None
+    return _normalize_block(_strip_blockquote(raw) if blockquote else raw)
 
 
 def _load_canonical_blocks() -> dict[str, str]:
@@ -234,6 +287,36 @@ def _check_codex_toml_file(toml_path: Path) -> list[str]:
     return errors
 
 
+def _check_shared_blocks() -> list[str]:
+    """Assert each shared block matches between SKILL.md and the diff template.
+
+    Returns a list of human-readable error messages (empty on match).
+    """
+    errors: list[str] = []
+    for path in (SKILL_PATH, SHARED_TEMPLATE_PATH):
+        if not path.is_file():
+            errors.append(f"shared-block source missing: {path}")
+    if errors:
+        return errors
+    skill_text = SKILL_PATH.read_text()
+    template_text = SHARED_TEMPLATE_PATH.read_text()
+    for name in SHARED_BLOCK_NAMES:
+        expected = _extract_shared(skill_text, name, blockquote=True)
+        actual = _extract_shared(template_text, name, blockquote=False)
+        if expected is None:
+            errors.append(f"{SKILL_PATH}: missing SHARED:{name} block")
+        if actual is None:
+            errors.append(f"{SHARED_TEMPLATE_PATH}: missing SHARED:{name} block")
+        if expected is None or actual is None:
+            continue
+        if expected != actual:
+            first_diff = _first_diff_line(expected, actual)
+            errors.append(
+                f"{SHARED_TEMPLATE_PATH}: SHARED:{name} drifted from {SKILL_PATH.name} (first diff: {first_diff!r})",
+            )
+    return errors
+
+
 def _check_codex_toml() -> list[str]:
     """Assert both tracked Codex TOML files have no stale numbered criteria."""
     errors: list[str] = []
@@ -248,12 +331,15 @@ def check_reviewer_templates() -> int:
     all_errors: list[str] = []
     for template_name in TEMPLATE_NAMES:
         all_errors.extend(_check_template(template_name, canonical))
+    all_errors.extend(_check_shared_blocks())
     all_errors.extend(_check_codex_toml())
     if all_errors:
         for err in all_errors:
             print(f"lint-reviewer: {err}", file=sys.stderr)
         return 1
-    print("lint-reviewer: all invariant blocks match canonical; TOML clean.")
+    print(
+        "lint-reviewer: all invariant blocks match canonical; shared diff blocks in sync; TOML clean.",
+    )
     return 0
 
 
