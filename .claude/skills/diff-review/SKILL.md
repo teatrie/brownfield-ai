@@ -93,10 +93,14 @@ error. Do not proceed.**
    changed-file *list* is not sufficient — recognizing a duplicated block needs
    the added content, not just the filenames. Run one additional whole-PR pass —
    one *pass*, not one reviewer — scoped to items 12 and 13 over every split's
-   **added lines with their file headers retained**. Keeping the paths is mandatory, not cosmetic: item 12
-   enumerates the sibling manifests, lockfiles, and changelogs of the
-   *directories* holding modified files, so a bare concatenation of added lines
-   would make it unexecutable. Added lines only, two dimensions only, so the
+   **added lines, with the header of every changed file retained — including
+   files the diff only deletes from or renames**. Keeping the paths is
+   mandatory, not cosmetic: item 12 enumerates the sibling manifests,
+   lockfiles, and changelogs of the *directories* holding modified files, so a
+   bare concatenation of added lines would make it unexecutable, and a
+   deletion-only file — which contributes no added lines at all — would drop
+   out of scope entirely despite still placing its directory in item 12's.
+   Added lines plus all headers, two dimensions only, so the
    pass stays far below the depth and size of a full review even when the
    complete diff would not fit. Submit it to **all active reviewers** on exactly
    the terms a split gets: it must independently receive APPROVED from every one
