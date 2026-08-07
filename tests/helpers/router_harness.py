@@ -60,6 +60,21 @@ SETTINGS_FILES: tuple[str, ...] = (
 #: The directory target both the hook and settings branches produce.
 HOOKS_SUITE = "tests/hooks/"
 
+#: Helper modules under tests/helpers/ that are imported by other suites rather
+#: than exercised in place. router_harness.py and aws_env.py have no test file
+#: at all, which is why the branch routes to directories instead of deriving a
+#: name; see RouterContract.test_no_helper_filename_derivation.
+HELPER_MODULES: tuple[str, ...] = (
+    "tests/helpers/eval_utils.py",
+    "tests/helpers/runners.py",
+    "tests/helpers/router_harness.py",
+    "tests/helpers/aws_env.py",
+)
+
+#: The two directory targets a changed helper module produces. tests/ci/ is in
+#: the pair because its router contracts import helpers.router_harness.
+HELPER_SUITES = ("tests/ci/", "tests/helpers/")
+
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
 GIT_STUB = """#!/usr/bin/env bash
@@ -225,4 +240,39 @@ class RouterContract:
     def test_hook_alone_is_not_reported_as_untestable(self, route: RouteFn) -> None:
         """The original defect: a lone hook printed 'No testable scripts found'."""
         result = route(self.SCRIPT, [HOOKS[3]])
+        assert "No testable scripts found." not in result.stdout, diagnose(result)
+
+    @pytest.mark.parametrize("module", HELPER_MODULES)
+    def test_helper_module_routes_to_helpers_and_ci(self, route: RouteFn, module: str) -> None:
+        """A changed helper module routes to its own suite and to tests/ci/."""
+        result = route(self.SCRIPT, [module])
+        assert sorted(routed_targets(result)) == sorted(HELPER_SUITES), f"{module}\n{diagnose(result)}"
+
+    @pytest.mark.parametrize("module", HELPER_MODULES)
+    def test_no_helper_filename_derivation(self, route: RouteFn, module: str) -> None:
+        """No per-module test filename is derived.
+
+        Guards the reason for directory routing: two of the four modules have
+        no test file, so a derivation rule resolves them to nothing — the
+        silent un-routing this branch exists to close.
+        """
+        derived = f"tests/helpers/test_{Path(module).stem}.py"
+        result = route(self.SCRIPT, [module])
+        assert derived not in routed_targets(result), diagnose(result)
+
+    def test_many_helper_modules_collapse_to_one_pair(self, route: RouteFn) -> None:
+        """Several changed helper modules deduplicate to the same two targets."""
+        result = route(self.SCRIPT, list(HELPER_MODULES))
+        assert sorted(routed_targets(result)) == sorted(HELPER_SUITES), diagnose(result)
+
+    def test_helper_test_file_still_routes_directly(self, route: RouteFn) -> None:
+        """A changed test under tests/helpers/ is added as itself."""
+        test_file = "tests/helpers/test_eval_utils.py"
+        result = route(self.SCRIPT, [test_file])
+        assert routed_targets(result) == [test_file], diagnose(result)
+
+    def test_helper_module_alone_is_not_reported_as_untestable(self, route: RouteFn) -> None:
+        """The defect: a lone helper module selected no targets at all."""
+        result = route(self.SCRIPT, ["tests/helpers/router_harness.py"])
+        assert "No scripts or script tests changed." not in result.stdout, diagnose(result)
         assert "No testable scripts found." not in result.stdout, diagnose(result)

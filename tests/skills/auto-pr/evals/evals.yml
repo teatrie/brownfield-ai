@@ -1,0 +1,170 @@
+# Sentinel-style evals for the `auto-pr` write-path skill.
+#
+# `auto-pr` branches, commits, pushes, creates PRs and merges them. A naive
+# eval would fire those mutations at this repository for real: the sandbox is
+# created under `tmp/` inside the workspace and carries no `.git` of its own,
+# so any git command the agent runs walks up and finds the *real* repository.
+#
+# These cases therefore port the technique from
+# `tests/skills/github-search/evals/evals.yml` case `complex_search_clone_required`:
+# drive the agent through the real decision path, then have it emit a sentinel
+# line INSTEAD OF the destructive command, and assert on the sentinel.
+#
+# Two consequences worth stating plainly:
+#
+# - The observed repository state is supplied to the agent as text rather than
+#   built as a fixture. Building it for real would need a throwaway remote with
+#   open, merged and third-party PRs on it.
+# - What is under test is the decision procedure in `SKILL.md` — the part PR #20
+#   rewrote — not the git plumbing that would carry it out. These cases cannot
+#   catch a defect that lives only in a command's flags.
+#
+# `docs/pr_protocol.md` is absent from the sandbox (the harness omits `docs/`),
+# so every case must be decidable from `SKILL.md` alone and says so.
+skill_name: auto-pr
+evals:
+- case: create_path_resolves_jira_suffixed_branch
+  user_prompt: |-
+    I've finished the docs change for ACME-1234. Branch it up and open the PR.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone.
+
+    Treat the following as the already-observed state:
+
+    - The work item tracker is JIRA. The issue is ACME-1234, "clarify retry
+      semantics", and the change is a docs edit.
+    - task git:status reports uncommitted changes, current branch main.
+    - task git:fetch -- origin --prune has already run.
+    - Both ref probes exit 1 and print nothing.
+    - Existing-PR detection finds no PR at all, open or closed, for the
+      branch name you resolve.
+
+    Apply Step 2 of the skill. Emit the sentinel below INSTEAD OF running the
+    checkout, the push, or gh pr create, as the last two lines of your reply:
+
+    DECISION: <CREATE|UPDATE|SPENT|HALT> branch=<the full branch name you resolved>
+    MUTATIONS: NONE
+
+    If you did run anything that changed state, list it after MUTATIONS:
+    instead of writing NONE.
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("DECISION:")]
+    assert lines, "no DECISION sentinel line in agent output"
+    verdict = lines[-1]
+    assert "CREATE" in verdict
+    assert "_ACME-1234" in verdict, "JIRA work item must carry the ID suffix in the branch name"
+    assert "MUTATIONS: NONE" in output
+  files: []
+- case: open_pr_ours_takes_update_path_and_skips_epic_transition
+  user_prompt: |-
+    Push the latest round of fixes up.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone.
+
+    Treat the following as the already-observed state:
+
+    - The work item is Execution Ledger epic PORT-002, which is currently at
+      status in_review.
+    - task git:status reports a clean tree, current branch
+      chore/port-batch-two, with two unpushed commits.
+    - task git:fetch -- origin --prune has already run.
+    - Both ref probes for chore/port-batch-two exit 0.
+    - Existing-PR detection finds PR 42, state OPEN, head branch
+      chore/port-batch-two, and the ownership check confirms conclusively
+      that it is ours.
+
+    Apply Step 2 and Step 3 of the skill. Emit the sentinel below INSTEAD OF
+    running the push or any gh command, as the last three lines of your reply.
+    LEDGER_TRANSITION reports whether you would run
+    task ledger:status -- PORT-002 --new-status in_review this round:
+
+    DECISION: <CREATE|UPDATE|SPENT|HALT> pr=<PR number, or none>
+    LEDGER_TRANSITION: <RUN|SKIP>
+    MUTATIONS: NONE
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("DECISION:")]
+    assert lines, "no DECISION sentinel line in agent output"
+    verdict = lines[-1]
+    assert "UPDATE" in verdict
+    assert "42" in verdict
+    assert "LEDGER_TRANSITION: SKIP" in output, "re-applying in_progress -> in_review halts every update round"
+    assert "MUTATIONS: NONE" in output
+  files: []
+- case: merged_pr_leaves_branch_spent_not_creatable
+  user_prompt: |-
+    I have more changes on top of what we just shipped. Get them into a PR.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone.
+
+    Treat the following as the already-observed state:
+
+    - The work item is Execution Ledger epic PORT-002.
+    - task git:status reports uncommitted changes, current branch
+      chore/port-reconciliation.
+    - task git:fetch -- origin --prune has already run. The local ref probe
+      for chore/port-reconciliation exits 0; the remote ref probe exits 1,
+      because the branch was deleted on merge.
+    - Existing-PR detection finds PR 20 for that branch with state MERGED.
+      There is no OPEN PR.
+    - task git:log -- --oneline origin/main..HEAD lists six commits.
+
+    Apply Step 2 of the skill. Emit the sentinel below INSTEAD OF running the
+    checkout, the push, or gh pr create, as the last two lines of your reply.
+    Use SPENT when the branch must not be pushed as it stands, and name in
+    action what you would do instead:
+
+    DECISION: <CREATE|UPDATE|SPENT|HALT> action=<REBASE|NEW-BRANCH|PUSH-AS-IS|ASK>
+    MUTATIONS: NONE
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("DECISION:")]
+    assert lines, "no DECISION sentinel line in agent output"
+    verdict = lines[-1]
+    assert "SPENT" in verdict, "a merged PR leaves the branch spent; absent OPEN PR is not an ordinary CREATE"
+    assert "PUSH-AS-IS" not in verdict, "pushing a spent branch raises a PR carrying already-merged history"
+    assert "REBASE" in verdict or "NEW-BRANCH" in verdict or "ASK" in verdict
+    assert "MUTATIONS: NONE" in output
+  files: []
+- case: clean_tree_skips_stash_pair
+  user_prompt: |-
+    Switch over to the branch for this work item and push what's committed.
+  agent_prompt: |-
+    This is a simulated, read-only test environment. Run NO commands at all —
+    no git, no gh, no task, no file writes. Do not read any file under an
+    evals directory. docs/pr_protocol.md is not present in this sandbox;
+    decide from the skill file alone.
+
+    Treat the following as the already-observed state:
+
+    - task git:status reports a clean working tree — nothing modified,
+      nothing untracked.
+    - git stash list shows one pre-existing entry,
+      stash@ 0 WIP on main: unrelated experiment, left by earlier work that
+      has nothing to do with this change.
+    - You have already established that you must check out a different
+      branch, chore/port-batch-three, and the unpushed-commits check on the
+      current branch has already passed.
+
+    Apply the stash rule in Step 2 of the skill. Emit the sentinel below as
+    the last two lines of your reply. STASH: USE means you would wrap the
+    checkout in task git:run -- stash push --include-untracked and
+    task git:run -- stash pop; STASH: SKIP means you would run neither:
+
+    STASH: <USE|SKIP>
+    MUTATIONS: NONE
+  expected_output: |-
+    lines = [line for line in output.splitlines() if line.strip().startswith("STASH:")]
+    assert lines, "no STASH sentinel line in agent output"
+    verdict = lines[-1]
+    assert "SKIP" in verdict, "a pop on a clean tree applies whatever unrelated work is on the stash stack"
+    assert "USE" not in verdict
+    assert "MUTATIONS: NONE" in output
+  files: []

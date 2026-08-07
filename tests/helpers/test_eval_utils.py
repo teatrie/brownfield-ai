@@ -1,8 +1,10 @@
-"""Tests for the eval harness's environment-requirement gate."""
+"""Tests for the eval harness's environment-requirement gate and sandbox copy filter."""
+
+import os
 
 import pytest
 
-from helpers.eval_utils import _skip_if_required_env_missing
+from helpers.eval_utils import _skip_if_required_env_missing, _workspace_copy_ignore
 
 
 def test_no_requires_env_does_not_skip():
@@ -52,3 +54,40 @@ def test_reports_every_missing_variable(monkeypatch):
 
     assert "BROWNFIELD_ORG" in str(excinfo.value)
     assert "BROWNFIELD_INFRA_REPO" in str(excinfo.value)
+
+
+def test_root_evals_directory_is_not_copied_into_the_sandbox():
+    """The case definitions carry ``expected_output`` — the agent must not see them."""
+    workspace = os.path.join("tests", "skills", "auto-pr")
+
+    ignored = _workspace_copy_ignore(workspace, workspace, ["evals", "scripts", "README.md"])
+
+    assert "evals" in ignored
+    assert "scripts" not in ignored
+    assert "README.md" not in ignored
+
+
+def test_nested_evals_directory_is_copied():
+    workspace = os.path.join("tests", "skills", "auto-pr")
+    nested = os.path.join(workspace, "scripts")
+
+    assert _workspace_copy_ignore(workspace, nested, ["evals", "helper.py"]) == []
+
+
+def test_workspace_artifacts_are_ignored_at_every_depth():
+    workspace = os.path.join("tests", "skills", "auto-pr")
+    nested = os.path.join(workspace, "scripts")
+
+    assert set(_workspace_copy_ignore(workspace, workspace, ["tmp", "__pycache__", ".pytest_cache"])) == {
+        "tmp",
+        "__pycache__",
+        ".pytest_cache",
+    }
+    assert _workspace_copy_ignore(workspace, nested, ["__pycache__"]) == ["__pycache__"]
+
+
+def test_absent_names_are_not_reported_as_ignored():
+    """``copytree`` tolerates unknown names, but reporting them would mislead a reader."""
+    workspace = os.path.join("tests", "skills", "github-search")
+
+    assert _workspace_copy_ignore(workspace, workspace, ["SKILL.md"]) == []
