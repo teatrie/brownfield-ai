@@ -113,7 +113,8 @@ with these KEY=value args after `--`).
 > checking a callee's signature or type contract that the diff interacts with),
 > but do NOT audit pre-existing logic in unchanged files or issue findings
 > against them. Findings must target lines added, removed, or modified in the
-> diff — except per the Bounded exception below. Findings that target unchanged
+> diff — except per the Bounded exception below and item 18's
+> description-accuracy carve-out. Findings that target unchanged
 > files will be rejected as out of scope.
 >
 > **Bounded exception (high-risk file classes only):** for a file the diff
@@ -140,7 +141,10 @@ with these KEY=value args after `--`).
 > Bounded exception above): findings must target lines added, removed, or
 > modified in the diff, and the Intent / Background block MUST NOT expand that
 > scope. Do NOT audit whether every intent item was delivered. **Do NOT generate
-> findings for intent items not reflected in the diff.** You MAY, however, flag
+> findings for intent items not reflected in the diff** — the sole carve-out is
+> item 18's description-accuracy check, whose finding targets the PR description
+> rather than a code line and never asks for the missing change to be
+> implemented. You MAY, however, flag
 > where the diff appears to **contradict its own stated intent** — a changed line
 > that does the opposite of, or undercuts, what the Intent / Background
 > describes. This is NOT a new scope dimension; it sharpens item 4
@@ -318,7 +322,14 @@ with these KEY=value args after `--`).
 >     when the diff in fact changes those lines (or the converse: a claimed change
 >     the diff omits). The description is the durable record (item 5 relocates
 >     history INTO it), so a description that misdescribes its own diff is a
->     finding, resolved by a `doc-or-todo` correcting the description. If no PR
+>     finding, resolved by a `doc-or-todo` correcting the description. **This
+>     dimension is the one exception to the changed-lines anchor, and it is
+>     narrow:** the finding targets the PR description itself, not a code line,
+>     so the converse case (a claimed change the diff omits) is in scope despite
+>     having no line to point at. It does NOT license auditing intent
+>     completeness — the resolution is always to correct the description, never
+>     to implement the missing change; a genuinely undelivered item is the
+>     author's and the Orchestrator's concern, not this gate's. If no PR
 >     body was supplied to the review, state that this dimension could not be run.
 > 19. Fix-the-class (not the instance) + ported-code correctness. When the diff
 >     FIXES a defect, check whether the same defect class recurs, un-guarded,
