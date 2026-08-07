@@ -144,6 +144,31 @@ def _extract_raw(text: str, name: str, *, namespace: str) -> str | None:
     return match.group(1)
 
 
+def _duplicate_marker_error(
+    text: str,
+    name: str,
+    *,
+    namespace: str,
+    source: Path,
+) -> str | None:
+    """Return an error message when a marker pair occurs more than once.
+
+    Extraction stops at the first match, so a second ``start``/``end``
+    pair would carry unchecked prompt content — divergent or even
+    contradictory instructions that still lint clean. Both copies are fed
+    to reviewers verbatim, so exactly one pair per block is required.
+    """
+    for suffix in ("start", "end"):
+        marker = f"<!-- {namespace}:{name} {suffix} -->"
+        count = text.count(marker)
+        if count > 1:
+            return (
+                f"{source}: {namespace}:{name} {suffix} delimiter appears {count} times "
+                "— exactly one pair is required, else only the first block is checked"
+            )
+    return None
+
+
 def _strip_blockquote(body: str) -> str:
     """Remove one level of Markdown blockquote prefix from every line.
 
@@ -223,6 +248,10 @@ def _check_template(
         return errors
     text = path.read_text()
     for block_name, canonical_body in canonical.items():
+        duplicate = _duplicate_marker_error(text, block_name, namespace="INVARIANT", source=path)
+        if duplicate is not None:
+            errors.append(duplicate)
+            continue
         actual = _extract_block(text, block_name)
         if actual is None:
             errors.append(
@@ -301,6 +330,14 @@ def _check_shared_blocks() -> list[str]:
     skill_text = SKILL_PATH.read_text()
     template_text = SHARED_TEMPLATE_PATH.read_text()
     for name in SHARED_BLOCK_NAMES:
+        duplicates = [
+            _duplicate_marker_error(text, name, namespace="SHARED", source=source)
+            for text, source in ((skill_text, SKILL_PATH), (template_text, SHARED_TEMPLATE_PATH))
+        ]
+        found = [message for message in duplicates if message is not None]
+        if found:
+            errors.extend(found)
+            continue
         expected = _extract_shared(skill_text, name, blockquote=True)
         actual = _extract_shared(template_text, name, blockquote=False)
         if expected is None:

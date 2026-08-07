@@ -456,6 +456,52 @@ def test_lint_script_detects_shared_block_drift(tmp_path: Path) -> None:
     assert "diff-dimensions" in result.stderr, f"expected stderr to name the drifted shared block; got {result.stderr!r}"
 
 
+def test_lint_script_detects_duplicate_shared_block(tmp_path: Path) -> None:
+    """A second ``SHARED:`` marker pair fails the lint rather than being ignored.
+
+    Extraction stops at the first match, so a duplicated pair would carry
+    unchecked — potentially contradictory — prompt content past a clean lint.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    diff_path = tmp_path / ".claude" / "prompts" / "reviewer" / "diff.md"
+
+    text = diff_path.read_text()
+    diff_path.write_text(
+        f"{text}\n<!-- SHARED:diff-dimensions start -->\ncontradictory instructions\n<!-- SHARED:diff-dimensions end -->\n",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, f"expected duplicate-marker detection; got exit {result.returncode}; stderr={result.stderr!r}"
+    assert "appears 2 times" in result.stderr, f"expected stderr to report the duplicate count; got {result.stderr!r}"
+
+
+def test_lint_script_detects_duplicate_invariant_block(tmp_path: Path) -> None:
+    """The duplicate-marker guard covers INVARIANT blocks too, not just SHARED."""
+    script_copy = _stage_workspace(tmp_path)
+    plan_path = tmp_path / ".claude" / "prompts" / "reviewer" / "plan.md"
+
+    text = plan_path.read_text()
+    plan_path.write_text(
+        f"{text}\n<!-- INVARIANT:criteria start -->\ndivergent criteria\n<!-- INVARIANT:criteria end -->\n",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, f"expected duplicate-marker detection; got exit {result.returncode}; stderr={result.stderr!r}"
+    assert "appears 2 times" in result.stderr, f"expected stderr to report the duplicate count; got {result.stderr!r}"
+
+
 def test_lint_script_detects_missing_shared_block(tmp_path: Path) -> None:
     """Deleting a shared marker pair from the template fails the lint."""
     script_copy = _stage_workspace(tmp_path)
