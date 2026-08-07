@@ -533,6 +533,37 @@ def test_lint_script_detects_escaped_blockquote_in_skill(tmp_path: Path) -> None
     assert "blockquote prefix" in result.stderr, f"expected stderr to name the blockquote failure; got {result.stderr!r}"
 
 
+def test_lint_script_detects_bare_blank_line_in_skill_block(tmp_path: Path) -> None:
+    """An un-prefixed blank line inside a shared block fails the lint.
+
+    A completely empty line terminates a blockquote in CommonMark, but it
+    survives blockquote stripping identically in both copies — so the
+    parity check alone cannot see it. Blank lines inside the prompt must
+    be written as a bare ``>``.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    skill_path = tmp_path / ".claude" / "skills" / "diff-review" / "SKILL.md"
+
+    text = skill_path.read_text()
+    broken = text.replace(
+        "> 11. Runtime infrastructure dependencies",
+        "\n> 11. Runtime infrastructure dependencies",
+        1,
+    )
+    assert text != broken, "blank-line injection was a no-op — fix fixture"
+    skill_path.write_text(broken)
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, f"expected bare-blank-line detection; got exit {result.returncode}; stderr={result.stderr!r}"
+    assert "blockquote prefix" in result.stderr, f"expected stderr to name the blockquote failure; got {result.stderr!r}"
+
+
 def test_lint_script_detects_missing_shared_block(tmp_path: Path) -> None:
     """Deleting a shared marker pair from the template fails the lint."""
     script_copy = _stage_workspace(tmp_path)

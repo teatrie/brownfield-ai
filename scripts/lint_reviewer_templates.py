@@ -178,8 +178,20 @@ def _blockquote_prefix_error(body: str, name: str, *, source: Path) -> str | Non
     has ended there and the instruction is no longer delivered as part of
     the prompt. Treat that as a lint error rather than normalizing it away.
     """
-    for number, line in enumerate(body.splitlines(), start=1):
-        if not line.strip() or line.startswith("> ") or line == ">":
+    # Drop exactly the two artifact lines the capture contributes — the
+    # empty remainder of the start delimiter's own line, and the indentation
+    # preceding the end delimiter — then hold every remaining line strictly.
+    # Skipping all blank lines (or stripping all boundary newlines) would
+    # defeat the check: an empty, un-prefixed line terminates a blockquote
+    # in CommonMark, and it survives stripping identically in both copies,
+    # so the parity comparison cannot see it either.
+    lines = body.splitlines()
+    if lines and lines[0] == "":
+        lines.pop(0)
+    if lines:
+        lines.pop()
+    for number, line in enumerate(lines, start=1):
+        if line.startswith("> ") or line == ">":
             continue
         return (
             f"{source}: SHARED:{name} line {number} lost its '> ' blockquote prefix ({line!r}) — the reviewer prompt blockquote ends there"
