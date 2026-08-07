@@ -89,12 +89,14 @@ error. Do not proceed.**
    When splitting, every split must independently receive APPROVED from all active reviewers;
    one BLOCKED on any split fails the entire gate.
    **Whole-PR dimensions survive the split**: items 12 (co-located siblings) and
-   13 (cross-file duplication) cannot be answered from one split alone, so every
-   split reviewer MUST additionally receive the full changed-file list for the
-   whole PR. A reviewer MAY raise those two dimensions against a changed file
-   outside its own split on the strength of that list — such files are still
-   part of the diff under review, so this does not widen scope beyond it.
-   Without the full list, duplication introduced across two files placed in
+   13 (cross-file duplication) cannot be answered from one split alone, and a
+   changed-file *list* is not sufficient — recognizing a duplicated block needs
+   the added content, not just the filenames. Run ONE additional whole-PR pass
+   scoped to items 12 and 13 over the concatenated **added lines** of every
+   split. Added lines only, two dimensions only, so it stays far below the depth
+   and size of a full review even when the complete diff would not fit. Its
+   findings enter the round's findings ledger and block the gate like any other.
+   Without that pass, duplication introduced across two files placed in
    different splits merges unreviewed.
 
 ### Step 2: Delegate Dual-Model Review
@@ -231,8 +233,9 @@ with these KEY=value args after `--`).
 >     The diff shows only changed files, so apply this to duplication
 >     introduced across the PR's own files, or to added code you recognize as
 >     duplicating an existing repo pattern/convention. If the diff was split
->     (Step 1.4) you hold only part of the PR — use the full changed-file list
->     supplied with your split to reach files outside it.
+>     (Step 1.4) you hold only part of the PR — this dimension is then carried by
+>     the separate whole-PR added-lines pass described there, not by the
+>     per-split reviewers.
 > 14. Interpolation across the render/execute boundary (injection). Flag any
 >     value spliced into a command / query / eval string that a templating
 >     layer renders BEFORE the shell (or SQL engine) tokenizes it — e.g.
@@ -332,7 +335,13 @@ with these KEY=value args after `--`).
 >     when the diff in fact changes those lines (or the converse: a claimed change
 >     the diff omits). The description is the durable record (item 5 relocates
 >     history INTO it), so a description that misdescribes its own diff is a
->     finding, resolved by a `doc-or-todo` correcting the description. **This
+>     finding, resolved by a `doc-or-todo` correcting the description. That
+>     correction MUST be applied through §"Per-Round PR Reconciliation" in
+>     [pr_protocol.md](../../../docs/pr_protocol.md) — the procedure that actually
+>     amends an existing PR body — before the diff is re-submitted. Capturing it
+>     only as a post-gate TODO (Step 5) would leave the body unchanged, so fresh
+>     reviewers would re-raise the identical finding every round until the
+>     attempt limit. **This
 >     dimension is the one exception to the changed-lines anchor, and it is
 >     narrow:** the finding targets the PR description itself, not a code line,
 >     so the converse case (a claimed change the diff omits) is in scope despite
