@@ -193,15 +193,229 @@ Resolve the work item per
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch
 name, or ask).
 
-```bash
-task git:checkout -- main
-task git:pull
-# Execution Ledger, GitHub Issues, or none — no ID suffix:
-task git:checkout -- -b ship/<short-name> main
+**Resolve the full branch name once, then reuse that exact string** for
+the probe, the checkout, and the creation — probing an unsuffixed name
+while creating a suffixed one makes every JIRA/Linear rerun miss:
 
-# JIRA or Linear — ID suffix required:
-task git:checkout -- -b ship/<short-name>_<ID> main
+- Execution Ledger, GitHub Issues, or none → `ship/<short-name>`
+- JIRA or Linear → `ship/<short-name>_<ID>` (ID suffix required)
+
+Call the result `<branch>`. **Resume it instead of recreating it.** Test
+for it first — `git status` reports only the *current* branch and cannot
+answer this. Check the **remote** ref too: after a fresh clone, or once
+the local branch has been pruned, an open PR's branch exists only as
+`refs/remotes/origin/<branch>`.
+
+```bash
+task git:fetch -- origin --prune
+task git:run -- rev-parse --verify --quiet refs/heads/<branch>
+task git:run -- rev-parse --verify --quiet refs/remotes/origin/<branch>
 ```
+
+**`--prune` is required.** A plain fetch keeps
+`refs/remotes/origin/<branch>` after the remote branch is deleted — as it
+is on every squash-merge with `--delete-branch`. Without pruning, the
+probe reports a branch that no longer exists remotely and routes an
+ordinary CREATE run into the collision/sign-off path.
+
+Exit 0 (prints the SHA) on **either** means a branch of that name exists.
+**A matching ref does not by itself mean "resume"** — it may back a
+closed/unmerged PR, or be an unrelated older branch whose generated name
+collided, and resuming either would push stale commits into a PR they do
+not belong to. Run the existing-PR detection and ownership check in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" against `<branch>` first:
+
+**Classify only here — run no git commands yet.** Every checkout and pull
+lives in the guarded blocks further down, after the stash; running one
+now would abort on the dirty tree this skill always carries.
+
+- **OPEN PR, conclusively ours** → **RESUME**. Take the *existing-branch*
+  block below. This is the UPDATE path.
+- **No PR at all** → most likely an **interrupted prior run** of this same
+  group: `ship` creates the branch before it creates the PR, so a run cut
+  short between the two leaves exactly this state. But an absent PR does
+  not prove the branch is ours — the generated name can collide with an
+  abandoned or unrelated branch. Decide on commits, as `auto-pr` does,
+  naming the ref the probe actually found:
+  `task git:log -- --oneline origin/main..<branch>` when the **local** ref
+  exists, `origin/main..origin/<branch>` when only the **remote** one does
+  — a remote-only branch is not a valid local revision and naming it bare
+  fails with `unknown revision`. Compare against **`origin/main`**, not
+  local `main`: the probe just fetched `origin --prune`, so `origin/main`
+  is current while local `main` may lag, and against a stale base a bare
+  branch cut at the fetched tip looks like it carries commits and would
+  halt for nothing.
+  - **No commits beyond the base** → **RESET**. A bare leftover ref: take
+    the *reset* block below, then continue on the CREATE path from Step 2.
+    Do **not** halt — `ship` is a batch skill, and halting here would
+    demand manual intervention for every interrupted group.
+  - **It carries commits** — they may be this group's from the
+    interrupted run, or somebody else's. **Ask** before reusing, and halt
+    under `CI=true` per CLAUDE.md Principle 16. Committing and pushing on
+    top would graft this group onto unrelated history.
+- **Closed/merged PR, or an OPEN PR not conclusively ours** → do **NOT**
+  silently resume or create over it. Stop and ask whether to reuse the
+  branch, pick another name, or branch fresh from the base; under
+  `CI=true`, halt per CLAUDE.md Principle 16.
+- **Both probes failed** → **CREATE**. The branch is genuinely new: take
+  the *new-branch* block below.
+
+Skipping the remote probe creates an unrelated branch from `main`, and
+the later push is then rejected as non-fast-forward — so the UPDATE path
+cannot resume. `checkout -b` on an
+existing branch fails with `fatal: A branch named '...' already exists`
+and aborts the run **before** Step 2a's existing-PR detection, making the
+UPDATE path unreachable.
+
+**Run exactly one of the three blocks below — never more.** They are
+alternatives, not a sequence: following the existing-branch checkout with
+the new-branch block ends in `checkout -b <branch> origin/main`, which
+fails because the branch already exists.
+
+**Unpushed commits block the switch.** The stash below moves the dirty
+tree but leaves committed work on the branch you leave, so switching would
+publish a group without commits it should carry. What counts as
+"unpushed" is *absent from a remote*, never merely absent from `main` —
+that is every unmerged branch. Before either checkout, establish it in
+this order:
+
+1. **Upstream configured** — `task git:run -- rev-parse --abbrev-ref
+   @{upstream}` resolves. Definitive: compare
+   `task git:log -- --oneline @{upstream}..HEAD`.
+2. **No upstream, but `refs/remotes/origin/<current-branch>` exists** —
+   compare against that ref instead. It is where a push would have landed.
+3. **Neither ref exists** — ask GitHub about the **current** branch:
+   `task gh:pr -- view <current-branch> --json state`. A **MERGED** (or
+   CLOSED) PR means the work is already accounted for and the branch is
+   spent, so leaving it loses nothing. This is the ordinary state between
+   `ship` groups: the previous PR merged with `--delete-branch`, and the
+   prune that follows removes the remote ref so neither probe resolves.
+   Halting here would deadlock a sequential run after its first merge.
+
+   **Do not test this by ancestry.** A squash merge lands one new commit
+   with a different identity, so the original feature commits never become
+   ancestors of `main` and `origin/main..HEAD` stays non-empty on exactly
+   the branch you just merged. An empty range is still *sufficient* proof
+   of safety when it happens — it just is not the common case here.
+4. **Neither ref, and no merged/closed PR** — now you genuinely cannot tell
+   whether those commits are published (a non-empty `origin/main..HEAD`
+   reports every feature commit, pushed or not). Do not guess in either
+   direction: **ask.**
+
+If unpushed commits exist and the target is a different branch, **halt and
+ask** which to publish. Under `CI=true`, halt per CLAUDE.md Principle 16.
+
+**Stash around whichever checkout you run.** `ship` holds every remaining
+group uncommitted, and *any* branch switch — resuming an existing branch
+or cutting a new one from `origin/main` — aborts with
+`Your local changes ... would be overwritten by checkout` when the target
+differs in a modified path. That is likely on both paths: a prior PR's
+branch holds an older version of this group's files, and `origin/main` may
+carry someone else's changes to them. The `--autostash` on the pull does
+**not** cover this; it runs afterwards.
+
+```bash
+# DIRTY TREE ONLY — skip both stash lines when task git:status is clean.
+task git:run -- stash push --include-untracked
+# ... the checkout from whichever block below, then its sync if any ...
+# DIRTY TREE ONLY — see the warning below before running this.
+task git:run -- stash pop
+```
+
+Run the stash pair **only when `task git:status` reports a dirty tree.**
+This is a data-safety rule, not a tidiness one. `stash push` on a clean
+tree is a no-op (`No local changes to save`), but the paired `pop` is
+**not** harmless: it pops whatever is on top of the stack. It only errors
+`No stash entries found` when the stack is empty, so on a repo holding any
+pre-existing stash it would silently apply that unrelated work onto the
+group. Decide with `task git:status`, never by running the pop and seeing
+what happens.
+
+**Pop last — after the checkout *and* any sync.** Popping before the pull
+would only force the rebase to autostash the same changes again; popping
+onto the final tree is a single restore.
+
+**Handle a conflicting pop, do not push through it.** On the existing-branch
+path the resumed branch may already hold an earlier version of this group's
+files, so the pop can conflict. `git stash pop` **keeps the stash entry**
+when it conflicts, so nothing is lost. Stop there: report the conflicting
+paths and let the user reconcile them, rather than staging a half-merged
+tree. Under `CI=true`, halt and checkpoint per CLAUDE.md Principle 16. Do
+**not** `stash drop` to clear the conflict.
+
+**RESUME** — existing branch (rerun / UPDATE path); check out, do not
+create:
+
+```bash
+task git:checkout -- <branch>
+```
+
+This also creates the local tracking branch when only the remote ref is
+present.
+
+Then sync **only if the remote ref exists** (the probe above already told
+you), so the later push is not rejected as non-fast-forward:
+
+```bash
+task git:pull -- --rebase --autostash origin <branch>
+```
+
+Name the remote and branch explicitly — upstream tracking may be absent
+even when the remote ref exists, and a bare `git pull` then fails with
+`no tracking information`. **`--rebase` is deliberate**: the UPDATE path
+runs with local unpushed commits, so a remote that also advanced leaves
+the branches diverged, and the default merge would both open `$EDITOR`
+for the merge message and litter the PR with a merge commit.
+**`--autostash` is a fallback, not the main mechanism.** By this point the
+stash above already holds the group files, so the tree is clean and the
+flag is usually a no-op. It earns its place on the paths where no stash
+was taken — a tree that was clean at checkout but has since been dirtied
+— where a rebase would otherwise refuse to start with `cannot pull with
+rebase: You have unstaged changes`.
+
+Skip the pull entirely when the branch is local-only — the
+interrupted-run case, where the prior run stopped before its first push.
+There is nothing on the remote to pull from, and halting here would strand
+the batch this path exists to resume. Go straight to its initial push
+instead.
+
+**RESET** — bare leftover ref (exists, but carries nothing beyond the
+base); point it at the fetched base rather than reusing whatever base it
+was cut from:
+
+```bash
+task git:checkout -- -B <branch> origin/main
+```
+
+`-B` resets an existing branch, so it must not be used as a general
+substitute for `-b`. It is safe **only** in this outcome, which is defined
+by the branch having no commits beyond the base — there is nothing to
+discard. Do not take the new-branch block here: its `checkout -b` would
+abort with `a branch named '...' already exists`.
+
+**CREATE** — new branch; base it on an updated `main`, **without checking
+`main` out**:
+
+```bash
+task git:fetch -- origin --prune
+task git:checkout -- -b <branch> origin/main
+```
+
+Fetch **`origin --prune`**, not `origin main`. A bare `git fetch origin
+<ref>` updates only `FETCH_HEAD`, leaving `refs/remotes/origin/main`
+stale, so the new branch would silently miss upstream commits — the same
+trap [ci.github-actions.md](../../rules/ci.github-actions.md) §5 documents
+for changed-file diffs. This is the same fetch the branch probe above
+already runs, so in practice it is a no-op repeat rather than a second
+round trip.
+
+`ship` runs with every remaining group still uncommitted in the working
+tree. Checking `main` out first would carry that tree across, and the
+follow-up pull would hard-abort with `Your local changes to the following
+files would be overwritten by merge` the moment a remote change overlaps
+one of those files. Branching straight off the freshly fetched
+`origin/main` gets the same base without ever moving to `main`.
 
 Use the prefix `ship/` for all branches (e.g.,
 `ship/media-schemas_ACME-1234`).
@@ -212,7 +426,15 @@ Stage **only** the files belonging to this PR group. Use `task git:add -- <file>
 
 ### Step 2a: Code Diff Review (MANDATORY GATE)
 
-Before pushing, invoke the
+**First, run the existing-PR detection and its ownership check** in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" — that section is the single canonical home of this
+procedure; do NOT copy it here. You need the CREATE/UPDATE answer now
+because Step 3 branches on it; the per-round procedure itself runs
+**after** the push, not here. If ownership cannot be positively
+established, halt per that section rather than reconciling.
+
+Then, on either path, invoke the
 [diff-review](../diff-review/SKILL.md) skill scoped to the files in this PR's
 commit group. Pass the **active ledger epic** as `epic_id`, resolved via
 `execution-ledger resume` independently of the Work Item reference — a group
@@ -226,11 +448,39 @@ diff-review gate returns APPROVED.
 
 ### Step 3: Push & Create PR
 
+**Re-run the detection and ownership check FIRST — before the push.**
+Step 2a's answer is provisional and the pre-push confirmation may have
+paused indefinitely; per the revalidation rule in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation", act only on a fresh answer. Order it **ahead of**
+`task git:push` because the push is itself a remote mutation: if a
+third-party PR was opened on this branch during the pause, pushing adds
+your commits to *their* PR before any guard has run.
+
+Halt on **either** of two outcomes: an OPEN PR whose ownership is not
+conclusive (pushing would touch someone else's PR), or a PR that was open
+at Step 2a and has since **closed or merged** — that branch is now spent,
+and pushing would raise a follow-up PR carrying already-merged history.
+The canonical rule is in that section; do not collapse the two.
+
+**Only "no PR has ever existed for this branch" is the ordinary CREATE
+case**: nothing to own, nothing to halt on, so push and continue below.
+
 ```bash
 task git:push
 ```
 
-Follow the procedures in
+**UPDATE path**: if the PR is still OPEN and ours, do **NOT** create a
+second one. Instead run the **per-round procedure** in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" now — the push above has just landed this group's
+commits, which is exactly when its description sync must run — then
+**skip items 1–5 below entirely and go straight to Step 3a.** Item 5 is
+creation-only: the `in_progress` → `in_review` transition would be
+re-applied to an epic already in `in_review`, which the state machine
+rejects, halting every subsequent update round.
+
+**CREATE path** (no OPEN PR): follow the procedures in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) for:
 
 1. **Template Detection** — locate and use PR template if present.
@@ -265,6 +515,14 @@ second comment. Each is conditional — skip whichever is not available
 in the execution context. Ad-hoc PRs without plan context skip this
 step entirely.
 
+**On the UPDATE path, edit in place rather than posting.** Each of these
+comments carries a stable `pr-lifecycle:` marker on line 1; per
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" step 4, resolve the existing comment bearing the marker
+and PATCH it, so exactly one of each marker exists per PR. The marker is
+skill-agnostic by design: a PR that alternates between `ship` and
+`auto-pr` across rounds still resolves to one comment per type.
+
 If the diff-review step (invoked during the Final QA Phase) returned a
 TODO summary, follow the **Captured TODOs** procedure in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) to append the
@@ -275,7 +533,7 @@ TODOs were captured.
 
 Save each PR's URL and number for the final summary.
 
-**Ledger Checkpoint:** *(Applies only when an active ledger epic was resolved. For an ad-hoc group with no epic, skip every ledger operation in this step — checkpoint, `ledger:status`, and `ledger:set-prs` alike. Do not invent an epic and do not pass an empty ID, which fails after the PRs already exist.)* After each PR is created, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, Work Item reference, and merge order position. After each PR is merged, checkpoint a `pr_merged` artifact with the merge SHA and PR number.
+**Ledger Checkpoint:** *(Applies only when an active ledger epic was resolved. For an ad-hoc group with no epic, skip every ledger operation in this step — checkpoint, `ledger:status`, and `ledger:set-prs` alike. Do not invent an epic and do not pass an empty ID, which fails after the PRs already exist.)* After each PR is created, checkpoint a `pr_created` artifact to the Execution Ledger with the PR URL, branch name, Work Item reference, and merge order position. **`pr_created` is CREATE-only** — on the UPDATE path (Step 2a's detection found an OPEN PR) no PR was created this round, so skip it rather than emitting a duplicate creation artifact for a PR that already has one. After each PR is merged, checkpoint a `pr_merged` artifact with the merge SHA and PR number; that one is unconditional, since a merge happens exactly once regardless of path.
 
 Follow the **CI Wait & Merge** procedure in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md). Ask the user

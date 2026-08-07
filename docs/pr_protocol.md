@@ -366,10 +366,21 @@ Do NOT:
 **If template exists:** Read the template content, fill in sections
 with details of the changes, and mark relevant checkboxes (`[x]`).
 
+**Ownership marker (mandatory, both paths).** Line 1 of every PR body we
+create is the hidden marker `<!-- pr-lifecycle:pr-body -->`, ahead of any
+template content. It is the **unconditional, workflow-specific** proof of
+authorship the §"Per-Round PR Reconciliation" ownership check relies on:
+the ledger artifact is skipped for ad-hoc runs and the execution comments
+are conditional, so neither is guaranteed to exist, while the
+`Co-authored-by:` trailer is generic enough that a human's AI-assisted PR
+carries it too. Without this marker a later round cannot prove the PR is
+ours and stalls for sign-off. Preserve it through every description sync.
+
 **If no template exists:** Use this standard format. Bullet-first per
 **Writing Style (Mandatory)** above:
 
 ```markdown
+<!-- pr-lifecycle:pr-body -->
 ## Summary
 
 - **<key change>** — <what changed and why, one line>
@@ -468,6 +479,39 @@ verify:
 review explicitly reports GREEN.
 
 ## PR Execution Comments
+
+**Post-or-PATCH (applies to all three comments below).** Each carries a
+stable `pr-lifecycle:` marker on line 1. Before posting any of them,
+resolve whether a comment bearing that marker already exists on the PR:
+
+```bash
+task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments \
+  --jq '.[] | {id, body}'
+```
+
+If one does, **PATCH it in place** per §"Per-Round PR Reconciliation"
+step 4 instead of posting; the `task gh:pr -- comment` invocations shown
+below are the **first-post** form only.
+
+**`--paginate` is load-bearing, and it needs `--jq` to be usable.** The
+endpoint returns 30 comments per page by default. A long-running PR —
+precisely the multi-round case this procedure exists for — can carry the
+marked comment on a later page; an unpaginated lookup would conclude no
+marker exists and post a duplicate, defeating the invariant.
+
+`--paginate` alone emits **each page as a separate JSON array**, which is
+not valid JSON once concatenated. `--jq '.[] | …'` applies per page and
+yields a **flat stream of one object per comment**, which is what you
+want. Do **not** reach for `--slurp` here: it wraps the *pages* in an
+outer array, giving an array-of-arrays, and `gh` rejects it outright when
+combined with `--jq` (`the --slurp option is not supported with --jq`).
+
+This rule lives here, at the point of posting, because it cannot be
+delegated to the pre-push reconciliation pass: all three comments are
+written **after** that pass runs, and the CI Gate Resolution Log is
+written later still — after CI completes. Without post-or-PATCH, every
+update round would append another copy and defeat the
+exactly-one-per-marker invariant.
 
 ### First Comment: Executive Summary
 
@@ -581,7 +625,13 @@ Skip this subsection if no TODOs were captured during the diff-review.
 
 After all CI checks pass GREEN (before the merge decision), post a
 follow-up comment with the CI resolution history. This comment is
-always posted — even for first-run clean passes.
+always written — even for first-run clean passes.
+
+**Post-or-PATCH applies here too, and matters most.** This comment is
+written after CI completes, which is the furthest point from the
+pre-push reconciliation pass, so nothing upstream can dedupe it. On any
+round where a `pr-lifecycle:ci-resolution-log` comment already exists,
+PATCH it rather than posting a second one.
 
 Write to `tmp/<branch-short-name>/pr_ci_log.md`, then:
 
@@ -650,6 +700,347 @@ Details Convention** above:
 Skip this subsection if no new inline markers were found across all CI
 fix cycles.
 
+## Per-Round PR Reconciliation
+
+This section is the **single canonical home** of the existing-PR UPDATE
+path and its per-round reconciliation procedure. Both `auto-pr` and
+`ship` INVOKE it by reference — neither copies it.
+
+### Entry condition — existing-PR detection
+
+Before the PR step (`auto-pr` Step 3 / `ship` Phase 2 Step 3, and before
+the round's Code Diff Review Gate), detect whether an open PR already
+exists for the current branch:
+
+```bash
+task gh:pr -- view <branch> --json number,url,title,body,state
+```
+
+**Pass the branch explicitly, and pass the FULL name.** `<branch>` is the
+complete head ref the calling skill resolved — prefix and any `_<ID>`
+suffix included, e.g. `ship/media-schemas_ACME-1234` — **not** the
+`<branch-short-name>` used for `tmp/` artifact directories elsewhere in
+this document. A short name does not identify the head ref, so the lookup
+would report no PR and route to CREATE while an open PR exists, producing
+a duplicate-creation attempt instead of reconciliation. Omitting the
+argument entirely is worse still: `gh` then resolves the implicitly
+checked-out branch, wrong or empty under detached HEAD or headless.
+
+`gh pr view <branch>` resolves the branch's **most-recent** PR
+**including merged/closed** ones, so the `state` field is load-bearing:
+the UPDATE path is gated on an **OPEN** PR only.
+
+Three outcomes, not two — a non-`OPEN` state is **not** the same as no PR:
+
+- **No PR at all** — `gh` exits non-zero reporting *no pull requests found*
+  for the branch → **CREATE path**: proceed with **Create PR** as normal
+  (first-round PR generation). No reconciliation runs.
+
+  **Read the failure, do not just read the exit code.** Authentication,
+  network, rate-limit and other API errors also exit non-zero with stderr.
+  Treating those as "no PR" would skip the ownership guard entirely and let
+  the run push to — or duplicate — an existing third-party PR. Only the
+  explicit not-found response selects CREATE; **every other failure halts**
+  so the state can be established rather than assumed.
+- **A merged or closed PR** (a PR is returned with a non-`OPEN` `state`) →
+  the branch is **spent**. If it was squash-merged, its commits are already
+  in the base, so creating from it would open a follow-up PR carrying
+  already-merged history, based behind the current base. **Halt** and
+  return to branch selection: rebase the work onto the fresh base or move
+  it to a new branch. Never treat this as a first-round create.
+- **An OPEN PR already exists** (a PR is returned AND `state == "OPEN"`)
+  → check ownership below, then take the **UPDATE path**: do NOT create a
+  second PR. Run the **per-round procedure** below each round, then
+  UPDATE (edit) the existing PR rather than re-creating it.
+
+**Ownership check — `state` alone is not sufficient.** An OPEN PR on this
+branch may have been opened by a human or another tool. Reconciliation
+overwrites the description and mutates `pr-lifecycle:` comments, so
+entering the UPDATE path on a PR we do not own would breach the
+third-party rule in [CLAUDE.md](../CLAUDE.md) §"Tool Chain & PR
+Protocol", which requires explicit sign-off and forbids the
+`pr-lifecycle:` namespace on such PRs. As with the comment audit,
+**author login is not a valid discriminator** (agent PRs are opened under
+the operator's `gh` token). Evidence is **tiered**:
+
+- **Conclusive — proceed to UPDATE.** Any one of: the
+  `<!-- pr-lifecycle:pr-body -->` marker on line 1 of the PR body, a
+  `pr_created` ledger artifact for this PR number, or an existing
+  `pr-lifecycle:` marker on one of its comments. All three are produced
+  only by this workflow. The **body marker is the one that always
+  exists** — §"Generate PR Body" mandates it on every PR we create,
+  whereas the ledger artifact is skipped for ad-hoc runs and the
+  execution comments are conditional, so a run that stopped right after
+  creation has only the body marker to prove itself by.
+- **Suggestive, not sufficient — ask.** The agent `Co-authored-by:`
+  trailer alone. §"Agent Identity & Co-authored-by Trailer" mandates it
+  on every PR body we create, but it is a **generic** AI trailer: a
+  human-authored PR written with the same assistant carries an identical
+  line. It cannot separate "this workflow's PR" from "someone else's
+  AI-assisted PR", so it may not authorize mutation by itself.
+- **Nothing** — treat as third-party.
+
+On anything short of conclusive, **fail SAFE**: do not reconcile, do not
+edit the body. Present the PR to the user and ask whether it is ours;
+under `CI=true` do not ask — halt and checkpoint
+`verdict: blocked-needs-signoff` per CLAUDE.md Principle 16.
+
+This is deliberately biased toward stopping. A stall costs one question;
+a wrong UPDATE silently rewrites someone else's PR description.
+
+Both `auto-pr` and `ship` perform this detection at their PR step and
+share this one procedure.
+
+**Re-run the check immediately before acting on it — and before the
+push.** The first lookup happens before the diff-review gate and before
+the pre-push confirmation, which can pause indefinitely on a human. Treat
+that result as *provisional*: it only tells the skill whether to expect
+UPDATE work. Repeat the state and ownership lookup **immediately before
+`task git:push`**, and act on that fresh answer.
+
+Order it ahead of the push, not after. The push is itself a remote
+mutation: if a third-party PR was opened on this branch during the pause,
+pushing appends your commits to *their* PR before any ownership guard has
+run. Revalidating afterwards is too late. A PR opened during the pause
+must not receive a duplicate.
+
+**A PR that closed or merged during the pause is not a CREATE.** Separate
+"no PR has ever existed for this branch" from "the PR we detected is now
+closed or merged". The second means the branch is **spent** — if it was
+squash-merged, its commits are already in the base — so pushing more
+commits to it would raise a follow-up PR carrying the merged history,
+based behind the current base. **Halt** there: return to branch selection
+so the work is rebased onto the fresh base or moved to a new branch. Do
+not treat it as a first-round create.
+
+### Per-round procedure (UPDATE path)
+
+Run these steps **in order** each round the PR is revised.
+
+**1. Description sync (mandatory — runs immediately AFTER the round's
+`task git:push`, before the PR Auto-Review gate).** Re-read the current
+PR body (`task gh:pr -- view <number> --json body`), patch it so it
+matches the current diff (Summary bullets, `## Impact`, the
+`**Work Item**` line, folded change-history per the **Collapsible
+Details Convention**), and push the update:
+
+```bash
+task gh:pr -- edit <number> --body-file tmp/<branch-short-name>/pr_body.md
+```
+
+**Merge; do not blindly regenerate.** This edit replaces the **whole**
+body, so anything a human added through the GitHub UI — review context, a
+checklist, a deployment note — is erased unless you carry it forward.
+That is why step 1 re-reads the current body first: diff your regenerated
+sections against it, update only what the diff changed, and **preserve
+every section you did not author**. Silently dropping a reviewer's note is
+the same class of harm as editing their comment.
+
+**Retain the `<!-- pr-lifecycle:pr-body -->` marker on line 1 and the
+`Co-authored-by:` trailer verbatim.** This edit replaces the whole body,
+and the marker is the ownership anchor the entry condition depends on.
+Dropping it risks the *next* round failing the ownership check and
+falling through to the sign-off path — stalling the loop on a PR we do in
+fact own. The other two conclusive signals may cover for it, but neither
+is guaranteed: the ledger artifact is skipped for ad-hoc runs and the
+comment markers are conditional, so the body marker is the only one
+always present. The `## Impact` section and the `**Work Item**` line must
+survive the rewrite for the same reason the auto-review gate checks them.
+
+This enforces PR-description↔diff consistency. **Order it after the
+push, never before.** Editing the body while the round's commits are
+still local publishes a description of a diff GitHub is not yet showing,
+and the pre-push user-confirmation gate can hold that mismatch open
+indefinitely — the opposite of the consistency this step exists for.
+
+**It does not currently feed the diff-review gate.** The reviewer prompt
+in [diff-review](../.claude/skills/diff-review/SKILL.md) declares the
+diff the **SOLE artifact under review**; this repo has no intent-input
+channel, so the synced body reaches humans and the merge record, not the
+reviewers. Wiring the body in as intent input belongs with the pending
+diff-review dimension expansion — do not assume it already happens.
+
+**Re-sync after every subsequent push, through merge.** One pass makes
+the body current *at that moment*, not *at merge*. Every later push
+re-opens the gap, and the UPDATE path skips body generation at the PR
+step, so this sync is the only place the description↔diff invariant is
+ever re-established. Run it again after **each** of:
+
+- **diff-review resolution** — a `code-change` finding mutates the diff
+  after this step ran; re-sync once the gate returns APPROVE.
+- **a CI-fix push** — CI Failure Handling delegates a fix, pushes, and
+  restarts CI without re-entering this procedure; a fix that changes the
+  implementation otherwise ships with a body describing the pre-fix diff.
+- **a rebase push** — a rebase onto the base branch can change the
+  effective diff the PR presents.
+
+The invariant is checked at merge, not at first sync: if the last thing
+pushed is not described by the body, this step has not been satisfied.
+
+**2. Comment audit.** Enumerate the **AGENT-AUTHORED** comments on the
+PR and classify each. Use the **paginated REST endpoint**, not
+`gh pr view --json comments` — the latter returns a bounded GraphQL
+connection, so on a long-running PR it silently omits older comments and
+the duplicate markers this audit exists to find:
+
+```bash
+task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments \
+  --jq '.[] | {id, body}'
+```
+
+A comment counts as **AGENT-AUTHORED for reconciliation purposes ONLY IF**
+it bears a signature a human comment would not carry — specifically
+either:
+
+- a `pr-lifecycle:` hidden marker (`<!-- pr-lifecycle:… -->` on the first
+  line), or
+- a comment id this session recorded when it posted the comment.
+
+**The `Co-authored-by:` trailer is NOT a valid discriminator here**, for
+the same reason it is only suggestive in the ownership check above: it is
+a generic AI trailer, so a human's AI-assisted comment carries an
+identical line. Treating it as proof would let reconciliation supersede
+or edit a human comment — exactly what the hard guardrail below forbids.
+
+Author **login MUST NOT** be used either: agent comments are posted under
+the operator's `gh` auth token, so an agent-posted comment and a human
+comment written by that same operator share one GitHub author login —
+author identity is NOT reliably determinable from metadata.
+
+Any comment lacking a marker or a session-recorded id is treated as HUMAN
+(out of scope for edit / delete — see the guardrail below). For the
+comments that pass this test, classify each:
+
+- **Current** — still accurate for the present diff; leave as-is (or
+  edit-in-place per the marker rule in step 4).
+- **Superseded** — a later round replaced its content.
+- **Stale** — no longer applicable to the current diff.
+
+**3. Delete-vs-supersede policy.** DEFAULT to
+**supersede-with-banner** — preserve the audit trail (consistent with
+never-silent-dismissal). Fold the superseded/stale body into a
+collapsible `<details>` block per the **Collapsible Details Convention**
+above — **include its mandatory blank lines** (after `</summary>`, before
+`</details>`):
+
+```markdown
+<details>
+<summary>⚠️ Superseded — see &lt;link&gt;</summary>
+
+<old comment body, with any pr-lifecycle marker neutralized>
+
+</details>
+```
+
+**Neutralize the old marker when you supersede.** If the superseded body
+still carries its `<!-- pr-lifecycle:… -->` line, the PR keeps two
+comments matching that marker and the next round's lookup can resolve —
+and PATCH — the superseded copy. Rewrite the marker in the retained body
+to its inert form, `<!-- superseded:pr-lifecycle:<suffix> -->`, which
+preserves the audit breadcrumb while no longer matching a lookup. This
+applies to every supersede, and is what actually delivers the
+one-live-comment-per-marker steady state.
+
+Supersede-with-banner MUST operate **ONLY** on comments the step-2 audit
+positively identified as agent-authored — that is, carrying a
+`pr-lifecycle:` marker, or posted by the agent **this session** and
+tracked by comment id. A generic `Co-authored-by:` trailer does **not**
+qualify (step 2), since a human's AI-assisted comment carries the same
+line. If a comment cannot be positively identified as agent-authored, it
+is treated as HUMAN and left untouched (reply-and-link only per the
+guardrail) — fail **SAFE** toward "human, do not edit." No author-login
+inference is ever load-bearing on this mutation path.
+
+**Delete ONLY** pure same-round duplicates or noise the agent itself just
+posted **this round** (e.g. a double-posted comment from a retried tool
+call). NEVER delete anything from a prior round, and NEVER a human
+comment (see the guardrail below).
+
+**4. Recurring structured comments — edit-in-place on the hidden
+marker.** The three structured PR-execution comments each carry a
+stable, **skill-AGNOSTIC** hidden identity marker on the first line of
+the comment body:
+
+| Comment | Hidden marker |
+|---------|---------------|
+| Executive Summary | `<!-- pr-lifecycle:executive-summary -->` |
+| QA Diff-Review Resolution Log | `<!-- pr-lifecycle:qa-resolution-log -->` |
+| CI Gate Resolution Log | `<!-- pr-lifecycle:ci-resolution-log -->` |
+
+Third-party **Review Findings** comments are deliberately absent from
+this table: they carry the `pr-review:` prefix, live on PRs we do not
+own, and are **out of reconciliation scope entirely** — never edited,
+superseded, or deleted. See
+[pr.artifacts.md](../.claude/rules/pr.artifacts.md) §"Third-Party PRs".
+
+The prefix is `pr-lifecycle:` — deliberately NOT `auto-pr:` / `ship:` —
+so a PR that alternates between `auto-pr` and `ship` across rounds still
+resolves to exactly ONE identity per comment-type. Each round,
+reconciliation **dedupes on the marker across BOTH callers**: resolve the
+existing comment carrying the marker (from the step-2 audit) and **edit
+it in place** rather than posting a new one, so exactly ONE of each
+marker exists per PR (no stacking):
+
+```bash
+task gh:api -- --method PATCH \
+  /repos/{owner}/{repo}/issues/comments/<id> \
+  -F body=@tmp/<branch-short-name>/<comment>.md
+```
+
+Here `<id>` is the **numeric REST comment id** the PATCH endpoint
+requires: `task gh:pr -- view <number> --json comments` yields
+GraphQL-shaped comment objects with a `url` but no bare numeric id, so
+take `<id>` from the audited comment's `url` fragment
+`#issuecomment-<id>` (or enumerate the comments via
+`task gh:api -- --paginate /repos/{owner}/{repo}/issues/<number>/comments \
+  --jq '.[] | {id, body}'`,
+whose REST objects carry a numeric `id` directly — keep `--paginate`, see
+§"PR Execution Comments"). Only if no comment with the marker exists yet
+does the skill post a fresh one. Reserve
+supersede-with-banner (step 3) for genuinely one-off comments a later
+round obsoletes; in the steady state the three marked comments are
+edited in place, never superseded.
+
+**Collapsing pre-existing duplicates.** A PR opened before this procedure
+existed — or one whose earlier rounds posted rather than edited — can
+already carry **several** comments bearing the same marker. Edit-in-place
+alone cannot reach "exactly one per marker" there, so on the first
+reconciliation round that finds duplicates:
+
+- **Keep the most recent** comment carrying the marker; that is the one
+  edited in place from this round on.
+- **Supersede-with-banner the older duplicates** per step 3, linking to
+  the kept comment, and **neutralize their markers** to
+  `<!-- superseded:pr-lifecycle:<suffix> -->` as that step requires —
+  without which the duplicates keep matching and nothing is collapsed.
+  This is the one sanctioned exception to "the three marked comments are
+  never superseded" — that rule assumes the steady state of exactly one.
+- **Do not delete them.** The step-3 prohibition on deleting prior-round
+  comments is unconditional; collapsing duplicates preserves the audit
+  trail rather than erasing it.
+- The **HARD GUARDRAIL** below still applies: only comments the step-2
+  audit positively identified as agent-authored may be touched.
+
+Once collapsed, subsequent rounds find exactly one comment per marker and
+take the plain edit-in-place path.
+
+**⚠️ HARD GUARDRAIL — NEVER touch human comments.** Reconciliation
+operates **ONLY** on AGENT-AUTHORED comments. It MUST NEVER delete or
+edit a HUMAN comment. To respond to a human comment, **reply-and-link
+only** (post a new reply that references it); for inline review threads,
+use GitHub's native **"Resolve conversation"** control — never edit or
+delete the human's text. The comment audit (step 2) enumerates
+agent-authored comments exclusively; any comment not authored by the
+agent identity is out of scope for delete / supersede / edit. Because
+agent and human comments can share one author login under the operator's
+`gh` auth token, authorship MUST be established by the step-2
+discriminator — a `pr-lifecycle:` marker or a session-recorded comment id
+— never by author login, and never by the generic `Co-authored-by:`
+trailer, which a human's AI-assisted comment carries identically. When
+agent-vs-human authorship is **ambiguous** — no marker, no recorded id,
+shared operator login — reconciliation MUST default to treating the
+comment as **HUMAN** and never edit or delete it.
+
 ## CI Wait & Merge
 
 ### Branch Freshness Check (Mandatory)
@@ -697,6 +1088,12 @@ rebased before CI results can be trusted.
 
    Use `--force-with-lease` (not `--force`) to guard against
    concurrent pushes to the same branch.
+
+   **Then re-sync the PR description** per §"Per-Round PR
+   Reconciliation" step 1. A rebase changes the effective diff the PR
+   presents, so the body written before it is now stale, and nothing
+   later in this procedure would refresh it — the PR would reach merge
+   describing the pre-rebase state.
 
 3. **Re-run the full verification cycle**: The rebase may have
    introduced subtle changes (dependency version shifts, import
@@ -770,20 +1167,34 @@ triggering the Bash AST parser's "Unhandled node type" warning on
 compound commands — see `docs/learnings.md` §Claude Code Sandbox):
 
 ```bash
-# Step 1: Capture PR title (single Bash call)
-task gh:pr -- view <number> --json title --jq .title
+# Step 1: Derive the merge body into a file (use Write tool, NOT command substitution)
+# Transform the PR body — do not copy it verbatim — then write the result
+# to tmp/<branch-short-name>/merge_body.md via the Write tool.
 
-# Step 2: Capture PR body to a file (use Write tool, NOT command substitution)
-# Write the output of the above to tmp/<branch>/merge_body.md via the Write tool
-
-# Step 3: Merge (single Bash call — use --body-file, not inline --body)
+# Step 2: Merge (single Bash call — use --body-file, not inline --body)
 task gh:pr -- merge <number> --squash \
-  --subject "<captured title>" \
-  --body-file tmp/<branch>/merge_body.md
+  --body-file tmp/<branch-short-name>/merge_body.md
 
-# Step 4: Return to main (single Bash call)
+# Step 3: Return to main (single Bash call)
 task git:checkout -- main
 ```
+
+**Do not pass `--subject`.** GitHub already uses the PR title as the
+squash subject, so the flag buys nothing — and interpolating a PR title
+into a shell command is an injection vector: titles are attacker-editable
+on a PR we did not author, and a title containing a quote and `;` would
+break out of the argument and run as a command on the host. Omitting the
+flag removes both the risk and the title-capture step it required.
+
+**Step 2 is a transformation, not a copy.** `merge_body.md` becomes a
+squash **commit message**, so it must satisfy the `merge_body.md`
+exception in [pr.artifacts.md](../.claude/rules/pr.artifacts.md): plain
+text only — no bold, no `<details>`, no tables, and **no identity
+marker**. In particular **strip the `<!-- pr-lifecycle:pr-body -->`
+marker** that §"Generate PR Body" requires on every PR body; copied
+through, it would land a stray HTML comment in `git log` on every squash
+merge. Strip it here only — the marker must survive in the PR body
+itself, where the ownership check depends on it.
 
 ```bash
 # Step 5: Pull latest (single Bash call)
@@ -802,6 +1213,12 @@ the fix to a subagent (e.g., `tdd-green`, `bug-fix`, or
 the fix is pushed. After the fix, run the Branch Freshness Check
 before restarting CI monitoring — if `main` advanced during the
 fix cycle, rebase first. Repeat until green.
+
+**Re-sync the PR description after each fix push** that changed the
+implementation, per §"Per-Round PR Reconciliation" step 1. This loop
+pushes and restarts CI without otherwise revisiting the body, so a fix
+that alters behaviour would otherwise reach merge with a description of
+the pre-fix diff.
 
 **CI-Phase Inline Marker Scan**: During each CI fix cycle, capture
 new inline code markers (`TODO`, `HACK`, `FIXME`, `XXX`) introduced

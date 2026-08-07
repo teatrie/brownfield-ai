@@ -32,19 +32,196 @@ Run `task git:status` and `task git:log -- --oneline origin/main..HEAD` to under
 If there are uncommitted changes:
 
 1. Resolve the work item per [docs/pr_protocol.md](../../../docs/pr_protocol.md) §Work Item Reference (user hint, branch name, active ledger epic, or ask).
-   Create a branch — use the form matching the resolved tracking system. First
-   check `task git:status`: if you are **already on** the intended branch, skip
-   this step, because `checkout -b` on an existing branch fails with
-   `fatal: A branch named '...' already exists` and aborts the run. Omitting the
-   ID suffix makes that collision more likely, not less.
+   **Resolve the full branch name once, then reuse that exact string** for the
+   probe, the checkout, and the creation. The form depends on the tracking
+   system, and probing an unsuffixed name while creating a suffixed one makes
+   every JIRA/Linear rerun miss:
+
+   - Execution Ledger, GitHub Issues, or none → `<type>/<short-name>`
+   - JIRA or Linear → `<type>/<short-name>_<ID>` (ID suffix required)
+
+   Call the result `<branch>`. Test whether it already exists — the normal case
+   on a rerun. `git status` reports only the *current* branch, so it cannot
+   answer this on its own. Query both refs: after a fresh clone, or once the
+   local branch has been pruned, an open PR's branch exists only on the remote.
 
    ```bash
-   # Execution Ledger, GitHub Issues, or none — no ID suffix:
-   task git:checkout -- -b <type>/<short-name>
-
-   # JIRA or Linear — ID suffix required:
-   task git:checkout -- -b <type>/<short-name>_<ID>
+   task git:fetch -- origin --prune
+   task git:run -- rev-parse --verify --quiet refs/heads/<branch>
+   task git:run -- rev-parse --verify --quiet refs/remotes/origin/<branch>
    ```
+
+   **`--prune` is required.** A plain fetch keeps
+   `refs/remotes/origin/<branch>` after the remote branch is deleted — as it
+   is on every squash-merge with `--delete-branch`. Without pruning, the probe
+   reports a branch that no longer exists remotely and routes an ordinary
+   CREATE run into the collision/sign-off path.
+
+   Exit 0 (prints the SHA) on **either** means a branch of that name exists.
+   **A matching ref does not by itself mean "resume".** It may back a
+   closed/unmerged PR, or be an unrelated older branch whose generated name
+   collided — resuming either would push stale commits into a PR they do not
+   belong to. Before checking it out, run the existing-PR detection and
+   ownership check in
+   [pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+   Reconciliation" against `<branch>`:
+
+   - **Already on `<branch>`** (`task git:status` reports it as current) → it
+     is your working branch; the local ref is expected, not a collision.
+     Proceed with no prompt when the detection returned **no PR at all** (the
+     ordinary case — a local branch with commits and no PR yet, which must
+     never halt) or an **OPEN PR conclusively ours** (UPDATE).
+
+     Two outcomes are **not** plain CREATEs, even standing on the branch:
+
+     - An **OPEN PR not conclusively ours** halts here exactly as it would
+       below. Being on the branch does not waive the ownership guard.
+     - A **closed or merged PR** means the branch is **spent**. This is the
+       state you are left in after a squash-merge with `--delete-branch`:
+       the remote ref is gone and detection reports no *open* PR, but the
+       local commits are already in `main`. Reusing it would open a PR
+       carrying the previous PR's commits, based behind the current base.
+       Rebase onto the fresh base first, or branch anew — do not push it
+       as-is.
+   **Two rules govern every switch away from your current branch**, whichever
+   outcome below applies:
+
+   - **Unpushed commits block the switch.** A stash moves the dirty tree but
+     leaves committed work on the branch you leave, so switching would push
+     `<branch>` without the very commits you were asked to publish —
+     silently. What counts as "unpushed" is *absent from a remote*, never
+     merely absent from `main`; every unmerged feature branch is absent
+     from `main`. Establish it in this order:
+     1. **Upstream configured** — `task git:run -- rev-parse --abbrev-ref
+        @{upstream}` resolves. Definitive: compare
+        `task git:log -- --oneline @{upstream}..HEAD`.
+     2. **No upstream, but `refs/remotes/origin/<current-branch>` exists** —
+        compare against that ref instead. It is where a push would have
+        landed.
+     3. **Neither ref exists** — ask GitHub about the **current** branch:
+        `task gh:pr -- view <current-branch> --json state`. A **MERGED** (or
+        CLOSED) PR means the work is already accounted for and the branch is
+        spent, so leaving it loses nothing. That is the state a squash-merge
+        with `--delete-branch` leaves behind once the prune drops the remote
+        ref. **Do not test this by ancestry**: a squash merge lands one new
+        commit with a different identity, so the original commits never
+        become ancestors of `main` and `origin/main..HEAD` stays non-empty
+        on exactly the branch you just merged. An empty range is still
+        *sufficient* proof when it happens — just not the common case.
+     4. **Neither ref, and no merged/closed PR** — now you genuinely cannot
+        tell whether those commits are published (a non-empty
+        `origin/main..HEAD` reports every feature commit, pushed or not).
+        Do not guess in either direction: **ask.**
+
+     If unpushed commits exist and `<branch>` is a different branch, **halt
+     and ask** which to publish. Under `CI=true`, halt per CLAUDE.md
+     Principle 16.
+   - **Stash a dirty tree first.** You arrive here from the
+     uncommitted-changes path, and `checkout` aborts with
+     `Your local changes ... would be overwritten by checkout` when the
+     target branch differs in any modified path. The `--autostash` on the
+     pull does not help — it runs later. Wrap **every** checkout below:
+     `task git:run -- stash push --include-untracked`, the checkout, **then
+     any sync**, and only then `task git:run -- stash pop`.
+
+     **Skip the pair entirely on a clean tree — this is a data-safety rule,
+     not a tidiness one.** `stash push` on a clean tree is a no-op
+     (`No local changes to save`), but the paired `pop` is **not**
+     harmless: it pops whatever is on top of the stack. It only errors
+     `No stash entries found` when the stack is empty, so on a repo holding
+     any pre-existing stash it would silently apply that unrelated work
+     onto your branch. Decide with `task git:status`, never by running the
+     pop and seeing what happens.
+
+     **Pop last, after the sync.** Popping before the pull only forces the
+     rebase to autostash the same changes again — and if the pop conflicts,
+     the pull then hard-fails on the unmerged tree.
+
+     **A conflicting pop stops the run.** The resumed branch may hold an
+     earlier version of these files. `git stash pop` **keeps its entry** on
+     conflict, so nothing is lost: report the conflicting paths and let the
+     user reconcile, rather than staging a half-merged tree. Under
+     `CI=true`, halt per CLAUDE.md Principle 16. Never `stash drop` to clear
+     it.
+
+   Then, by outcome:
+
+   - **Not on it, but an OPEN PR is conclusively ours** → resume with
+     `task git:checkout -- <branch>` (which also creates the local tracking
+     branch when only the remote ref is present), then sync with
+     **`task git:pull -- --rebase --autostash origin <branch>`**. This is the
+     UPDATE path. Name the remote and branch explicitly: a branch that lost
+     or never had upstream tracking makes a bare `git pull` fail with
+     `no tracking information`. **`--rebase`** keeps the diverged case — the
+     remote advanced via a reviewer's UI commit or a CI auto-formatter —
+     from opening `$EDITOR` and adding a merge commit, and an unsynced local
+     branch would otherwise be rejected as non-fast-forward.
+     **`--autostash`** is a fallback here rather than the main mechanism:
+     the stash above already holds your changes, so the tree is clean and
+     the flag is usually a no-op. It matters on the paths where no stash was
+     taken — a tree clean at checkout but dirtied since — where the rebase
+     would otherwise refuse to start.
+   - **Not on it, and the ref is someone else's or spent** — closed/merged
+     PR, or an OPEN PR whose ownership is not conclusive → do **NOT**
+     silently resume and do **NOT** silently create over it. Stop and ask
+     the user whether to reuse the branch, pick another name, or branch
+     fresh from the base. Under `CI=true`, halt and checkpoint per
+     CLAUDE.md Principle 16.
+   - **Not on it, and no PR exists at all** → the *name* is free of any PR,
+     which is **not** proof the *branch* is free. It may be an abandoned or
+     unrelated branch that merely collides with the generated name, and
+     pushing to it would graft your commits onto someone else's work. Decide
+     on commits, not on the absent PR:
+     - **No commits beyond the base** — a bare leftover ref. **Reset it onto
+       the current base rather than checking it out as-is**: the ref was cut
+       from whatever base existed then, so a plain checkout moves `HEAD`
+       backward and the popped changes would build a PR missing recent
+       `main` commits.
+
+       ```bash
+       task git:checkout -- -B <branch> origin/main
+       ```
+
+       `-B` resets an existing branch; it is safe **only** because this case
+       is defined by having no commits beyond the base, so there is nothing
+       to discard. Stash per the rule above, reset, then pop. Name the ref the
+       probe actually found: `task git:log -- --oneline origin/main..<branch>`
+       when the **local** ref exists, `origin/main..origin/<branch>` when
+       only the **remote** one does. A remote-only branch is not a valid
+       local revision, and naming it bare fails with `unknown revision`.
+       Compare against **`origin/main`**, not local `main` — you just
+       fetched `origin --prune`, so `origin/main` is current while local
+       `main` may lag; against a stale base a bare branch cut at the fetched
+       tip looks like it carries commits and would halt for nothing.
+     - **It carries commits** — ambiguous. **Ask** before reusing: offer
+       reuse, a different name, or a fresh branch. Under `CI=true`, halt and
+       checkpoint per CLAUDE.md Principle 16.
+
+   **Pull whenever the remote probe succeeded**, on every resume above — not
+   only when an owned OPEN PR was found. A branch that exists remotely can
+   have advanced regardless of PR state, and an unsynced local ref makes the
+   later push fail as non-fast-forward, which is the failure this whole
+   probe exists to avoid. Always name the remote and branch —
+   `task git:pull -- --rebase --autostash origin <branch>` — since upstream tracking may be
+   absent. Skip the pull only when the branch is local-only: there is
+   nothing on the remote to pull from.
+
+   Only when **both** probes fail is the branch genuinely new:
+
+   ```bash
+   task git:checkout -- -b <branch>
+   ```
+
+   This branches from the **current HEAD**, by design: `auto-pr` packages the
+   working tree you are already sitting on, so the uncommitted changes must
+   come with you. `ship` differs — it groups a dirty tree into several PRs and
+   so bases each new branch on a freshly pulled `main`. Confirm HEAD is where
+   you intend before creating: from an unrelated feature branch this carries
+   that branch's history into the PR.
+
+   `checkout -b` on an existing branch fails with
+   `fatal: A branch named '...' already exists` and aborts the run. Omitting the
+   ID suffix makes that collision more likely, not less.
 
 2. **Artifact & Hygiene Review (Delegated)**: Before staging, you MUST delegate to a subagent (e.g., `explore` or `tdd-refactor`) to specifically review the `git status` output for temporary artifacts, debug files, or anomalies (e.g., `testItEOF`, `*.tmp`, `x[a-z][a-z]` split artifacts, out-of-place logs).
    - If the subagent has very high confidence the file is a temporary garbage artifact, the Orchestrator MUST safely remove it (e.g., `rm <file>`).
@@ -54,10 +231,13 @@ If there are uncommitted changes:
 
 If there are only unpushed commits (clean working tree):
 
-1. Resolve the work item, then create a branch from HEAD using the same
-   two-form convention given in step 1 of "If there are uncommitted changes"
-   above — no ID suffix for Execution Ledger, GitHub Issues, or none;
-   `_<ID>` suffix for JIRA or Linear.
+1. Resolve the work item, then apply **the whole of** step 1 of "If there are
+   uncommitted changes" above — the two-form branch-name resolution, the
+   local-and-remote existence probe, the existing-PR/ownership check, and the
+   resume-or-create decision. This is the most common update-round entry
+   state: a clean tree on an existing branch with unpushed commits. Creating
+   from HEAD unconditionally would fail on `checkout -b` when the branch is
+   already local, and would never reach the UPDATE reconciliation path.
 
 ## Step 2b: Pre-Push Validation Gate
 
@@ -90,7 +270,15 @@ Do not assume the fix worked. Do not push broken files.
 
 ## Step 2c: Code Diff Review (MANDATORY GATE)
 
-Before pushing, invoke the
+**First, run the existing-PR detection and its ownership check** in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" — that section is the single canonical home of this
+procedure; do NOT copy it here. You need the CREATE/UPDATE answer now
+because Step 3 branches on it; the per-round procedure itself runs
+**after** the push, not here. If ownership cannot be positively
+established, halt per that section rather than reconciling.
+
+Then, on either path, invoke the
 [diff-review](../diff-review/SKILL.md) skill to validate implementation quality.
 Pass the **active ledger epic** as `epic_id`, resolved via
 `execution-ledger resume` independently of the PR's Work Item reference — a PR
@@ -146,11 +334,46 @@ immediately and checkpoint
 
 ## Step 3: Push & Create PR
 
+**Re-run the detection and ownership check FIRST — before the push.**
+Step 2c's answer is provisional and the pre-push confirmation may have
+paused indefinitely; per the revalidation rule in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation", act only on a fresh answer. Order it **ahead of**
+`task git:push` because the push is itself a remote mutation: if a
+third-party PR was opened on this branch during the pause, pushing adds
+your commits to *their* PR before any guard has run.
+
+Halt on **either** of two outcomes: an OPEN PR whose ownership is not
+conclusive (pushing would touch someone else's PR), or a PR that was open
+at Step 2c and has since **closed or merged** — that branch is now spent,
+and pushing would raise a follow-up PR carrying already-merged history.
+The canonical rule is in that section; do not collapse the two.
+
+**Only "no PR has ever existed for this branch" is the ordinary CREATE
+case**: nothing to own, nothing to halt on, so push and continue below.
+
 ```bash
 task git:push
 ```
 
-Follow the procedures in
+**UPDATE path**: if the PR is still OPEN and ours, do **NOT** create a
+second one. Instead run the **per-round procedure** in
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" now — the push above has just landed the round's
+commits, which is exactly when its description sync must run — then
+**skip items 1–6 below and go straight to Step 3a.**
+
+What you skip is the **creation-time** work in items 5 and 6:
+`pr_created` would duplicate an artifact this PR already has, and the
+`in_progress` → `in_review` transition would be re-applied to an epic
+already in `in_review`, which the state machine rejects — halting every
+subsequent update round.
+
+**`pr_merged` is not part of that skip.** It happens to be mandated
+inside item 5, but it is a *merge*-time artifact: checkpoint it at
+Step 4 as usual when the PR merges.
+
+**CREATE path** (no OPEN PR): follow the procedures in
 [docs/pr_protocol.md](../../../docs/pr_protocol.md) for:
 
 1. **Template Detection** — locate and use PR template if present.
@@ -184,6 +407,13 @@ separate comments: (1) Executive Summary as the first comment, and
 second comment. Each is conditional — skip whichever is not available
 in the execution context. Ad-hoc PRs without plan context skip this
 step entirely.
+
+**On the UPDATE path, edit in place rather than posting.** Each of these
+comments carries a stable `pr-lifecycle:` marker on line 1; per
+[pr_protocol.md](../../../docs/pr_protocol.md) §"Per-Round PR
+Reconciliation" step 4, resolve the existing comment bearing the marker
+and PATCH it, so exactly one of each marker exists per PR. Post a fresh
+comment only when no comment with that marker exists yet.
 
 If the diff-review step (invoked during the Final QA Phase) returned a
 TODO summary, follow the **Captured TODOs** procedure in
