@@ -188,7 +188,11 @@ def _blockquote_prefix_error(body: str, name: str, *, source: Path) -> str | Non
     lines = body.splitlines()
     if lines and lines[0] == "":
         lines.pop(0)
-    if lines:
+    # Drop the end delimiter's indentation ONLY when it is genuinely quoted.
+    # Popping unconditionally would discard an escaped final instruction
+    # whenever the closing delimiter also lost its prefix, letting both
+    # errors through together.
+    if lines and (lines[-1].startswith("> ") or lines[-1] == ">"):
         lines.pop()
     for number, line in enumerate(lines, start=1):
         if line.startswith("> ") or line == ">":
@@ -252,6 +256,14 @@ def _load_canonical_blocks() -> dict[str, str]:
     text = INVARIANTS_PATH.read_text()
     canonical: dict[str, str] = {}
     for name in INVARIANT_BLOCK_NAMES:
+        # The source of truth needs the same exactly-one-pair guarantee as
+        # the templates: extraction takes the first match, so a second
+        # contradictory block here would let every template lint clean
+        # against a copy no one intended to be canonical.
+        duplicate = _duplicate_marker_error(text, name, namespace="INVARIANT", source=INVARIANTS_PATH)
+        if duplicate is not None:
+            print(f"lint-reviewer: {duplicate}", file=sys.stderr)
+            sys.exit(1)
         body = _extract_block(text, name)
         if body is None:
             print(

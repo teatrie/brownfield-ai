@@ -564,6 +564,62 @@ def test_lint_script_detects_bare_blank_line_in_skill_block(tmp_path: Path) -> N
     assert "blockquote prefix" in result.stderr, f"expected stderr to name the blockquote failure; got {result.stderr!r}"
 
 
+def test_lint_script_detects_unquoted_closing_marker(tmp_path: Path) -> None:
+    """A closing ``SHARED`` marker that lost its ``> `` prefix fails the lint.
+
+    Regression guard: the artifact-line trim must not discard the final
+    line unconditionally, or an escaped closing delimiter — and any
+    instruction that escaped with it — would be dropped before validation.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    skill_path = tmp_path / ".claude" / "skills" / "diff-review" / "SKILL.md"
+
+    text = skill_path.read_text()
+    escaped = text.replace(
+        ">     <!-- SHARED:diff-dimensions end -->",
+        "    <!-- SHARED:diff-dimensions end -->",
+        1,
+    )
+    assert text != escaped, "closing-marker mutation was a no-op — fix fixture"
+    skill_path.write_text(escaped)
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, f"expected unquoted-closing-marker detection; got exit {result.returncode}; stderr={result.stderr!r}"
+    assert "blockquote prefix" in result.stderr, f"expected stderr to name the blockquote failure; got {result.stderr!r}"
+
+
+def test_lint_script_detects_duplicate_block_in_canonical(tmp_path: Path) -> None:
+    """A duplicate invariant block in ``_invariants.md`` fails the lint.
+
+    The source of truth needs the same exactly-one-pair guarantee as the
+    templates — otherwise every template lints clean against a first copy
+    while a second, contradictory canonical block sits unnoticed.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    invariants_path = tmp_path / ".claude" / "prompts" / "reviewer" / "_invariants.md"
+
+    text = invariants_path.read_text()
+    invariants_path.write_text(
+        f"{text}\n<!-- INVARIANT:criteria start -->\ncontradictory canonical criteria\n<!-- INVARIANT:criteria end -->\n",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, f"expected canonical duplicate detection; got exit {result.returncode}; stderr={result.stderr!r}"
+    assert "_invariants.md" in result.stderr, f"expected stderr to identify the canonical file; got {result.stderr!r}"
+
+
 def test_lint_script_detects_missing_shared_block(tmp_path: Path) -> None:
     """Deleting a shared marker pair from the template fails the lint."""
     script_copy = _stage_workspace(tmp_path)
