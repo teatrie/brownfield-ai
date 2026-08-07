@@ -91,15 +91,18 @@ error. Do not proceed.**
    **Whole-PR dimensions survive the split**: items 12 (co-located siblings) and
    13 (cross-file duplication) cannot be answered from one split alone, and a
    changed-file *list* is not sufficient — recognizing a duplicated block needs
-   the added content, not just the filenames. Run ONE additional whole-PR pass
-   scoped to items 12 and 13 over every split's **added lines with their file
-   headers retained**. Keeping the paths is mandatory, not cosmetic: item 12
+   the added content, not just the filenames. Run one additional whole-PR pass —
+   one *pass*, not one reviewer — scoped to items 12 and 13 over every split's
+   **added lines with their file headers retained**. Keeping the paths is mandatory, not cosmetic: item 12
    enumerates the sibling manifests, lockfiles, and changelogs of the
    *directories* holding modified files, so a bare concatenation of added lines
    would make it unexecutable. Added lines only, two dimensions only, so the
    pass stays far below the depth and size of a full review even when the
-   complete diff would not fit. Its
-   findings enter the round's findings ledger and block the gate like any other.
+   complete diff would not fit. Submit it to **all active reviewers** on exactly
+   the terms a split gets: it must independently receive APPROVED from every one
+   of them, and its findings enter the round's findings ledger and block the
+   gate like any other. One reviewer's judgment on items 12 and 13 does not
+   satisfy the gate.
    Without that pass, duplication introduced across two files placed in
    different splits merges unreviewed.
 
