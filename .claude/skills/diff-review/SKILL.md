@@ -92,9 +92,13 @@ error. Do not proceed.**
    13 (cross-file duplication) cannot be answered from one split alone, and a
    changed-file *list* is not sufficient — recognizing a duplicated block needs
    the added content, not just the filenames. Run ONE additional whole-PR pass
-   scoped to items 12 and 13 over the concatenated **added lines** of every
-   split. Added lines only, two dimensions only, so it stays far below the depth
-   and size of a full review even when the complete diff would not fit. Its
+   scoped to items 12 and 13 over every split's **added lines with their file
+   headers retained**. Keeping the paths is mandatory, not cosmetic: item 12
+   enumerates the sibling manifests, lockfiles, and changelogs of the
+   *directories* holding modified files, so a bare concatenation of added lines
+   would make it unexecutable. Added lines only, two dimensions only, so the
+   pass stays far below the depth and size of a full review even when the
+   complete diff would not fit. Its
    findings enter the round's findings ledger and block the gate like any other.
    Without that pass, duplication introduced across two files placed in
    different splits merges unreviewed.
@@ -653,7 +657,11 @@ observations that imply a code change:
 3. Re-submit the updated diff to a **fresh** Dual-Model Review (spawn new
    reviewer agents — do not re-use prior agents). **When the diff was split**
    (per Step 1.4), re-submit only the specific failing split — not the full
-   diff — to avoid redundant re-review of passing splits.
+   diff — to avoid redundant re-review of passing splits. Two exceptions keep
+   that optimization honest: re-submit **every split the resolution modified**,
+   not only the one that raised the finding (a cross-split fix routinely edits a
+   previously passing split), and re-run the **whole-PR items 12/13 pass**,
+   which no single-split re-review covers.
 
 > **Resolutions are new code — re-review them adversarially.** A `code-change`
 > that resolves a finding is itself unreviewed code: on re-submission it MUST
