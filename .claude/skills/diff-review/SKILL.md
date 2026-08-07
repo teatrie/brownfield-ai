@@ -88,6 +88,14 @@ error. Do not proceed.**
    splits must be reviewed — do not pass the gate on a partial or truncated diff.
    When splitting, every split must independently receive APPROVED from all active reviewers;
    one BLOCKED on any split fails the entire gate.
+   **Whole-PR dimensions survive the split**: items 12 (co-located siblings) and
+   13 (cross-file duplication) cannot be answered from one split alone, so every
+   split reviewer MUST additionally receive the full changed-file list for the
+   whole PR. A reviewer MAY raise those two dimensions against a changed file
+   outside its own split on the strength of that list — such files are still
+   part of the diff under review, so this does not widen scope beyond it.
+   Without the full list, duplication introduced across two files placed in
+   different splits merges unreviewed.
 
 ### Step 2: Delegate Dual-Model Review
 
@@ -222,7 +230,9 @@ with these KEY=value args after `--`).
 >     intentionally mandated by a cited convention (cf. item 12) is exempt.
 >     The diff shows only changed files, so apply this to duplication
 >     introduced across the PR's own files, or to added code you recognize as
->     duplicating an existing repo pattern/convention.
+>     duplicating an existing repo pattern/convention. If the diff was split
+>     (Step 1.4) you hold only part of the PR — use the full changed-file list
+>     supplied with your split to reach files outside it.
 > 14. Interpolation across the render/execute boundary (injection). Flag any
 >     value spliced into a command / query / eval string that a templating
 >     layer renders BEFORE the shell (or SQL engine) tokenizes it — e.g.
