@@ -389,6 +389,31 @@ def _check_codex_toml_file(toml_path: Path) -> list[str]:
     return errors
 
 
+def _skill_shared_errors(skill_text: str) -> dict[str, str]:
+    """Return the first SKILL.md-side defect per shared block, keyed by name.
+
+    Both the check path and the ``--fix`` path gate on this. Sharing one
+    validator is the point rather than an incidental tidy-up: a malformed
+    source that only the checker rejects would let ``--fix`` render from it,
+    report success, and copy a template the checker then refuses — the
+    repair command leaving the tree in the state it claims to have fixed.
+    """
+    errors: dict[str, str] = {}
+    for name in SHARED_BLOCK_NAMES:
+        duplicate = _duplicate_marker_error(skill_text, name, namespace="SHARED", source=SKILL_PATH)
+        if duplicate is not None:
+            errors[name] = duplicate
+            continue
+        raw = _extract_raw(skill_text, name, namespace="SHARED")
+        if raw is None:
+            errors[name] = f"{SKILL_PATH}: missing SHARED:{name} block"
+            continue
+        prefix_error = _blockquote_prefix_error(raw, name, source=SKILL_PATH)
+        if prefix_error is not None:
+            errors[name] = prefix_error
+    return errors
+
+
 def _check_shared_blocks() -> list[str]:
     """Assert each shared block matches between SKILL.md and the diff template.
 
@@ -402,21 +427,21 @@ def _check_shared_blocks() -> list[str]:
         return errors
     skill_text = SKILL_PATH.read_text()
     template_text = SHARED_TEMPLATE_PATH.read_text()
+    skill_errors = _skill_shared_errors(skill_text)
     for name in SHARED_BLOCK_NAMES:
-        duplicates = [
-            _duplicate_marker_error(text, name, namespace="SHARED", source=source)
-            for text, source in ((skill_text, SKILL_PATH), (template_text, SHARED_TEMPLATE_PATH))
-        ]
-        found = [message for message in duplicates if message is not None]
-        if found:
-            errors.extend(found)
+        template_duplicate = _duplicate_marker_error(
+            template_text,
+            name,
+            namespace="SHARED",
+            source=SHARED_TEMPLATE_PATH,
+        )
+        skill_error = skill_errors.get(name)
+        if skill_error is not None or template_duplicate is not None:
+            if skill_error is not None:
+                errors.append(skill_error)
+            if template_duplicate is not None:
+                errors.append(template_duplicate)
             continue
-        raw_skill = _extract_raw(skill_text, name, namespace="SHARED")
-        if raw_skill is not None:
-            prefix_error = _blockquote_prefix_error(raw_skill, name, source=SKILL_PATH)
-            if prefix_error is not None:
-                errors.append(prefix_error)
-                continue
         expected = _extract_shared(skill_text, name, blockquote=True)
         actual = _extract_shared(template_text, name, blockquote=False)
         if expected is None:
@@ -469,8 +494,15 @@ def render_diff_template(canonical: dict[str, str], skill_text: str) -> str:
     :param canonical: Normalized invariant bodies keyed by block name, as
         returned by ``_load_canonical_blocks``.
     :param skill_text: Full text of the diff-review ``SKILL.md``.
-    :raises ValueError: When a required ``SHARED:`` region is absent.
+    :raises ValueError: When a ``SHARED:`` region is absent, has a duplicated
+        marker pair, or carries a line that escaped the blockquote — the same
+        defects the check path rejects, so a malformed source cannot be
+        rendered into an apparently-clean template.
     """
+    defects = _skill_shared_errors(skill_text)
+    if defects:
+        msg = "; ".join(defects[name] for name in SHARED_BLOCK_NAMES if name in defects)
+        raise ValueError(msg)
     shared: dict[str, str] = {}
     for name in SHARED_BLOCK_NAMES:
         body = _extract_shared(skill_text, name, blockquote=True)

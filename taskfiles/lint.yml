@@ -201,7 +201,7 @@ tasks:
       - defer: rm -f tmp/.python-gate-pass
       - >-
         docker compose run --rm --user agent --entrypoint ""
-        -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
+        -v "{{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro"
         pytest-cli
         python scripts/lint_reviewer_templates.py --fix
       - cp tmp/diff_md_out/diff.md .claude/prompts/reviewer/diff.md

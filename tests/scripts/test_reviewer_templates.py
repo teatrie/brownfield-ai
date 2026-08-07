@@ -904,3 +904,47 @@ def test_fix_fails_when_skill_lacks_a_shared_block(tmp_path: Path) -> None:
     assert result.returncode == 1, f"expected --fix to fail on a missing shared block; got exit {result.returncode}"
     assert "diff-scope" in result.stderr, f"expected stderr to name the missing block; got {result.stderr!r}"
     assert not _fix_output(tmp_path).exists(), "--fix wrote output despite failing"
+
+
+def test_fix_fails_on_duplicate_shared_marker_in_skill(tmp_path: Path) -> None:
+    """A duplicated ``SHARED:`` pair in SKILL.md fails ``--fix``.
+
+    Extraction stops at the first match, so regeneration would silently
+    render from one of two divergent blocks and report success — while the
+    checker still rejects that same source. The repair command would then
+    leave the tree in exactly the state it claimed to have fixed.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    skill_path = tmp_path / ".claude" / "skills" / "diff-review" / "SKILL.md"
+
+    text = skill_path.read_text()
+    skill_path.write_text(
+        f"{text}\n> <!-- SHARED:diff-dimensions start -->\n> contradictory\n> <!-- SHARED:diff-dimensions end -->\n",
+    )
+
+    result = _run_fix(tmp_path, script_copy)
+    assert result.returncode == 1, f"expected --fix to reject a duplicated marker pair; got exit {result.returncode}"
+    assert "appears 2 times" in result.stderr, f"expected stderr to report the duplicate count; got {result.stderr!r}"
+    assert not _fix_output(tmp_path).exists(), "--fix wrote output despite failing"
+
+
+def test_fix_fails_on_escaped_blockquote_in_skill(tmp_path: Path) -> None:
+    """A shared-block line that lost its ``> `` prefix fails ``--fix``.
+
+    ``_strip_blockquote`` passes an unprefixed line through unchanged, so
+    regeneration would succeed on a source whose reviewer-prompt blockquote
+    has already ended — producing a template that lints clean while the
+    instruction is no longer delivered as part of the prompt.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    skill_path = tmp_path / ".claude" / "skills" / "diff-review" / "SKILL.md"
+
+    text = skill_path.read_text()
+    escaped = text.replace("> 11. Runtime infrastructure dependencies", "11. Runtime infrastructure dependencies", 1)
+    assert text != escaped, "prefix removal was a no-op — fix fixture"
+    skill_path.write_text(escaped)
+
+    result = _run_fix(tmp_path, script_copy)
+    assert result.returncode == 1, f"expected --fix to reject an escaped blockquote; got exit {result.returncode}"
+    assert "blockquote prefix" in result.stderr, f"expected stderr to name the blockquote failure; got {result.stderr!r}"
+    assert not _fix_output(tmp_path).exists(), "--fix wrote output despite failing"
