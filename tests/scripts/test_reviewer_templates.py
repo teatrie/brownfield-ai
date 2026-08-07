@@ -502,6 +502,37 @@ def test_lint_script_detects_duplicate_invariant_block(tmp_path: Path) -> None:
     assert "appears 2 times" in result.stderr, f"expected stderr to report the duplicate count; got {result.stderr!r}"
 
 
+def test_lint_script_detects_escaped_blockquote_in_skill(tmp_path: Path) -> None:
+    """A shared-block line that loses its ``> `` prefix fails the lint.
+
+    Regression guard for a real edit hazard: dropping the prefix ends the
+    reviewer prompt blockquote in Markdown, yet the stripped text still
+    compares equal to the template copy — so without this check the lint
+    would pass on a prompt that no longer delivers that instruction.
+    """
+    script_copy = _stage_workspace(tmp_path)
+    skill_path = tmp_path / ".claude" / "skills" / "diff-review" / "SKILL.md"
+
+    text = skill_path.read_text()
+    escaped = text.replace(
+        "> 11. Runtime infrastructure dependencies",
+        "11. Runtime infrastructure dependencies",
+        1,
+    )
+    assert text != escaped, "prefix removal was a no-op — fix fixture"
+    skill_path.write_text(escaped)
+
+    result = subprocess.run(
+        [sys.executable, str(script_copy)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        timeout=30,
+    )
+    assert result.returncode == 1, f"expected escaped-blockquote detection; got exit {result.returncode}; stderr={result.stderr!r}"
+    assert "blockquote prefix" in result.stderr, f"expected stderr to name the blockquote failure; got {result.stderr!r}"
+
+
 def test_lint_script_detects_missing_shared_block(tmp_path: Path) -> None:
     """Deleting a shared marker pair from the template fails the lint."""
     script_copy = _stage_workspace(tmp_path)

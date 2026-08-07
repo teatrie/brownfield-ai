@@ -169,6 +169,24 @@ def _duplicate_marker_error(
     return None
 
 
+def _blockquote_prefix_error(body: str, name: str, *, source: Path) -> str | None:
+    """Return an error when a shared-block line has escaped the blockquote.
+
+    ``_strip_blockquote`` passes an unprefixed line through unchanged, so a
+    line that loses its ``> `` would still compare equal to the template
+    copy and lint clean — while in Markdown the reviewer prompt blockquote
+    has ended there and the instruction is no longer delivered as part of
+    the prompt. Treat that as a lint error rather than normalizing it away.
+    """
+    for number, line in enumerate(body.splitlines(), start=1):
+        if not line.strip() or line.startswith("> ") or line == ">":
+            continue
+        return (
+            f"{source}: SHARED:{name} line {number} lost its '> ' blockquote prefix ({line!r}) — the reviewer prompt blockquote ends there"
+        )
+    return None
+
+
 def _strip_blockquote(body: str) -> str:
     """Remove one level of Markdown blockquote prefix from every line.
 
@@ -338,6 +356,12 @@ def _check_shared_blocks() -> list[str]:
         if found:
             errors.extend(found)
             continue
+        raw_skill = _extract_raw(skill_text, name, namespace="SHARED")
+        if raw_skill is not None:
+            prefix_error = _blockquote_prefix_error(raw_skill, name, source=SKILL_PATH)
+            if prefix_error is not None:
+                errors.append(prefix_error)
+                continue
         expected = _extract_shared(skill_text, name, blockquote=True)
         actual = _extract_shared(template_text, name, blockquote=False)
         if expected is None:
