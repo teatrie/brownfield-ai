@@ -18,12 +18,26 @@ epic templates), so they are mirrored instead — and a mirror without a
 check drifts. The SKILL.md copy sits inside a Markdown blockquote, so its
 ``> `` prefix is stripped before comparison.
 
+``--fix`` regenerates the ``diff.md`` mirror instead of checking it,
+repairing the drift the check reports. The check alone cannot close the
+loop: without a committed generator the mirror has to be hand-written in
+lockstep with ``SKILL.md``. Regeneration reads the canonical
+``_invariants.md`` and the ``SHARED:`` regions of ``SKILL.md`` — never
+``diff.md`` itself — so a drifted mirror cannot seed its own replacement.
+
+The output is written to ``tmp/diff_md_out/diff.md`` rather than in place:
+``pytest-cli`` mounts the workspace read-only with ``tmp/`` read-write, so
+the container cannot write the template directly. ``task
+lint:reviewer-templates-fix`` runs this and then copies the result into
+position on the host, keeping the container write surface unchanged.
+
 Exit codes:
 
 * 0 — all invariant blocks match canonical, shared blocks match, no
-  stale criteria in TOML.
+  stale criteria in TOML. Under ``--fix``: the mirror was regenerated.
 * 1 — one or more templates have drift, are missing an invariant or
-  shared block, or the TOML contains numbered criteria.
+  shared block, or the TOML contains numbered criteria. Under ``--fix``:
+  a source file was missing or lacked a required block.
 
 Run via the task wrapper (``task run:adhoc -- scripts/lint_reviewer_templates.py``)
 or directly from CI.
@@ -106,6 +120,23 @@ SHARED_BLOCK_NAMES: tuple[str, ...] = (
 )
 SKILL_PATH: Path = REPO_ROOT / ".claude" / "skills" / "diff-review" / "SKILL.md"
 SHARED_TEMPLATE_PATH: Path = TEMPLATES_DIR / "diff.md"
+
+#: Destination for ``--fix`` output. Under ``tmp/`` because the container
+#: running this script mounts the workspace read-only.
+FIX_OUTPUT_PATH: Path = REPO_ROOT / "tmp" / "diff_md_out" / "diff.md"
+
+#: Scaffolding that belongs to neither an INVARIANT nor a SHARED region.
+#: It is diff-template-specific prose with no second copy to drift against,
+#: so regeneration carries it literally.
+SUBJECT_HANDLING: str = """## Subject handling
+
+The subject is a unified `git diff` — review only the changed lines + necessary \
+surrounding context; do not re-review untouched code, except per the Bounded \
+exception below."""
+
+RUBRIC_NOTE: str = """Criteria 1-10 below are the block shared with every reviewer template; \
+11-21 are diff-only. They form one continuous rubric — the delimiters are indented \
+into the adjacent list items so the numbering is not broken."""
 
 
 def _normalize_block(body: str) -> str:
@@ -358,6 +389,31 @@ def _check_codex_toml_file(toml_path: Path) -> list[str]:
     return errors
 
 
+def _skill_shared_errors(skill_text: str) -> dict[str, str]:
+    """Return the first SKILL.md-side defect per shared block, keyed by name.
+
+    Both the check path and the ``--fix`` path gate on this. Sharing one
+    validator is the point rather than an incidental tidy-up: a malformed
+    source that only the checker rejects would let ``--fix`` render from it,
+    report success, and copy a template the checker then refuses — the
+    repair command leaving the tree in the state it claims to have fixed.
+    """
+    errors: dict[str, str] = {}
+    for name in SHARED_BLOCK_NAMES:
+        duplicate = _duplicate_marker_error(skill_text, name, namespace="SHARED", source=SKILL_PATH)
+        if duplicate is not None:
+            errors[name] = duplicate
+            continue
+        raw = _extract_raw(skill_text, name, namespace="SHARED")
+        if raw is None:
+            errors[name] = f"{SKILL_PATH}: missing SHARED:{name} block"
+            continue
+        prefix_error = _blockquote_prefix_error(raw, name, source=SKILL_PATH)
+        if prefix_error is not None:
+            errors[name] = prefix_error
+    return errors
+
+
 def _check_shared_blocks() -> list[str]:
     """Assert each shared block matches between SKILL.md and the diff template.
 
@@ -371,21 +427,21 @@ def _check_shared_blocks() -> list[str]:
         return errors
     skill_text = SKILL_PATH.read_text()
     template_text = SHARED_TEMPLATE_PATH.read_text()
+    skill_errors = _skill_shared_errors(skill_text)
     for name in SHARED_BLOCK_NAMES:
-        duplicates = [
-            _duplicate_marker_error(text, name, namespace="SHARED", source=source)
-            for text, source in ((skill_text, SKILL_PATH), (template_text, SHARED_TEMPLATE_PATH))
-        ]
-        found = [message for message in duplicates if message is not None]
-        if found:
-            errors.extend(found)
+        template_duplicate = _duplicate_marker_error(
+            template_text,
+            name,
+            namespace="SHARED",
+            source=SHARED_TEMPLATE_PATH,
+        )
+        skill_error = skill_errors.get(name)
+        if skill_error is not None or template_duplicate is not None:
+            if skill_error is not None:
+                errors.append(skill_error)
+            if template_duplicate is not None:
+                errors.append(template_duplicate)
             continue
-        raw_skill = _extract_raw(skill_text, name, namespace="SHARED")
-        if raw_skill is not None:
-            prefix_error = _blockquote_prefix_error(raw_skill, name, source=SKILL_PATH)
-            if prefix_error is not None:
-                errors.append(prefix_error)
-                continue
         expected = _extract_shared(skill_text, name, blockquote=True)
         actual = _extract_shared(template_text, name, blockquote=False)
         if expected is None:
@@ -428,15 +484,89 @@ def check_reviewer_templates() -> int:
     return 0
 
 
-def main(*, fix_trailing_whitespace: bool = False) -> None:
+def render_diff_template(canonical: dict[str, str], skill_text: str) -> str:
+    """Assemble the full ``diff.md`` body from its canonical sources.
+
+    Pure: takes the canonical invariant bodies and the skill text, returns
+    the file content. Nothing is read from the existing ``diff.md``, so a
+    drifted mirror cannot influence its own regeneration.
+
+    :param canonical: Normalized invariant bodies keyed by block name, as
+        returned by ``_load_canonical_blocks``.
+    :param skill_text: Full text of the diff-review ``SKILL.md``.
+    :raises ValueError: When a ``SHARED:`` region is absent, has a duplicated
+        marker pair, or carries a line that escaped the blockquote — the same
+        defects the check path rejects, so a malformed source cannot be
+        rendered into an apparently-clean template.
+    """
+    defects = _skill_shared_errors(skill_text)
+    if defects:
+        msg = "; ".join(defects[name] for name in SHARED_BLOCK_NAMES if name in defects)
+        raise ValueError(msg)
+    shared: dict[str, str] = {}
+    for name in SHARED_BLOCK_NAMES:
+        body = _extract_shared(skill_text, name, blockquote=True)
+        if body is None:
+            msg = f"{SKILL_PATH}: missing SHARED:{name} block"
+            raise ValueError(msg)
+        shared[name] = body
+    scope = shared["diff-scope"]
+    dimensions = shared["diff-dimensions"]
+
+    sections: list[str] = []
+    sections.append(f"<!-- INVARIANT:preamble start -->\n{canonical['preamble']}<!-- INVARIANT:preamble end -->")
+    sections.append(SUBJECT_HANDLING)
+    sections.append(f"<!-- SHARED:diff-scope start -->\n{scope}<!-- SHARED:diff-scope end -->")
+    sections.append(RUBRIC_NOTE)
+    # The criteria end delimiter and the dimensions start delimiter are
+    # indented into item 10's content so items 1-10 and 11-21 stay one
+    # ordered list; a delimiter at column 0 restarts numbering at "11.",
+    # which markdownlint MD029 rejects. Delimiter indentation sits outside
+    # the compared block bodies, so the parity checks are unaffected.
+    sections.append(
+        f"<!-- INVARIANT:criteria start -->\n{canonical['criteria']}"
+        "    <!-- INVARIANT:criteria end -->\n\n"
+        "    <!-- SHARED:diff-dimensions start -->\n"
+        f"{dimensions}\n    <!-- SHARED:diff-dimensions end -->",
+    )
+    sections.append(
+        f"<!-- INVARIANT:adversarial-rigor start -->\n{canonical['adversarial-rigor']}<!-- INVARIANT:adversarial-rigor end -->",
+    )
+    return "\n\n".join(sections) + "\n"
+
+
+def regenerate_diff_template() -> int:
+    """Write a freshly-rendered ``diff.md`` to ``FIX_OUTPUT_PATH``.
+
+    Returns a process exit code. The caller (``task
+    lint:reviewer-templates-fix``) copies the result into position on the
+    host, because this process cannot write outside ``tmp/``.
+    """
+    if not SKILL_PATH.is_file():
+        print(f"lint-reviewer: cannot regenerate, missing {SKILL_PATH}", file=sys.stderr)
+        return 1
+    canonical = _load_canonical_blocks()
+    try:
+        rendered = render_diff_template(canonical, SKILL_PATH.read_text())
+    except ValueError as exc:
+        print(f"lint-reviewer: {exc}", file=sys.stderr)
+        return 1
+    FIX_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    FIX_OUTPUT_PATH.write_text(rendered, encoding="utf-8")
+    changed = not SHARED_TEMPLATE_PATH.is_file() or SHARED_TEMPLATE_PATH.read_text() != rendered
+    status = "differs from the committed copy" if changed else "matches the committed copy"
+    print(f"lint-reviewer: wrote {FIX_OUTPUT_PATH.relative_to(REPO_ROOT)} ({len(rendered.splitlines())} lines) — {status}.")
+    return 0
+
+
+def main(*, fix: bool = False) -> None:
     """CLI entry point.
 
-    :param fix_trailing_whitespace: Reserved for future use — currently
-        the lint is check-only. Present in the signature so future
-        autofix support can land without breaking the CLI contract.
+    :param fix: Regenerate the ``diff.md`` mirror into ``tmp/diff_md_out/``
+        instead of checking the committed copies.
     """
-    # fix_trailing_whitespace is structural placeholder — not implemented.
-    del fix_trailing_whitespace
+    if fix:
+        sys.exit(regenerate_diff_template())
     sys.exit(check_reviewer_templates())
 
 
