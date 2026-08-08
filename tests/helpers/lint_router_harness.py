@@ -1,57 +1,26 @@
 """Shared pieces for the ``ci/`` changed-file lint router tests.
 
 ``ci/lint_staged.sh`` and ``ci/lint_changed.sh`` decide which lint tasks a diff
-maps to, then hand each one to ``task``. The routing decision is the part worth
-testing; the lint run is not. The ``lint_route`` fixture in
-``tests/ci/conftest.py`` shadows ``git`` (to inject a synthetic changed-file
-list) and ``task`` (to swallow the execution stage while echoing the target it
-was handed), and the assertions here read both the router's announcement line
-and that echoed delegation.
-
-The routers run in a fake workspace rather than the repository. Both drop
-changed paths that are absent from the working tree, so the fixture
-materialises an empty placeholder for every synthetic path — created in place
-rather than symlinked from the repository, so no assertion can be swayed by
-real file contents.
+maps to. The routing decision is what is under test; the lint run is not. The
+``lint_route`` fixture in ``tests/ci/conftest.py`` shadows ``git`` (to inject a
+synthetic changed-file list) and ``task`` (to swallow the execution stage while
+echoing the target it was handed).
 
 Announcement *and* delegation are both asserted: the announcement alone would
 pass for a router that printed the banner and then called the wrong task
 target, and the delegation alone would pass for one that ran the check silently
 under a different branch.
 
-Behavioural coverage alone is not enough, which is why this module also
-compares the two routers' mirrored region directly. The behavioural assertions
-enumerate their triggers, so a sixth trigger added to one router and not the
-other satisfies every one of them while the mirror drifts — the same silent
-divergence the routers themselves exist to close, reproduced one level up.
-
-That comparison has two layers, because either one alone reproduces the
-enumeration weakness a third time:
-
-- Per-block byte-identity, driven by ``MIRRORED_BLOCK_MARKERS``. It renders a
-  readable diff naming exactly what diverged, but its marker list is itself an
-  enumeration: a third block added to one router only is not on the list, and
-  every known block still matches.
-- Multiset-equality of the task targets delegated below
-  ``MIRROR_REGION_ANCHOR``, derived from the files rather than from any list.
-  Adding or removing a delegation in one router changes that multiset and fails
-  here whatever the markers say — including a second block delegating to a
-  target the region already runs, which a plain set would absorb. A multiset
-  rather than an ordered list because the mirrored blocks are byte-identical
-  today, so order matches, but a legitimate future reordering of both routers
-  in step would fail an ordered comparison for nothing.
-
-What the second layer actually guarantees is narrower than "the two mirrored
-regions match": it compares ``"${TASK_CMD[@]}" <target>`` delegations and
-nothing else. Comments, the ``grep -E`` trigger filters, the announcement
-strings, and the ``[ -n ... ]`` guards are all invisible to it. The first layer
-covers those, but only inside a block someone named in
-``MIRRORED_BLOCK_MARKERS``. So the residual hole is text below the anchor that
-is neither a task delegation nor inside a markered block — nothing here compares
-it. ``ci/lint_changed.sh`` carries exactly such text today, between the anchor
-block's closing ``fi`` and the first marker: a comment recording that this
-router is the one CI gates on. That divergence is intended, which is why the
-hole is left open rather than closed by widening the region.
+Behavioural assertions enumerate their triggers, so a trigger added to one
+router and not the other satisfies every one of them while the mirror drifts.
+This module therefore also compares the two routers' mirrored region directly,
+in two layers: per-block byte-identity driven by ``MIRRORED_BLOCK_MARKERS``,
+which renders a readable diff but is itself an enumeration; and
+multiset-equality of the task targets delegated below ``MIRROR_REGION_ANCHOR``,
+which is derived from the files and needs no list. The second layer compares
+``"${TASK_CMD[@]}" <target>`` delegations and nothing else, so text below the
+anchor that is neither a delegation nor inside a markered block — such as
+``lint_changed.sh``'s CI-scope preamble — is compared by nothing here.
 
 Lives under ``tests/helpers/`` for the same reason as ``router_harness``:
 ``pytest.ini`` sets ``--import-mode=importlib``, so a test's own directory is
@@ -70,10 +39,7 @@ import yaml
 
 from helpers.router_harness import COLUMN_ZERO_BLOCK_TERMINATOR, REPO_ROOT, assert_block_mirrored, diagnose
 
-#: Every path the reviewer-template check reads: a reviewer prompt, the two
-#: codex configs it scans for criteria that must live in the prompts instead,
-#: the SKILL.md half of the mirrored rubric, and the checker itself. Each must
-#: reach the check from either router.
+#: Paths that must reach the reviewer-template check from either router.
 REVIEWER_TEMPLATE_TRIGGERS: tuple[str, ...] = (
     ".claude/prompts/reviewer/diff.md",
     ".codex/config.toml",
@@ -86,8 +52,7 @@ TEMPLATE_ANNOUNCEMENT = "Checking reviewer template invariants..."
 
 TEMPLATE_TASK = "lint:reviewer-templates"
 
-#: Files that must re-run the Reviewer Output Envelope gate: a reviewer agent
-#: definition, the canonical doc, or the schema.
+#: Files that must re-run the Reviewer Output Envelope gate.
 REVIEWER_ENVELOPE_TRIGGERS: tuple[str, ...] = (
     ".claude/agents/code-review.md",
     ".claude/agents/codex-reviewer.md",
@@ -102,14 +67,12 @@ ENVELOPE_TASK = "lint:reviewer-envelope"
 #: A file no reviewer-facing lint branch should react to.
 UNRELATED_FILE = "README.md"
 
-#: Prefix the task stub prints for each delegation, chosen so the assertions
-#: read one stream (stdout) and ``diagnose`` keeps reporting the whole run.
+#: Prefix the task stub prints for each delegation.
 TASK_MARKER = "TASK-INVOKED: "
 
 #: Interpolates TASK_MARKER rather than repeating the literal: the stub writes
-#: the prefix and ``delegated_targets`` strips it, so two hand-kept copies would
-#: be one more unguarded duplication of exactly the kind this module exists to
-#: catch in the routers.
+#: the prefix and ``delegated_targets`` strips it, so hand-kept copies would
+#: drift.
 TASK_STUB = f"""#!/usr/bin/env bash
 # Echo the delegation so an assertion can prove *which* task target ran rather
 # than only that the router printed its announcement line.
@@ -121,11 +84,9 @@ exit 0
 LINT_ROUTERS: tuple[str, str] = ("lint_staged.sh", "lint_changed.sh")
 
 #: Opening comment of each block the two routers must carry byte-identically,
-#: matched as a line *prefix*. The cut at the em-dash buys a stable *locator*,
-#: not tolerance: the header line sits inside the compared slice, so rewriting
-#: its trailing prose in one router only still fails byte-identity, as it
-#: should. What the short prefix avoids is the locator itself going stale on
-#: that same edit and the marker resolving to nothing.
+#: matched as a line *prefix*. The cut at the em-dash buys a stable locator,
+#: not tolerance: the header line sits inside the compared slice, so rewording
+#: its trailing prose in one router only still fails byte-identity.
 MIRRORED_BLOCK_MARKERS: tuple[str, ...] = (
     "# Reviewer template invariant check —",
     "# Reviewer Output Envelope compliance —",
@@ -133,25 +94,17 @@ MIRRORED_BLOCK_MARKERS: tuple[str, ...] = (
 
 #: Anchor for the mirrored region: the last check both routers carry *outside*
 #: it. Everything after that block's closing ``fi`` is the tail the structural
-#: assertion compares. The anchor is what keeps the comparison honest — the two
-#: routers legitimately diverge above this line (different filters, different
-#: block ordering, and lint_changed.sh carries a CI-scope preamble just below
-#: the anchor block itself), so a whole-file comparison would report drift that
-#: is not drift. A stale anchor fails loudly rather than silently comparing
-#: nothing: extraction asserts it appears exactly once.
+#: assertion compares. The two routers legitimately diverge above this line, so
+#: a whole-file comparison would report drift that is not drift.
 MIRROR_REGION_ANCHOR = 'NON_PY_SQL_FILES=$(echo "$CHANGED_FILES"'
 
 #: A delegation to ``task``, as both routers write it. The target names the
 #: check, so the multiset of matches in the mirrored region *is* the tally of
 #: checks that region runs — read off the files, with no list to keep current.
-#: Comment text cannot match, which is what stops lint_changed.sh's CI-scope
-#: preamble from reading as a block a comment-header comparison would count —
-#: and is also why that preamble diverging is invisible to this layer.
 TASK_DELEGATION = re.compile(r'"\$\{TASK_CMD\[@\]\}"\s+([^\s;]+)')
 
-#: Home of the aggregate ``lint`` task — the full-sweep counterpart to the
-#: routers' incremental dispatch, and what ``ci/lint_changed.sh`` falls back to
-#: when it cannot compute a changed set.
+#: Home of the aggregate ``lint`` task, the full-sweep counterpart to the
+#: routers' incremental dispatch.
 TASKFILE_PATH = REPO_ROOT / "Taskfile.yml"
 
 #: Task targets the aggregate ``lint`` task must invoke. Each is wired into the
@@ -192,8 +145,6 @@ def assert_check_ran(
 
     The exit-code check is what separates "did not run the check" from "died
     under ``set -e`` before reaching it" — both leave the announcement absent.
-    Every stub exits 0, so a non-zero code here is always a real router
-    failure.
 
     Args:
         result: Completed router process.
@@ -228,11 +179,8 @@ def mirrored_region_delegations(script: str) -> Counter[str]:
     Count the task targets a lint router delegates to below the anchor.
 
     The region opens at the *first* column-zero terminator at or after the
-    anchor, where ``extract_marked_block`` closes its slice at the *last*
-    terminator in its window. The two choices point the same way: each
-    maximises the compared text. Opening at a later terminator here would drop
-    the leading blocks of the mirrored region from the comparison and let them
-    diverge unseen, which is the silent direction a parity guard must avoid.
+    anchor, which maximises the compared text: opening at a later one would
+    drop the leading blocks of the mirrored region and let them diverge unseen.
 
     Args:
         script: Router filename under ``ci/``.
@@ -256,7 +204,11 @@ def mirrored_region_delegations(script: str) -> Counter[str]:
 
 
 def assert_mirrored_region_delegations_match() -> None:
-    """Assert both lint routers run the same checks, as many times each, below the anchor."""
+    """Assert both lint routers run the same checks, as many times each, below the anchor.
+
+    Order-insensitive: reordering the mirrored blocks in both routers in step
+    is legitimate and must not fail here.
+    """
     left, right = LINT_ROUTERS
     left_targets = mirrored_region_delegations(left)
     right_targets = mirrored_region_delegations(right)
@@ -273,8 +225,7 @@ def aggregate_lint_subtasks() -> list[str]:
 
     Parsed as YAML rather than matched as text: a substring search would be
     satisfied by the target's name appearing in a ``desc:`` block or in a
-    neighbouring task, which is precisely how a removed ``cmds:`` entry would
-    slip through — ``taskfiles/lint.yml`` names both targets in prose.
+    neighbouring task, so a removed ``cmds:`` entry would slip through.
 
     Returns:
         The ``task:`` value of every mapping entry in the aggregate task's
@@ -290,15 +241,12 @@ def assert_aggregate_lint_runs_reviewer_checks() -> None:
     """
     Assert the aggregate ``lint`` task still invokes both reviewer checks.
 
-    Coverage here is partial by construction, and cannot be made otherwise from
-    a test: ``Taskfile.yml`` and ``taskfiles/`` match no routing branch in
-    either ``ci/test_staged.sh`` or ``ci/test_changed.sh``, so an edit to the
-    aggregate task on its own selects no tests and this assertion does not run.
-    Hanging it off ``LintRouterContract`` buys the reachable half — any edit to
-    either lint router routes to ``tests/ci/``, and the two wirings are changed
-    together often enough for that to be the likeliest moment the aggregate is
-    disturbed. Routing ``Taskfile.yml`` itself is the remaining gap; it is
-    filed as a TODO rather than closed here.
+    Coverage is partial by construction: ``Taskfile.yml`` matches no routing
+    branch in either test router, so an edit to the aggregate task on its own
+    selects no tests and this assertion does not run. Hanging it off
+    ``LintRouterContract`` buys the reachable half, since any edit to either
+    lint router routes to ``tests/ci/``. Routing ``Taskfile.yml`` itself is the
+    remaining gap, filed as a TODO rather than closed here.
     """
     subtasks = aggregate_lint_subtasks()
     missing = [target for target in AGGREGATE_LINT_REQUIRED_TASKS if target not in subtasks]
@@ -314,10 +262,9 @@ class LintRouterContract:
 
     Subclassed once per script rather than duplicated, for the same reason
     ``RouterContract`` is: the defect these tests exist to catch is drift
-    between the two files. Drift is not cosmetic: the CI ``lint`` job runs
-    ``task lint:changed`` and nothing else, so ``lint_changed.sh`` is the
-    router a pull request is gated on, and a check only ``lint_staged.sh``
-    carries never fires on one.
+    between the two files. The CI ``lint`` job runs ``task lint:changed`` and
+    nothing else, so a check only ``lint_staged.sh`` carries never fires on a
+    pull request.
 
     Subclasses set ``SCRIPT`` to the filename under ``ci/``.
     """
@@ -351,12 +298,9 @@ class LintRouterContract:
         """Both routers carry the block byte-identically, whitespace included.
 
         Ignores ``SCRIPT`` and reads both files, so it is redundant across the
-        two subclasses by construction. That redundancy is the point: a
-        cross-file invariant asserted in only one subclass would not run when
-        the *other* router is edited, since ``lint_changed.sh`` routes solely
-        to ``tests/ci/test_lint_changed.py`` and ``lint_staged.sh`` solely to
-        ``tests/ci/test_lint_staged.py``. Living on the shared contract is what
-        makes an edit to either file reach the check.
+        two subclasses by construction. That redundancy is the point: each
+        router routes only to its own test file, so a cross-file invariant
+        asserted in one subclass would not run when the other router is edited.
         """
         assert_block_mirrored(
             marker,
@@ -370,20 +314,15 @@ class LintRouterContract:
         The check above can only compare blocks somebody remembered to name in
         ``MIRRORED_BLOCK_MARKERS``; this one reads the delegations straight out
         of the two files, so a block added to — or dropped from — one router
-        alone fails without anyone updating a list, even when it delegates to a
-        target the region already runs. Reads both files and ignores ``SCRIPT``
-        for the same reason as its neighbour.
+        alone fails without anyone updating a list. Reads both files and
+        ignores ``SCRIPT`` for the same reason as its neighbour.
         """
         assert_mirrored_region_delegations_match()
 
     def test_aggregate_lint_task_runs_both_reviewer_checks(self) -> None:
         """The aggregate ``task lint`` still invokes both reviewer checks.
 
-        Reads ``Taskfile.yml``, not ``SCRIPT`` — the routers wire these two
-        checks incrementally and the aggregate wires them for a full sweep, and
-        the pair is normally edited together. Partial coverage by design: see
-        ``assert_aggregate_lint_runs_reviewer_checks`` for what a
-        ``Taskfile.yml``-only edit still misses and why no test placement can
-        catch it.
+        Reads ``Taskfile.yml``, not ``SCRIPT``. Partial coverage by design: see
+        ``assert_aggregate_lint_runs_reviewer_checks``.
         """
         assert_aggregate_lint_runs_reviewer_checks()
