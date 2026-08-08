@@ -43,6 +43,14 @@ because each closes a hole the fixture cannot see:
   list. ``helpers.lint_router_harness`` reuses the same extractor over the two
   lint routers.
 
+The two test routers get per-block byte-identity only, with no region-level
+delegation comparison of the kind ``helpers.lint_router_harness`` runs over the
+lint pair, because outside the mirrored branch they legitimately diverge —
+``test_changed.sh`` carries a ``docker/agent-cli/`` branch and a host-side
+container-integration re-run that ``test_staged.sh`` has no counterpart for, and
+the two dispatch chains open on different first-branch conditions — so an
+anchored region comparison would report that intended divergence as drift.
+
 Lives under ``tests/helpers/`` rather than beside the tests because
 ``pytest.ini`` sets ``--import-mode=importlib``, which does not put a test's
 own directory on ``sys.path``; ``pythonpath = tests`` makes this package
@@ -93,12 +101,23 @@ HELPER_MODULES: tuple[str, ...] = (
 #: the pair because its router contracts import helpers.router_harness.
 HELPER_SUITES = ("tests/ci/", "tests/helpers/")
 
-#: The sources whose only automated gate is the reviewer-template parity test.
-#: Two distinct relationships are checked, and these are the four files either
-#: one reads: _invariants.md holds the canonical INVARIANT: blocks every
-#: reviewer prompt under .claude/prompts/reviewer/ must reproduce verbatim; the
+#: A representative sample of the sources whose only automated gate is the
+#: reviewer-template parity test, not a closed enumeration of what that test
+#: reads. _invariants.md holds the canonical INVARIANT: blocks every reviewer
+#: prompt under .claude/prompts/reviewer/ must reproduce verbatim; diff.md is
+#: sampled as one such prompt, but scripts/lint_reviewer_templates.py discovers
+#: the templates by glob (_discover_template_names), so its siblings in that
+#: directory are checked too and reach the suite through the same branch. The
 #: diff-review SKILL.md holds the SHARED: regions the bridge template diff.md
-#: mirrors; and lint_reviewer_templates.py is the checker over both.
+#: mirrors, and lint_reviewer_templates.py is the checker over both.
+#:
+#: The checker's Codex-TOML relationship (_check_codex_toml over TOML_PATHS) is
+#: deliberately unrepresented: those two files are named by the *lint* routers'
+#: trigger regex, but neither reaches this suite from a test router.
+#: .codex/config.toml matches neither router's CHANGED_SCRIPTS filter, and
+#: docker/agent-cli/codex-config.toml is claimed by the earlier agent-cli branch
+#: in test_changed.sh before the reviewer-template branch is reached (and by no
+#: branch at all in test_staged.sh, whose filter omits that prefix).
 REVIEWER_TEMPLATE_SOURCES: tuple[str, ...] = (
     ".claude/prompts/reviewer/diff.md",
     ".claude/prompts/reviewer/_invariants.md",
@@ -128,9 +147,21 @@ REVIEWER_TEMPLATE_BRANCH_MARKER = 'elif [[ "$file" == .claude/prompts/reviewer/*
 #: offer — the whole rest of the dispatch chain would be swallowed without it.
 BRANCH_BOUNDARY_MARKERS: tuple[str, ...] = ('elif [[ "$file" == ',)
 
-#: Line, indentation stripped, that closes a block in either router family: a
-#: top-level ``if`` in the lint routers, an ``elif`` branch's inner ``if`` here.
+#: Closing line of a block, matched against the line with **indentation
+#: stripped** — so an indented ``fi`` matches. This is the ``elif`` branch's
+#: inner ``if`` in the test routers, and the top-level ``if`` of each mirrored
+#: block in the lint routers. Used by ``extract_marked_block``.
 BLOCK_TERMINATOR = "fi"
+
+#: Closing line of a block, matched at **column zero** — only the line ending is
+#: stripped, so a nested ``fi`` does not match. Not interchangeable with
+#: ``BLOCK_TERMINATOR``: the anchor block ``mirrored_region_delegations`` scans
+#: forward from wraps a nested ``if`` whose own ``fi`` is indented, and
+#: column-zero matching is what makes that scan stop at the *outer* ``fi``
+#: instead of the inner one. Relaxing this to the indentation-stripped form
+#: would silently move the region boundary, so the two semantics are carried as
+#: separate constants rather than reconciled into one.
+COLUMN_ZERO_BLOCK_TERMINATOR = "fi"
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 

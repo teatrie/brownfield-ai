@@ -39,7 +39,7 @@ quality reviews, or any other reviewer delegation.
 
 ## Step Verification Protocol
 
-At the end of every individual step in a multi-step plan, the Lead Agent/Orchestrator MUST independently stop to read `plan.md` to update progress. Then, the Orchestrator MUST explicitly stage modified files (`task git:add`) and invoke the `task` subagent to run `task lint:staged` and `task test:staged` to verify ONLY the staged files against pipeline gates before declaring the step complete. *The Orchestrator must NEVER run these commands directly in its own interactive terminal.*
+At the end of every individual step in a multi-step plan, the Lead Agent/Orchestrator MUST independently stop to read `plan.md` to update progress. Then, the Orchestrator MUST explicitly stage modified files (`task git:add`) and invoke the `task` subagent to run `task lint:staged` and `task test:staged` to verify ONLY the staged files against pipeline gates before declaring the step complete. `task test:staged` may be omitted **only** when the change is docs-only **and** no routing branch in `ci/test_staged.sh` maps any staged path to a test target — Markdown is not self-evidently untested (reviewer prompts, rubrics, and agent definitions all route to tests), so confirm the routing before skipping rather than inferring it from file extensions. *The Orchestrator must NEVER run these commands directly in its own interactive terminal.*
 
 ### Infrastructure Failure Handling
 

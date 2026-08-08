@@ -32,9 +32,26 @@ enumeration weakness a third time:
   readable diff naming exactly what diverged, but its marker list is itself an
   enumeration: a third block added to one router only is not on the list, and
   every known block still matches.
-- Set-equality of the task targets delegated below ``MIRROR_REGION_ANCHOR``,
-  derived from the files rather than from any list. Adding or removing a block
-  in one router changes that set and fails here whatever the markers say.
+- Multiset-equality of the task targets delegated below
+  ``MIRROR_REGION_ANCHOR``, derived from the files rather than from any list.
+  Adding or removing a delegation in one router changes that multiset and fails
+  here whatever the markers say — including a second block delegating to a
+  target the region already runs, which a plain set would absorb. A multiset
+  rather than an ordered list because the mirrored blocks are byte-identical
+  today, so order matches, but a legitimate future reordering of both routers
+  in step would fail an ordered comparison for nothing.
+
+What the second layer actually guarantees is narrower than "the two mirrored
+regions match": it compares ``"${TASK_CMD[@]}" <target>`` delegations and
+nothing else. Comments, the ``grep -E`` trigger filters, the announcement
+strings, and the ``[ -n ... ]`` guards are all invisible to it. The first layer
+covers those, but only inside a block someone named in
+``MIRRORED_BLOCK_MARKERS``. So the residual hole is text below the anchor that
+is neither a task delegation nor inside a markered block — nothing here compares
+it. ``ci/lint_changed.sh`` carries exactly such text today, between the anchor
+block's closing ``fi`` and the first marker: a comment recording that this
+router is the one CI gates on. That divergence is intended, which is why the
+hole is left open rather than closed by widening the region.
 
 Lives under ``tests/helpers/`` for the same reason as ``router_harness``:
 ``pytest.ini`` sets ``--import-mode=importlib``, so a test's own directory is
@@ -44,11 +61,14 @@ as ``helpers.lint_router_harness``.
 
 import re
 import subprocess
+from collections import Counter
 from collections.abc import Callable
+from typing import Any
 
 import pytest
+import yaml
 
-from helpers.router_harness import BLOCK_TERMINATOR, REPO_ROOT, assert_block_mirrored, diagnose
+from helpers.router_harness import COLUMN_ZERO_BLOCK_TERMINATOR, REPO_ROOT, assert_block_mirrored, diagnose
 
 #: Every path the reviewer-template check reads: a reviewer prompt, the two
 #: codex configs it scans for criteria that must live in the prompts instead,
@@ -86,10 +106,14 @@ UNRELATED_FILE = "README.md"
 #: read one stream (stdout) and ``diagnose`` keeps reporting the whole run.
 TASK_MARKER = "TASK-INVOKED: "
 
-TASK_STUB = """#!/usr/bin/env bash
+#: Interpolates TASK_MARKER rather than repeating the literal: the stub writes
+#: the prefix and ``delegated_targets`` strips it, so two hand-kept copies would
+#: be one more unguarded duplication of exactly the kind this module exists to
+#: catch in the routers.
+TASK_STUB = f"""#!/usr/bin/env bash
 # Echo the delegation so an assertion can prove *which* task target ran rather
 # than only that the router printed its announcement line.
-echo "TASK-INVOKED: $*"
+echo "{TASK_MARKER}$*"
 exit 0
 """
 
@@ -111,18 +135,29 @@ MIRRORED_BLOCK_MARKERS: tuple[str, ...] = (
 #: it. Everything after that block's closing ``fi`` is the tail the structural
 #: assertion compares. The anchor is what keeps the comparison honest — the two
 #: routers legitimately diverge above this line (different filters, different
-#: block ordering, and lint_changed.sh carries a CI-scope preamble), so a
-#: whole-file comparison would report drift that is not drift. A stale anchor
-#: fails loudly rather than silently comparing nothing: extraction asserts it
-#: appears exactly once.
+#: block ordering, and lint_changed.sh carries a CI-scope preamble just below
+#: the anchor block itself), so a whole-file comparison would report drift that
+#: is not drift. A stale anchor fails loudly rather than silently comparing
+#: nothing: extraction asserts it appears exactly once.
 MIRROR_REGION_ANCHOR = 'NON_PY_SQL_FILES=$(echo "$CHANGED_FILES"'
 
 #: A delegation to ``task``, as both routers write it. The target names the
-#: check, so the set of targets in the mirrored region *is* the set of checks
-#: that region runs — read off the files, with no list to keep current.
+#: check, so the multiset of matches in the mirrored region *is* the tally of
+#: checks that region runs — read off the files, with no list to keep current.
 #: Comment text cannot match, which is what stops lint_changed.sh's CI-scope
-#: preamble from reading as a block a comment-header comparison would count.
+#: preamble from reading as a block a comment-header comparison would count —
+#: and is also why that preamble diverging is invisible to this layer.
 TASK_DELEGATION = re.compile(r'"\$\{TASK_CMD\[@\]\}"\s+([^\s;]+)')
+
+#: Home of the aggregate ``lint`` task — the full-sweep counterpart to the
+#: routers' incremental dispatch, and what ``ci/lint_changed.sh`` falls back to
+#: when it cannot compute a changed set.
+TASKFILE_PATH = REPO_ROOT / "Taskfile.yml"
+
+#: Task targets the aggregate ``lint`` task must invoke. Each is wired into the
+#: two routers incrementally as well, so a target dropped from the aggregate
+#: leaves the check firing only on a diff that happens to touch its triggers.
+AGGREGATE_LINT_REQUIRED_TASKS: tuple[str, ...] = (TEMPLATE_TASK, ENVELOPE_TASK)
 
 LintRouteFn = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -188,39 +223,89 @@ def assert_check_skipped(
     assert task_target not in delegated_targets(result), f"unexpected delegation to {task_target!r}\n{diagnose(result)}"
 
 
-def mirrored_region_delegations(script: str) -> set[str]:
+def mirrored_region_delegations(script: str) -> Counter[str]:
     """
-    Collect the task targets a lint router delegates to below the anchor.
+    Count the task targets a lint router delegates to below the anchor.
+
+    The region opens at the *first* column-zero terminator at or after the
+    anchor, where ``extract_marked_block`` closes its slice at the *last*
+    terminator in its window. The two choices point the same way: each
+    maximises the compared text. Opening at a later terminator here would drop
+    the leading blocks of the mirrored region from the comparison and let them
+    diverge unseen, which is the silent direction a parity guard must avoid.
 
     Args:
         script: Router filename under ``ci/``.
 
     Returns:
-        One entry per distinct task target delegated in the mirrored region.
+        One count per task target delegated in the mirrored region, so a
+        repeated delegation is distinguishable from a single one.
     """
     lines = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8").splitlines(keepends=True)
     anchors = [index for index, line in enumerate(lines) if line.startswith(MIRROR_REGION_ANCHOR)]
     assert len(anchors) == 1, f"ci/{script}: anchor {MIRROR_REGION_ANCHOR!r} found {len(anchors)} times, expected exactly 1"
 
-    ends = [index for index in range(anchors[0], len(lines)) if lines[index].rstrip("\r\n") == BLOCK_TERMINATOR]
-    assert ends, f"ci/{script}: anchor block has no closing {BLOCK_TERMINATOR!r}"
+    ends = [index for index in range(anchors[0], len(lines)) if lines[index].rstrip("\r\n") == COLUMN_ZERO_BLOCK_TERMINATOR]
+    assert ends, f"ci/{script}: anchor block has no closing {COLUMN_ZERO_BLOCK_TERMINATOR!r} at column zero"
 
-    targets = set(TASK_DELEGATION.findall("".join(lines[ends[0] + 1 :])))
-    # Two empty sets compare equal, so a mis-anchored slice would pass
+    targets = Counter(TASK_DELEGATION.findall("".join(lines[ends[0] + 1 :])))
+    # Two empty counters compare equal, so a mis-anchored slice would pass
     # vacuously — the exact failure mode the region check exists to rule out.
     assert targets, f"ci/{script}: no task delegation found below the anchor block"
     return targets
 
 
 def assert_mirrored_region_delegations_match() -> None:
-    """Assert both lint routers run the same set of checks in the mirrored region."""
+    """Assert both lint routers run the same checks, as many times each, below the anchor."""
     left, right = LINT_ROUTERS
     left_targets = mirrored_region_delegations(left)
     right_targets = mirrored_region_delegations(right)
     assert left_targets == right_targets, (
         "the mirrored region of the two lint routers delegates to different task targets\n"
-        f"only in ci/{left}: {sorted(left_targets - right_targets)}\n"
-        f"only in ci/{right}: {sorted(right_targets - left_targets)}"
+        f"surplus in ci/{left}: {sorted((left_targets - right_targets).elements())}\n"
+        f"surplus in ci/{right}: {sorted((right_targets - left_targets).elements())}"
+    )
+
+
+def aggregate_lint_subtasks() -> list[str]:
+    """
+    Read the sub-tasks the aggregate ``lint`` task in ``Taskfile.yml`` runs.
+
+    Parsed as YAML rather than matched as text: a substring search would be
+    satisfied by the target's name appearing in a ``desc:`` block or in a
+    neighbouring task, which is precisely how a removed ``cmds:`` entry would
+    slip through — ``taskfiles/lint.yml`` names both targets in prose.
+
+    Returns:
+        The ``task:`` value of every mapping entry in the aggregate task's
+        ``cmds`` list, in file order. Plain-string ``cmds`` entries are shell
+        commands, not sub-task invocations, and are skipped.
+    """
+    document: Any = yaml.safe_load(TASKFILE_PATH.read_text(encoding="utf-8"))
+    cmds = document["tasks"]["lint"]["cmds"]
+    return [entry["task"] for entry in cmds if isinstance(entry, dict) and "task" in entry]
+
+
+def assert_aggregate_lint_runs_reviewer_checks() -> None:
+    """
+    Assert the aggregate ``lint`` task still invokes both reviewer checks.
+
+    Coverage here is partial by construction, and cannot be made otherwise from
+    a test: ``Taskfile.yml`` and ``taskfiles/`` match no routing branch in
+    either ``ci/test_staged.sh`` or ``ci/test_changed.sh``, so an edit to the
+    aggregate task on its own selects no tests and this assertion does not run.
+    Hanging it off ``LintRouterContract`` buys the reachable half — any edit to
+    either lint router routes to ``tests/ci/``, and the two wirings are changed
+    together often enough for that to be the likeliest moment the aggregate is
+    disturbed. Routing ``Taskfile.yml`` itself is the remaining gap; it is
+    filed as a TODO rather than closed here.
+    """
+    subtasks = aggregate_lint_subtasks()
+    missing = [target for target in AGGREGATE_LINT_REQUIRED_TASKS if target not in subtasks]
+    assert not missing, (
+        f"the aggregate `lint` task in {TASKFILE_PATH.name} no longer runs {missing} — "
+        f"a full `task lint` would skip {'those checks' if len(missing) > 1 else 'that check'}, "
+        f"leaving them to fire only when a diff happens to touch their triggers. Found: {subtasks}"
     )
 
 
@@ -280,12 +365,25 @@ class LintRouterContract:
         )
 
     def test_mirrored_region_runs_the_same_checks(self) -> None:
-        """Both routers delegate to the same task targets below the anchor.
+        """Both routers delegate to the same task targets, as often, below the anchor.
 
         The check above can only compare blocks somebody remembered to name in
         ``MIRRORED_BLOCK_MARKERS``; this one reads the delegations straight out
         of the two files, so a block added to — or dropped from — one router
-        alone fails without anyone updating a list. Reads both files and
-        ignores ``SCRIPT`` for the same reason as its neighbour.
+        alone fails without anyone updating a list, even when it delegates to a
+        target the region already runs. Reads both files and ignores ``SCRIPT``
+        for the same reason as its neighbour.
         """
         assert_mirrored_region_delegations_match()
+
+    def test_aggregate_lint_task_runs_both_reviewer_checks(self) -> None:
+        """The aggregate ``task lint`` still invokes both reviewer checks.
+
+        Reads ``Taskfile.yml``, not ``SCRIPT`` — the routers wire these two
+        checks incrementally and the aggregate wires them for a full sweep, and
+        the pair is normally edited together. Partial coverage by design: see
+        ``assert_aggregate_lint_runs_reviewer_checks`` for what a
+        ``Taskfile.yml``-only edit still misses and why no test placement can
+        catch it.
+        """
+        assert_aggregate_lint_runs_reviewer_checks()

@@ -68,9 +68,13 @@ def route(tmp_path: Path) -> RouteFn:
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
         env["ROUTER_TEST_CHANGED_FILES"] = str(listing)
         # Pin the push branch of test_changed.sh so CHANGED_FILES comes from a
-        # single intercepted `git diff --name-only`. Its local branch unions
-        # four git queries, two of which would leak real worktree state into
-        # the fixture. test_staged.sh ignores this variable.
+        # single intercepted `git diff --name-only`. The local branch is fully
+        # stubbed too — GIT_STUB answers every `diff`, `ls-files` and
+        # `rev-parse` it issues, so nothing leaks in from the real worktree —
+        # but it unions four queries and pipes them through `sort -u`, which
+        # would deliver the synthetic list deduplicated and reordered. Pinning
+        # keeps the router's input identical to what the test wrote.
+        # test_staged.sh ignores this variable.
         env["GITHUB_EVENT_NAME"] = "push"
 
         return subprocess.run(
@@ -136,9 +140,13 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
         env["ROUTER_TEST_CHANGED_FILES"] = str(listing)
         # Pin the push branch of lint_changed.sh so CHANGED_FILES comes from a
-        # single intercepted `git diff --name-only`. Its local branch unions
-        # four git queries, two of which would leak real worktree state into
-        # the fixture. lint_staged.sh ignores this variable.
+        # single intercepted `git diff --name-only`. The local branch is fully
+        # stubbed too — GIT_STUB answers every `diff`, `ls-files` and
+        # `rev-parse` it issues, so nothing leaks in from the real worktree —
+        # but it unions four queries and pipes them through `sort -u`, which
+        # would deliver the synthetic list deduplicated and reordered. Pinning
+        # keeps the router's input identical to what the test wrote.
+        # lint_staged.sh ignores this variable.
         env["GITHUB_EVENT_NAME"] = "push"
 
         return subprocess.run(
