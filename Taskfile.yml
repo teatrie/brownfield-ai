@@ -80,6 +80,8 @@ tasks:
       - task: lint:markdown
       - task: lint:skills
       - task: lint:evals
+      - task: lint:reviewer-templates
+      - task: lint:reviewer-envelope
       - task: lint:yaml
       - task: lint:python
       - task: lint:python-sql

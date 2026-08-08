@@ -19,15 +19,22 @@ pass for a router that printed the banner and then called the wrong task
 target, and the delegation alone would pass for one that ran the check silently
 under a different branch.
 
-Behavioural coverage alone is not enough, which is why this module also asserts
-byte-identity of the two mirrored blocks directly. The behavioural assertions
+Behavioural coverage alone is not enough, which is why this module also
+compares the two routers' mirrored region directly. The behavioural assertions
 enumerate their triggers, so a sixth trigger added to one router and not the
 other satisfies every one of them while the mirror drifts — the same silent
-divergence the routers themselves exist to close, reproduced one level up. The
-only enforcement that byte-identity ever had was
-``tmp/apply_reviewer_template_ci_routing.py``, which is untracked and dies with
-``tmp/``; nothing in the committed tree compared the files. The parity
-assertion below is that enforcement, made durable.
+divergence the routers themselves exist to close, reproduced one level up.
+
+That comparison has two layers, because either one alone reproduces the
+enumeration weakness a third time:
+
+- Per-block byte-identity, driven by ``MIRRORED_BLOCK_MARKERS``. It renders a
+  readable diff naming exactly what diverged, but its marker list is itself an
+  enumeration: a third block added to one router only is not on the list, and
+  every known block still matches.
+- Set-equality of the task targets delegated below ``MIRROR_REGION_ANCHOR``,
+  derived from the files rather than from any list. Adding or removing a block
+  in one router changes that set and fails here whatever the markers say.
 
 Lives under ``tests/helpers/`` for the same reason as ``router_harness``:
 ``pytest.ini`` sets ``--import-mode=importlib``, so a test's own directory is
@@ -35,18 +42,18 @@ not on ``sys.path``, while ``pythonpath = tests`` makes this package importable
 as ``helpers.lint_router_harness``.
 """
 
-import difflib
+import re
 import subprocess
 from collections.abc import Callable
 
 import pytest
 
-from helpers.router_harness import REPO_ROOT, diagnose
+from helpers.router_harness import BLOCK_TERMINATOR, REPO_ROOT, assert_block_mirrored, diagnose
 
-#: Every source the reviewer-template parity guard is built from or compares:
-#: the reviewer prompt and the two codex configs the bridge template is
-#: rendered from, the mirrored rubric half in SKILL.md, and the checker that
-#: compares the two halves. Each must reach the check from either router.
+#: Every path the reviewer-template check reads: a reviewer prompt, the two
+#: codex configs it scans for criteria that must live in the prompts instead,
+#: the SKILL.md half of the mirrored rubric, and the checker itself. Each must
+#: reach the check from either router.
 REVIEWER_TEMPLATE_TRIGGERS: tuple[str, ...] = (
     ".claude/prompts/reviewer/diff.md",
     ".codex/config.toml",
@@ -89,19 +96,33 @@ exit 0
 #: The two lint routers, in the order the parity diff labels them.
 LINT_ROUTERS: tuple[str, str] = ("lint_staged.sh", "lint_changed.sh")
 
-#: Opening comment of each block the two routers must carry byte-identically.
-#: Matched as a line *prefix* and cut at the em-dash so the assertion survives
-#: a rewrite of the trailing prose in either header; the prefix through the
-#: em-dash is the part that names the block.
+#: Opening comment of each block the two routers must carry byte-identically,
+#: matched as a line *prefix*. The cut at the em-dash buys a stable *locator*,
+#: not tolerance: the header line sits inside the compared slice, so rewriting
+#: its trailing prose in one router only still fails byte-identity, as it
+#: should. What the short prefix avoids is the locator itself going stale on
+#: that same edit and the marker resolving to nothing.
 MIRRORED_BLOCK_MARKERS: tuple[str, ...] = (
     "# Reviewer template invariant check —",
     "# Reviewer Output Envelope compliance —",
 )
 
-#: Closing line of a mirrored block. Both blocks are a single top-level ``if``
-#: whose terminator sits at column 0, while their inner ``fi`` is indented, so
-#: an exact match on the unindented token ends the slice at the right place.
-BLOCK_TERMINATOR = "fi"
+#: Anchor for the mirrored region: the last check both routers carry *outside*
+#: it. Everything after that block's closing ``fi`` is the tail the structural
+#: assertion compares. The anchor is what keeps the comparison honest — the two
+#: routers legitimately diverge above this line (different filters, different
+#: block ordering, and lint_changed.sh carries a CI-scope preamble), so a
+#: whole-file comparison would report drift that is not drift. A stale anchor
+#: fails loudly rather than silently comparing nothing: extraction asserts it
+#: appears exactly once.
+MIRROR_REGION_ANCHOR = 'NON_PY_SQL_FILES=$(echo "$CHANGED_FILES"'
+
+#: A delegation to ``task``, as both routers write it. The target names the
+#: check, so the set of targets in the mirrored region *is* the set of checks
+#: that region runs — read off the files, with no list to keep current.
+#: Comment text cannot match, which is what stops lint_changed.sh's CI-scope
+#: preamble from reading as a block a comment-header comparison would count.
+TASK_DELEGATION = re.compile(r'"\$\{TASK_CMD\[@\]\}"\s+([^\s;]+)')
 
 LintRouteFn = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -167,53 +188,40 @@ def assert_check_skipped(
     assert task_target not in delegated_targets(result), f"unexpected delegation to {task_target!r}\n{diagnose(result)}"
 
 
-def extract_mirrored_block(script: str, marker: str) -> str:
+def mirrored_region_delegations(script: str) -> set[str]:
     """
-    Slice a marked block out of a lint router, line endings preserved.
-
-    Located by marker rather than by line number, which drifts with every edit
-    above the block. A marker seen more or fewer than once fails here instead
-    of silently slicing the wrong region.
+    Collect the task targets a lint router delegates to below the anchor.
 
     Args:
         script: Router filename under ``ci/``.
-        marker: Opening comment of the block, matched as a line prefix.
 
     Returns:
-        The block from its opening comment through its closing ``fi``.
+        One entry per distinct task target delegated in the mirrored region.
     """
     lines = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8").splitlines(keepends=True)
-    starts = [index for index, line in enumerate(lines) if line.startswith(marker)]
-    assert len(starts) == 1, f"ci/{script}: marker {marker!r} found {len(starts)} times, expected exactly 1"
+    anchors = [index for index, line in enumerate(lines) if line.startswith(MIRROR_REGION_ANCHOR)]
+    assert len(anchors) == 1, f"ci/{script}: anchor {MIRROR_REGION_ANCHOR!r} found {len(anchors)} times, expected exactly 1"
 
-    start = starts[0]
-    ends = [index for index in range(start, len(lines)) if lines[index].rstrip("\r\n") == BLOCK_TERMINATOR]
-    assert ends, f"ci/{script}: no closing {BLOCK_TERMINATOR!r} after marker {marker!r}"
-    return "".join(lines[start : ends[0] + 1])
+    ends = [index for index in range(anchors[0], len(lines)) if lines[index].rstrip("\r\n") == BLOCK_TERMINATOR]
+    assert ends, f"ci/{script}: anchor block has no closing {BLOCK_TERMINATOR!r}"
+
+    targets = set(TASK_DELEGATION.findall("".join(lines[ends[0] + 1 :])))
+    # Two empty sets compare equal, so a mis-anchored slice would pass
+    # vacuously — the exact failure mode the region check exists to rule out.
+    assert targets, f"ci/{script}: no task delegation found below the anchor block"
+    return targets
 
 
-def assert_block_mirrored(marker: str) -> None:
-    """
-    Assert a marked block is byte-identical in both lint routers.
-
-    Args:
-        marker: Opening comment of the block, matched as a line prefix.
-    """
+def assert_mirrored_region_delegations_match() -> None:
+    """Assert both lint routers run the same set of checks in the mirrored region."""
     left, right = LINT_ROUTERS
-    left_block = extract_mirrored_block(left, marker)
-    right_block = extract_mirrored_block(right, marker)
-    # Rendered eagerly so the message names *what* diverged — indentation and
-    # trailing whitespace included. A parity failure that reports only
-    # "not equal" leaves the reader to diff two shell scripts by hand.
-    diff = "".join(
-        difflib.unified_diff(
-            left_block.splitlines(keepends=True),
-            right_block.splitlines(keepends=True),
-            fromfile=f"ci/{left}",
-            tofile=f"ci/{right}",
-        )
+    left_targets = mirrored_region_delegations(left)
+    right_targets = mirrored_region_delegations(right)
+    assert left_targets == right_targets, (
+        "the mirrored region of the two lint routers delegates to different task targets\n"
+        f"only in ci/{left}: {sorted(left_targets - right_targets)}\n"
+        f"only in ci/{right}: {sorted(right_targets - left_targets)}"
     )
-    assert left_block == right_block, f"mirrored block {marker!r} diverged between the lint routers\n{diff}"
 
 
 class LintRouterContract:
@@ -265,4 +273,19 @@ class LintRouterContract:
         ``tests/ci/test_lint_staged.py``. Living on the shared contract is what
         makes an edit to either file reach the check.
         """
-        assert_block_mirrored(marker)
+        assert_block_mirrored(
+            marker,
+            routers=LINT_ROUTERS,
+            boundaries=MIRRORED_BLOCK_MARKERS,
+        )
+
+    def test_mirrored_region_runs_the_same_checks(self) -> None:
+        """Both routers delegate to the same task targets below the anchor.
+
+        The check above can only compare blocks somebody remembered to name in
+        ``MIRRORED_BLOCK_MARKERS``; this one reads the delegations straight out
+        of the two files, so a block added to — or dropped from — one router
+        alone fails without anyone updating a list. Reads both files and
+        ignores ``SCRIPT`` for the same reason as its neighbour.
+        """
+        assert_mirrored_region_delegations_match()

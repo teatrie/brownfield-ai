@@ -27,13 +27,21 @@ Two deliberate limits:
   announcing would be indistinguishable from one that deliberately selected
   nothing.
 
-One assertion here deliberately reads the repository instead of the fixture:
-``assert_reviewer_template_suite_pinned``. The fixture symlinks the real
-``tests/`` into its fake workspace so the routers' ``[ -f "$test_file" ]``
-probes resolve, which means a behavioural assertion cannot distinguish "the
-router names a live suite" from "the router names a path that no longer
-exists". The literal is unpinned everywhere else, so a rename would leave both
-routers guarding a dead path and silently selecting zero tests.
+Two assertions here deliberately read the repository instead of the fixture,
+because each closes a hole the fixture cannot see:
+
+- ``assert_reviewer_template_suite_pinned``. The fixture symlinks the real
+  ``tests/`` into its fake workspace so the routers' ``[ -f "$test_file" ]``
+  probes resolve, which means a behavioural assertion cannot distinguish "the
+  router names a live suite" from "the router names a path that no longer
+  exists". The literal is unpinned everywhere else, so a rename would leave
+  both routers guarding a dead path and silently selecting zero tests.
+- ``assert_block_mirrored``. Behavioural assertions enumerate their triggers,
+  so a trigger added to one router and not the other satisfies every one of
+  them while the two branches drift apart — the enumeration can only cover the
+  triggers already known. Comparing the branch text itself needs no trigger
+  list. ``helpers.lint_router_harness`` reuses the same extractor over the two
+  lint routers.
 
 Lives under ``tests/helpers/`` rather than beside the tests because
 ``pytest.ini`` sets ``--import-mode=importlib``, which does not put a test's
@@ -41,8 +49,9 @@ own directory on ``sys.path``; ``pythonpath = tests`` makes this package
 importable as ``helpers.router_harness``.
 """
 
+import difflib
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -84,10 +93,12 @@ HELPER_MODULES: tuple[str, ...] = (
 #: the pair because its router contracts import helpers.router_harness.
 HELPER_SUITES = ("tests/ci/", "tests/helpers/")
 
-#: The sources whose only automated gate is the reviewer-template parity test:
-#: the two mirrored rubric halves (the SHARED: regions of the diff-review
-#: SKILL.md and the bridge template rendered from them, alongside the invariant
-#: block both carry) and the checker that compares them.
+#: The sources whose only automated gate is the reviewer-template parity test.
+#: Two distinct relationships are checked, and these are the four files either
+#: one reads: _invariants.md holds the canonical INVARIANT: blocks every
+#: reviewer prompt under .claude/prompts/reviewer/ must reproduce verbatim; the
+#: diff-review SKILL.md holds the SHARED: regions the bridge template diff.md
+#: mirrors; and lint_reviewer_templates.py is the checker over both.
 REVIEWER_TEMPLATE_SOURCES: tuple[str, ...] = (
     ".claude/prompts/reviewer/diff.md",
     ".claude/prompts/reviewer/_invariants.md",
@@ -103,6 +114,23 @@ REVIEWER_TEMPLATE_SUITE = "tests/scripts/test_reviewer_templates.py"
 
 #: The routers that hard-code REVIEWER_TEMPLATE_SUITE as a literal.
 TEST_ROUTERS: tuple[str, str] = ("test_staged.sh", "test_changed.sh")
+
+#: Opening line of the reviewer-template branch both test routers must carry
+#: byte-identically. REVIEWER_TEMPLATE_SOURCES catches a trigger *dropped* from
+#: one router — every source it lists must still route. It cannot catch one
+#: *added* to a single router, because it can only enumerate triggers that
+#: already exist; comparing the branch text needs no enumeration at all.
+REVIEWER_TEMPLATE_BRANCH_MARKER = 'elif [[ "$file" == .claude/prompts/reviewer/* ]]'
+
+#: Opening prefix shared by every branch of the changed-file dispatch chain.
+#: A block slice ends at the next sibling branch rather than at the end of the
+#: enclosing loop, which is the nearest closing ``fi`` these routers otherwise
+#: offer — the whole rest of the dispatch chain would be swallowed without it.
+BRANCH_BOUNDARY_MARKERS: tuple[str, ...] = ('elif [[ "$file" == ',)
+
+#: Line, indentation stripped, that closes a block in either router family: a
+#: top-level ``if`` in the lint routers, an ``elif`` branch's inner ``if`` here.
+BLOCK_TERMINATOR = "fi"
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
@@ -207,6 +235,15 @@ def assert_reviewer_template_suite_pinned() -> None:
     symlinks the real ``tests/`` in, so the router's own existence probe is
     satisfied by whatever the tree happens to contain, which is exactly the
     fact under test here.
+
+    ``tests/scripts/test_reviewer_templates.py`` carries an inlined copy of
+    this assertion rather than importing it. That duplication is deliberate:
+    the helper fan-out in both routers sends a changed module under
+    ``tests/helpers/`` to ``tests/helpers/`` and ``tests/ci/`` only, so an
+    import from ``tests/scripts/`` would be a dependency no router covers and a
+    rename here would break that file at collection time with nothing running
+    to report it. Widening the fan-out is the alternative and costs the whole
+    ``tests/scripts/`` suite on every helper edit. Do not merge the two copies.
     """
     suite = REPO_ROOT / REVIEWER_TEMPLATE_SUITE
     assert suite.is_file(), (
@@ -217,6 +254,90 @@ def assert_reviewer_template_suite_pinned() -> None:
     for script in TEST_ROUTERS:
         source = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8")
         assert REVIEWER_TEMPLATE_SUITE in source, f"ci/{script} no longer routes to {REVIEWER_TEMPLATE_SUITE}"
+
+
+def extract_marked_block(
+    script: str,
+    marker: str,
+    *,
+    boundaries: Sequence[str],
+    terminator: str = BLOCK_TERMINATOR,
+) -> str:
+    """
+    Slice a marked block out of a router script, line endings preserved.
+
+    Located by marker rather than by line number, which drifts with every edit
+    above the block. A marker seen more or fewer than once fails here instead
+    of silently slicing the wrong region.
+
+    The block ends at the *last* terminator inside the window running from the
+    marker to the next sibling boundary — not the first. Stopping at the first
+    is correct only while a block holds exactly one top-level statement: give
+    it a second and the slice truncates, the un-compared tail is free to
+    diverge, and the assertion still passes. Over-slicing is the safe
+    direction, since it drags unrelated lines into a byte-identity comparison
+    that then fails loudly; under-slicing fails silently, which is the one
+    outcome a parity guard must not produce.
+
+    Args:
+        script: Router filename under ``ci/``.
+        marker: Opening line of the block, matched as a prefix of the
+            indentation-stripped line.
+        boundaries: Opening-line prefixes of the sibling blocks that bound the
+            search window.
+        terminator: Line content, indentation stripped, that closes the block.
+
+    Returns:
+        The block from its opening line through its closing terminator.
+    """
+    lines = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8").splitlines(keepends=True)
+    starts = [index for index, line in enumerate(lines) if line.lstrip().startswith(marker)]
+    assert len(starts) == 1, f"ci/{script}: marker {marker!r} found {len(starts)} times, expected exactly 1"
+
+    start = starts[0]
+    window_end = next(
+        (index for index in range(start + 1, len(lines)) if any(lines[index].lstrip().startswith(boundary) for boundary in boundaries)),
+        len(lines),
+    )
+    ends = [index for index in range(start, window_end) if lines[index].strip() == terminator]
+    assert ends, f"ci/{script}: no closing {terminator!r} between marker {marker!r} and the next block boundary"
+    return "".join(lines[start : ends[-1] + 1])
+
+
+def assert_block_mirrored(
+    marker: str,
+    *,
+    routers: tuple[str, str],
+    boundaries: Sequence[str],
+    terminator: str = BLOCK_TERMINATOR,
+) -> None:
+    """
+    Assert a marked block is byte-identical across a pair of routers.
+
+    Args:
+        marker: Opening line of the block, matched as a prefix of the
+            indentation-stripped line.
+        routers: The two router filenames under ``ci/``, in the order the
+            rendered diff labels them.
+        boundaries: Opening-line prefixes of the sibling blocks that bound the
+            search window.
+        terminator: Line content, indentation stripped, that closes the block.
+    """
+    left, right = routers
+    left_block = extract_marked_block(left, marker, boundaries=boundaries, terminator=terminator)
+    right_block = extract_marked_block(right, marker, boundaries=boundaries, terminator=terminator)
+    # Rendered eagerly so the message names *what* diverged — indentation and
+    # trailing whitespace included. A parity failure that reports only
+    # "not equal" leaves the reader to diff two shell scripts by hand.
+    diff = "".join(
+        difflib.unified_diff(
+            left_block.splitlines(keepends=True),
+            right_block.splitlines(keepends=True),
+            fromfile=f"ci/{left}",
+            tofile=f"ci/{right}",
+        )
+    )
+    assert left_block == right_block, f"mirrored block {marker!r} diverged between ci/{left} and ci/{right}\n{diff}"
 
 
 class RouterContract:
@@ -307,9 +428,9 @@ class RouterContract:
     def test_no_helper_filename_derivation(self, route: RouteFn, module: str) -> None:
         """No per-module test filename is derived.
 
-        Guards the reason for directory routing: two of the four modules have
-        no test file, so a derivation rule resolves them to nothing — the
-        silent un-routing this branch exists to close.
+        Guards the reason for directory routing: some of these modules have no
+        test file of their own, so a derivation rule resolves them to nothing —
+        the silent un-routing this branch exists to close.
         """
         derived = f"tests/helpers/test_{Path(module).stem}.py"
         result = route(self.SCRIPT, [module])
@@ -372,3 +493,23 @@ class RouterContract:
         module cannot see.
         """
         assert_reviewer_template_suite_pinned()
+
+    def test_reviewer_template_branch_is_byte_identical(self) -> None:
+        """Both routers carry the reviewer-template branch byte-identically.
+
+        The behavioural assertions above enumerate ``REVIEWER_TEMPLATE_SOURCES``
+        and so catch a trigger *dropped* from one router; a trigger *added* to
+        one router only passes all of them, because an enumeration cannot list
+        a trigger that does not exist yet. Comparing the branch text closes
+        that direction without any list to maintain.
+
+        Ignores ``SCRIPT`` and reads both routers, so it is redundant across
+        the two subclasses by construction — the same trade
+        ``test_reviewer_template_suite_path_is_pinned`` makes, and for the same
+        reason: each router routes only to its own test file.
+        """
+        assert_block_mirrored(
+            REVIEWER_TEMPLATE_BRANCH_MARKER,
+            routers=TEST_ROUTERS,
+            boundaries=BRANCH_BOUNDARY_MARKERS,
+        )

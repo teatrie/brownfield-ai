@@ -47,7 +47,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from helpers.router_harness import assert_reviewer_template_suite_pinned
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 INVARIANTS: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer" / "_invariants.md"
@@ -75,6 +74,12 @@ INVARIANT_NAMES: tuple[str, ...] = (
     "criteria",
     "adversarial-rigor",
 )
+
+#: This file's own path, as both CI test routers hard-code it.
+ROUTED_TEST_PATH: str = "tests/scripts/test_reviewer_templates.py"
+
+#: The routers that name ROUTED_TEST_PATH as a literal.
+TEST_ROUTERS: tuple[str, str] = ("test_staged.sh", "test_changed.sh")
 
 
 def _extract(text: str, name: str) -> str | None:
@@ -963,8 +968,30 @@ def test_fix_fails_on_escaped_blockquote_in_skill(tmp_path: Path) -> None:
 def test_routing_target_path_is_pinned() -> None:
     """Both CI routers still name this file, and it exists at that path.
 
-    Routed from this file rather than only from ``tests/ci/`` so that
-    renaming it carries the assertion along and fails on the stale
-    literal; an edit to either router reaches the ``tests/ci/`` copy.
+    Each router guards its literal with ``[ -f "$test_file" ]``, so a
+    renamed or deleted suite makes both route *nothing* and report
+    success — the silent zero-tests outcome that branch exists to
+    prevent. Routed from this file rather than only from ``tests/ci/``
+    so that renaming it carries the assertion along and fails on the
+    stale literal; an edit to either router reaches the ``tests/ci/``
+    copy.
+
+    Spelled out here rather than imported from
+    ``helpers.router_harness``, which carries the same assertion. The
+    helper fan-out in both routers sends a changed module under
+    ``tests/helpers/`` to ``tests/helpers/`` and ``tests/ci/`` only, so
+    an import would be a cross-package dependency no router covers:
+    renaming the helper would break this file at collection time with
+    nothing running to report it. Widening that fan-out is the
+    alternative and costs the whole ``tests/scripts/`` suite on every
+    helper edit. Do not merge the two copies.
     """
-    assert_reviewer_template_suite_pinned()
+    suite = REPO_ROOT / ROUTED_TEST_PATH
+    assert suite.is_file(), (
+        f"{ROUTED_TEST_PATH} is missing; both routers guard it with `[ -f ]` "
+        "and will route nothing — update the literal in "
+        f"{', '.join(f'ci/{script}' for script in TEST_ROUTERS)} alongside the rename"
+    )
+    for script in TEST_ROUTERS:
+        source = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8")
+        assert ROUTED_TEST_PATH in source, f"ci/{script} no longer routes to {ROUTED_TEST_PATH}"

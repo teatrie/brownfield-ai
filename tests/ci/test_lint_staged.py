@@ -1,9 +1,9 @@
 """Lint-routing tests for ``ci/lint_staged.sh`` — the pre-commit gate.
 
-Holds the same contract as ``ci/lint_changed.sh``: this router carries the
-reviewer-template and reviewer-envelope checks today, and pinning it keeps the
-two from drifting apart again once the branch-diff router gains them. Harness
-details are documented in ``helpers.lint_router_harness``.
+Holds the same contract as ``ci/lint_changed.sh``: both routers carry the
+reviewer-template and reviewer-envelope checks, and subclassing one shared
+``LintRouterContract`` is what keeps them from drifting apart. Harness details
+are documented in ``helpers.lint_router_harness``.
 """
 
 from helpers.lint_router_harness import LintRouterContract
