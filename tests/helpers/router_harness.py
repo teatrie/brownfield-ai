@@ -27,6 +27,14 @@ Two deliberate limits:
   announcing would be indistinguishable from one that deliberately selected
   nothing.
 
+One assertion here deliberately reads the repository instead of the fixture:
+``assert_reviewer_template_suite_pinned``. The fixture symlinks the real
+``tests/`` into its fake workspace so the routers' ``[ -f "$test_file" ]``
+probes resolve, which means a behavioural assertion cannot distinguish "the
+router names a live suite" from "the router names a path that no longer
+exists". The literal is unpinned everywhere else, so a rename would leave both
+routers guarding a dead path and silently selecting zero tests.
+
 Lives under ``tests/helpers/`` rather than beside the tests because
 ``pytest.ini`` sets ``--import-mode=importlib``, which does not put a test's
 own directory on ``sys.path``; ``pythonpath = tests`` makes this package
@@ -61,19 +69,40 @@ SETTINGS_FILES: tuple[str, ...] = (
 HOOKS_SUITE = "tests/hooks/"
 
 #: Helper modules under tests/helpers/ that are imported by other suites rather
-#: than exercised in place. router_harness.py and aws_env.py have no test file
-#: at all, which is why the branch routes to directories instead of deriving a
-#: name; see RouterContract.test_no_helper_filename_derivation.
+#: than exercised in place. Only the first two have a test file of their own,
+#: which is why the branch routes to directories instead of deriving a name;
+#: see RouterContract.test_no_helper_filename_derivation.
 HELPER_MODULES: tuple[str, ...] = (
     "tests/helpers/eval_utils.py",
     "tests/helpers/runners.py",
     "tests/helpers/router_harness.py",
+    "tests/helpers/lint_router_harness.py",
     "tests/helpers/aws_env.py",
 )
 
 #: The two directory targets a changed helper module produces. tests/ci/ is in
 #: the pair because its router contracts import helpers.router_harness.
 HELPER_SUITES = ("tests/ci/", "tests/helpers/")
+
+#: The sources whose only automated gate is the reviewer-template parity test:
+#: the two mirrored rubric halves (the SHARED: regions of the diff-review
+#: SKILL.md and the bridge template rendered from them, alongside the invariant
+#: block both carry) and the checker that compares them.
+REVIEWER_TEMPLATE_SOURCES: tuple[str, ...] = (
+    ".claude/prompts/reviewer/diff.md",
+    ".claude/prompts/reviewer/_invariants.md",
+    ".claude/skills/diff-review/SKILL.md",
+    "scripts/lint_reviewer_templates.py",
+)
+
+#: The single target every reviewer-template source produces. The checker
+#: cannot reach it through the scripts/* filename-derivation branch, which
+#: builds tests/scripts/test_lint_reviewer_templates.py — a file that does not
+#: exist, so editing the checker routes to nothing.
+REVIEWER_TEMPLATE_SUITE = "tests/scripts/test_reviewer_templates.py"
+
+#: The routers that hard-code REVIEWER_TEMPLATE_SUITE as a literal.
+TEST_ROUTERS: tuple[str, str] = ("test_staged.sh", "test_changed.sh")
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
@@ -162,6 +191,32 @@ def assert_routed_nothing(result: subprocess.CompletedProcess[str]) -> None:
     """
     assert result.returncode == 0, f"router failed\n{diagnose(result)}"
     assert routed_targets(result) == [], f"expected no targets\n{diagnose(result)}"
+
+
+def assert_reviewer_template_suite_pinned() -> None:
+    """
+    Assert both routers still name the reviewer-template suite, and that it exists.
+
+    The branch in each router guards its literal with ``[ -f "$test_file" ]``,
+    so a renamed or deleted suite makes both routers route *nothing* and report
+    success — the silent zero-tests outcome that whole branch exists to
+    prevent. Nothing else pins the literal, so the rename is invisible until a
+    reviewer-prompt change ships unchecked.
+
+    Reads the repository rather than the fixture's fake workspace: the fixture
+    symlinks the real ``tests/`` in, so the router's own existence probe is
+    satisfied by whatever the tree happens to contain, which is exactly the
+    fact under test here.
+    """
+    suite = REPO_ROOT / REVIEWER_TEMPLATE_SUITE
+    assert suite.is_file(), (
+        f"{REVIEWER_TEMPLATE_SUITE} is missing; both routers guard it with `[ -f ]` "
+        "and will route nothing — update the literal in "
+        f"{', '.join(f'ci/{script}' for script in TEST_ROUTERS)} alongside the rename"
+    )
+    for script in TEST_ROUTERS:
+        source = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8")
+        assert REVIEWER_TEMPLATE_SUITE in source, f"ci/{script} no longer routes to {REVIEWER_TEMPLATE_SUITE}"
 
 
 class RouterContract:
@@ -276,3 +331,44 @@ class RouterContract:
         result = route(self.SCRIPT, ["tests/helpers/router_harness.py"])
         assert "No scripts or script tests changed." not in result.stdout, diagnose(result)
         assert "No testable scripts found." not in result.stdout, diagnose(result)
+
+    @pytest.mark.parametrize("source", REVIEWER_TEMPLATE_SOURCES)
+    def test_reviewer_template_source_routes_to_parity_test(self, route: RouteFn, source: str) -> None:
+        """Each mirrored rubric half, and the checker itself, routes to the parity test."""
+        result = route(self.SCRIPT, [source])
+        assert routed_targets(result) == [REVIEWER_TEMPLATE_SUITE], f"{source}\n{diagnose(result)}"
+
+    def test_many_reviewer_template_sources_collapse_to_one_target(self, route: RouteFn) -> None:
+        """Several changed reviewer-template sources deduplicate to a single target."""
+        result = route(self.SCRIPT, list(REVIEWER_TEMPLATE_SOURCES))
+        assert routed_targets(result) == [REVIEWER_TEMPLATE_SUITE], diagnose(result)
+
+    def test_reviewer_template_branch_accumulates_with_agent_branch(self, route: RouteFn) -> None:
+        """The reviewer-template branch adds a target rather than shadowing the agent branch."""
+        result = route(self.SCRIPT, [".claude/skills/diff-review/SKILL.md", ".claude/agents/code-review.md"])
+        expected = sorted([REVIEWER_TEMPLATE_SUITE, "tests/agents/test_variant_parity.py"])
+        assert sorted(routed_targets(result)) == expected, diagnose(result)
+
+    @pytest.mark.parametrize("source", REVIEWER_TEMPLATE_SOURCES)
+    def test_reviewer_template_source_alone_is_not_reported_as_untestable(
+        self,
+        route: RouteFn,
+        source: str,
+    ) -> None:
+        """The defect: the parity guard's own sources selected no targets at all."""
+        result = route(self.SCRIPT, [source])
+        assert "No scripts or script tests changed." not in result.stdout, f"{source}\n{diagnose(result)}"
+        assert "No testable scripts found." not in result.stdout, f"{source}\n{diagnose(result)}"
+
+    def test_reviewer_template_suite_path_is_pinned(self) -> None:
+        """Both routers name the reviewer-template suite, and it exists on disk.
+
+        Ignores ``SCRIPT`` and reads both routers, so it is redundant across
+        the two subclasses by construction — the same trade the lint-router
+        parity check makes. Each router routes only to its own test file, so a
+        cross-file invariant asserted in one subclass would not run when the
+        other router is edited. ``tests/scripts/test_reviewer_templates.py``
+        carries the second entry point, covering the rename direction this
+        module cannot see.
+        """
+        assert_reviewer_template_suite_pinned()

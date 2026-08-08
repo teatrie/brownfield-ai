@@ -1,7 +1,9 @@
 """Fixtures for the ``ci/`` changed-file router tests.
 
-The harness itself — constants, assertions, and the shared ``RouterContract``
-— lives in ``helpers.router_harness``; only the fixture needs to be here.
+The harnesses themselves — constants, assertions, and the shared
+``RouterContract`` / ``LintRouterContract`` — live in
+``helpers.router_harness`` and ``helpers.lint_router_harness``; only the
+fixtures need to be here.
 """
 
 import os
@@ -10,6 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from helpers.lint_router_harness import TASK_STUB, LintRouteFn
 from helpers.router_harness import GIT_STUB, NOOP_STUB, REPO_ROOT, RouteFn
 
 
@@ -80,3 +83,71 @@ def route(tmp_path: Path) -> RouteFn:
         )
 
     return _route
+
+
+@pytest.fixture
+def lint_route(tmp_path: Path) -> LintRouteFn:
+    """
+    Run a lint router script against a synthetic changed-file list.
+
+    Args:
+        tmp_path: pytest-provided scratch directory holding the stubs.
+
+    Returns:
+        Callable taking the script filename under ``ci/`` and the changed-file
+        list, and returning the completed process.
+    """
+    bin_dir = tmp_path / "lint-bin"
+    bin_dir.mkdir()
+    # `task` echoes its argv instead of no-opping, so an assertion can name the
+    # target the router delegated to rather than trusting the banner alone.
+    for name, body in (("git", GIT_STUB), ("task", TASK_STUB)):
+        stub = bin_dir / name
+        stub.write_text(body, encoding="utf-8")
+        stub.chmod(0o755)
+
+    # A bare workspace: both routers read pyproject.toml and
+    # .markdownlint-cli2.yaml from the working directory for ignore patterns,
+    # and absent means "no ignores", which is what these assertions want.
+    # ci/repo_routing.sh is sourced relative to BASH_SOURCE, so it still
+    # resolves against the repository — harmless, since `task` is stubbed.
+    workspace = tmp_path / "lint-workspace"
+    workspace.mkdir()
+
+    listing = tmp_path / "lint-changed-files.txt"
+
+    def _lint_route(
+        script: str,
+        changed_files: Sequence[str],
+    ) -> subprocess.CompletedProcess[str]:
+        # Both routers drop changed paths that are absent from the working
+        # tree, so an un-materialised list would route nothing and every
+        # assertion would read as a routing hole. Placeholders are created in
+        # place rather than symlinked from the repository, so no assertion can
+        # depend on real file contents.
+        for path in changed_files:
+            placeholder = workspace / path
+            placeholder.parent.mkdir(parents=True, exist_ok=True)
+            placeholder.touch()
+
+        listing.write_text("".join(f"{path}\n" for path in changed_files), encoding="utf-8")
+
+        env = os.environ.copy()
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+        env["ROUTER_TEST_CHANGED_FILES"] = str(listing)
+        # Pin the push branch of lint_changed.sh so CHANGED_FILES comes from a
+        # single intercepted `git diff --name-only`. Its local branch unions
+        # four git queries, two of which would leak real worktree state into
+        # the fixture. lint_staged.sh ignores this variable.
+        env["GITHUB_EVENT_NAME"] = "push"
+
+        return subprocess.run(
+            ["bash", str(REPO_ROOT / "ci" / script)],
+            cwd=workspace,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+    return _lint_route

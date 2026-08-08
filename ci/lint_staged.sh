@@ -242,10 +242,11 @@ if [ -n "$NON_PY_SQL_FILES" ]; then
     fi
 fi
 
-# Reviewer template invariant check — triggered when reviewer prompts or
-# codex config change. Delegates to `task lint:reviewer-templates`
+# Reviewer template invariant check — triggered when a reviewer prompt, a
+# codex config, the mirrored rubric half in the diff-review SKILL.md, or the
+# checker itself changes. Delegates to `task lint:reviewer-templates`
 # which runs the lint inside the pytest-cli container.
-TEMPLATE_FILES=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/prompts/reviewer/.*\.md$|^\.codex/config\.toml$|^docker/agent-cli/codex-config\.toml$' | xargs || true)
+TEMPLATE_FILES=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/prompts/reviewer/.*\.md$|^\.codex/config\.toml$|^docker/agent-cli/codex-config\.toml$|^\.claude/skills/diff-review/SKILL\.md$|^scripts/lint_reviewer_templates\.py$' | xargs || true)
 if [ -n "$TEMPLATE_FILES" ]; then
     echo "--------------------------------------------------"
     echo "Checking reviewer template invariants..."

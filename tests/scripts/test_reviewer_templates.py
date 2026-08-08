@@ -27,6 +27,15 @@ Invariants covered:
    (TODO-0173): the output is a fixed point over the committed copy,
    it tracks SKILL.md edits, it ignores drift in the mirror it is
    repairing, and it writes only under ``tmp/``.
+10. ``ci/test_staged.sh`` and ``ci/test_changed.sh`` still route to this
+    file by its literal path. Both guard that literal with
+    ``[ -f "$test_file" ]``, so renaming or deleting this file makes
+    both routers select *nothing* and report success — the reviewer
+    prompts then ship with no gate at all. Asserting it from inside the
+    routed file is what makes a rename fail loudly: the assertion
+    travels with the file, and the stale literal is caught on the next
+    run. ``tests/ci/`` carries the same assertion for the other
+    direction, where a router is edited and this file is not.
 """
 
 from __future__ import annotations
@@ -38,6 +47,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from helpers.router_harness import assert_reviewer_template_suite_pinned
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 INVARIANTS: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer" / "_invariants.md"
@@ -948,3 +958,13 @@ def test_fix_fails_on_escaped_blockquote_in_skill(tmp_path: Path) -> None:
     assert result.returncode == 1, f"expected --fix to reject an escaped blockquote; got exit {result.returncode}"
     assert "blockquote prefix" in result.stderr, f"expected stderr to name the blockquote failure; got {result.stderr!r}"
     assert not _fix_output(tmp_path).exists(), "--fix wrote output despite failing"
+
+
+def test_routing_target_path_is_pinned() -> None:
+    """Both CI routers still name this file, and it exists at that path.
+
+    Routed from this file rather than only from ``tests/ci/`` so that
+    renaming it carries the assertion along and fails on the stale
+    literal; an edit to either router reaches the ``tests/ci/`` copy.
+    """
+    assert_reviewer_template_suite_pinned()

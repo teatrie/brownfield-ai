@@ -69,7 +69,7 @@ run_pytest_venv() {
 }
 
 if [ "$TARGET" == "scripts" ]; then
-    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|docker/shared/|\.claude/settings(\.local)?\.json)" || true)
+    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|\.claude/prompts/reviewer/|\.claude/skills/diff-review/|docker/shared/|\.claude/settings(\.local)?\.json)" || true)
 
     if [ -n "$CHANGED_SCRIPTS" ]; then
         declare -a TEST_TARGETS_ARRAY=()
@@ -100,6 +100,23 @@ if [ "$TARGET" == "scripts" ]; then
                     TEST_TARGETS_ARRAY+=("$file")
                 else
                     TEST_TARGETS_ARRAY+=("tests/helpers/" "tests/ci/")
+                fi
+            elif [[ "$file" == .claude/prompts/reviewer/* ]] || [[ "$file" == .claude/skills/diff-review/* ]] || [[ "$file" == scripts/lint_reviewer_templates.py ]]; then
+                # The reviewer rubric is mirrored across two sources — the
+                # SHARED: regions of .claude/skills/diff-review/SKILL.md and
+                # the bridge template rendered from them — and one checker
+                # compares them. All three must re-run that comparison, and
+                # none can reach it any other way: the two rubric halves match
+                # no other branch, and the checker would fall through to the
+                # scripts/* derivation below, which builds
+                # tests/scripts/test_lint_reviewer_templates.py — a name that
+                # does not exist, silently routing the parity guard's own
+                # checker to zero tests. The branch is explicit rather than
+                # derivation-driven because neither rubric half has any
+                # derivable test name at all — no rename would route them.
+                test_file="tests/scripts/test_reviewer_templates.py"
+                if [ -f "$test_file" ]; then
+                    TEST_TARGETS_ARRAY+=("$test_file")
                 fi
             elif [[ "$file" == scripts/* ]] || [[ "$file" == ci/* ]]; then
                 # Map script to its test file. Strip the source extension and

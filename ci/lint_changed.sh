@@ -282,4 +282,44 @@ if [ -n "$NON_PY_SQL_FILES" ]; then
     fi
 fi
 
+# The CI `lint` job runs `task lint:changed` as its only lint step
+# (.github/workflows/ci.yml), so this router — not lint_staged.sh — is what a
+# pull request is gated on, and a check present only in the staged gate never
+# fires on a PR at all. The two blocks below are byte-identical to their
+# lint_staged.sh counterparts, which a byte-identity test asserts directly;
+# tests/ci/ subclasses one shared LintRouterContract for both routers so a
+# trigger dropped from either one also fails.
+
+# Reviewer template invariant check — triggered when a reviewer prompt, a
+# codex config, the mirrored rubric half in the diff-review SKILL.md, or the
+# checker itself changes. Delegates to `task lint:reviewer-templates`
+# which runs the lint inside the pytest-cli container.
+TEMPLATE_FILES=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/prompts/reviewer/.*\.md$|^\.codex/config\.toml$|^docker/agent-cli/codex-config\.toml$|^\.claude/skills/diff-review/SKILL\.md$|^scripts/lint_reviewer_templates\.py$' | xargs || true)
+if [ -n "$TEMPLATE_FILES" ]; then
+    echo "--------------------------------------------------"
+    echo "Checking reviewer template invariants..."
+    if ! "${TASK_CMD[@]}" lint:reviewer-templates; then
+        echo "Reviewer template invariant lint failed"
+        EXIT_CODE=1
+    fi
+fi
+
+# Reviewer Output Envelope compliance — triggered when a reviewer agent
+# definition, the envelope canonical doc, or the envelope schema
+# changes. Per the per-wave scope-expansion contract (plan §10.3,
+# Req-018 / B-3 R2), the trigger pattern is intentionally broader than
+# the W1 SCOPE constant in tests/lint/test_reviewer_envelope_required.py
+# so future-wave reviewer files (codex-reviewer*, gemini-reviewer*,
+# qa-*) automatically invoke the gate once W2/W3 add them to SCOPE.
+ENVELOPE_AGENTS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/agents/(code-review|codex-reviewer|gemini-reviewer|copilot-reviewer|qa-(standards|lint|test))(-(high|xhigh|max))?\.md$' | xargs || true)
+ENVELOPE_DOCS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^docs/reviewer_envelope\.md$|^docs/schemas/reviewer_envelope\.schema\.json$' | xargs || true)
+if [ -n "$ENVELOPE_AGENTS" ] || [ -n "$ENVELOPE_DOCS" ]; then
+    echo "--------------------------------------------------"
+    echo "Checking reviewer envelope compliance..."
+    if ! "${TASK_CMD[@]}" lint:reviewer-envelope; then
+        echo "Reviewer envelope lint failed"
+        EXIT_CODE=1
+    fi
+fi
+
 exit "$EXIT_CODE"
