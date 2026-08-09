@@ -4,7 +4,7 @@
 maps to. The routing decision is what is under test; the lint run is not. The
 ``lint_route`` fixture in ``tests/ci/conftest.py`` shadows ``git`` (to inject a
 synthetic changed-file list) and ``task`` (to swallow the execution stage while
-echoing the target it was handed).
+echoing the target it was handed, and to fail one named target on request).
 
 Announcement *and* delegation are both asserted: the announcement alone would
 pass for a router that printed the banner and then called the wrong task
@@ -53,6 +53,9 @@ TEMPLATE_ANNOUNCEMENT = "Checking reviewer template invariants..."
 
 TEMPLATE_TASK = "lint:reviewer-templates"
 
+#: Notice the routers print from the failure arm of the template gate.
+TEMPLATE_FAILURE_NOTICE = "Reviewer template invariant lint failed"
+
 #: Files that must re-run the Reviewer Output Envelope gate. The agent paths
 #: are derived from the same registry the routers' ``ENVELOPE_AGENTS`` regex is
 #: cross-checked against in
@@ -69,6 +72,9 @@ REVIEWER_ENVELOPE_TRIGGERS: tuple[str, ...] = (
 ENVELOPE_ANNOUNCEMENT = "Checking reviewer envelope compliance..."
 
 ENVELOPE_TASK = "lint:reviewer-envelope"
+
+#: Notice the routers print from the failure arm of the envelope gate.
+ENVELOPE_FAILURE_NOTICE = "Reviewer envelope lint failed"
 
 #: A file no reviewer-facing lint branch should react to.
 UNRELATED_FILE = "README.md"
@@ -121,6 +127,19 @@ MARKDOWN_TASK = "lint:markdown"
 #: Prefix the task stub prints for each delegation.
 TASK_MARKER = "TASK-INVOKED: "
 
+#: Names the one task target the stub must fail. Empty or unset means every
+#: delegation succeeds.
+FAILING_TASK_ENV = "ROUTER_TEST_FAILING_TASK"
+
+#: Exit code the stub returns for the target named in ``FAILING_TASK_ENV``.
+#: Deliberately not 1: a router that guards its delegation collects the failure
+#: into ``EXIT_CODE`` and exits 1, while one that calls the task bare dies under
+#: ``set -e`` and surfaces this code verbatim, so the two are distinguishable.
+STUB_FAILURE_EXIT_CODE = 42
+
+#: Exit code a router must produce once any gate it ran has failed.
+ROUTER_FAILURE_EXIT_CODE = 1
+
 #: Interpolates TASK_MARKER rather than repeating the literal: the stub writes
 #: the prefix and ``delegated_targets`` strips it, so hand-kept copies would
 #: drift.
@@ -128,8 +147,27 @@ TASK_STUB = f"""#!/usr/bin/env bash
 # Report the delegation so an assertion can prove *which* task target ran
 # rather than only that the router printed its announcement line.
 printf '%s%s\\n' "{TASK_MARKER}" "$*"
+# Failure is opt-in and names a single target, so every route that leaves
+# {FAILING_TASK_ENV} empty keeps the unconditional success the routing
+# assertions are written against.
+failing_target="${{{FAILING_TASK_ENV}:-}}"
+if [ -n "$failing_target" ] && [ "$1" = "$failing_target" ]; then
+    exit {STUB_FAILURE_EXIT_CODE}
+fi
 exit 0
 """
+
+#: Shell variable holding each router's changed-file list as captured *before*
+#: the existence filter.
+UNFILTERED_LIST_VAR = "UNFILTERED_CHANGED_FILES"
+
+#: Times ``UNFILTERED_LIST_VAR`` may appear on a router's code lines: the one
+#: assignment plus the three reviewer-gate greps (``TEMPLATE_FILES``,
+#: ``ENVELOPE_AGENTS``, ``ENVELOPE_DOCS``). Every other stage opens the files it
+#: is handed, so it must read the existence-filtered list. The behavioural
+#: assertions sample that boundary from one stage only; this pins the rest,
+#: which would otherwise be free to switch lists undetected.
+UNFILTERED_LIST_OCCURRENCES = 4
 
 #: The two lint routers, in the order the parity diff labels them.
 LINT_ROUTERS: tuple[str, str] = ("lint_staged.sh", "lint_changed.sh")
@@ -228,6 +266,73 @@ def assert_check_skipped(
     assert task_target not in delegated_targets(result), f"unexpected delegation to {task_target!r}\n{diagnose(result)}"
 
 
+def assert_check_failure_propagates(
+    result: subprocess.CompletedProcess[str],
+    announcement: str,
+    failure_notice: str,
+) -> None:
+    """
+    Assert the router ran a failing check, reported it, and failed on it.
+
+    The exit code is compared to ``ROUTER_FAILURE_EXIT_CODE`` exactly rather
+    than to "non-zero". A delegation written bare, without the ``if !`` guard
+    and the ``EXIT_CODE=1`` arm, also leaves the router non-zero — ``set -e``
+    kills it at the failing call — but it dies carrying the stub's own
+    ``STUB_FAILURE_EXIT_CODE`` and never reaches the closing
+    ``exit "$EXIT_CODE"``. Only the guarded form produces 1.
+
+    Args:
+        result: Completed router process.
+        announcement: The banner the router prints before delegating.
+        failure_notice: The line the check's failure arm prints.
+    """
+    assert announcement in result.stdout, f"missing announcement {announcement!r}\n{diagnose(result)}"
+    assert failure_notice in result.stdout, (
+        f"missing failure notice {failure_notice!r} — the router never took the check's failure arm\n{diagnose(result)}"
+    )
+    assert result.returncode == ROUTER_FAILURE_EXIT_CODE, (
+        f"a failing check must leave the router at {ROUTER_FAILURE_EXIT_CODE}, got {result.returncode} — "
+        f"{STUB_FAILURE_EXIT_CODE} is the stub's own code, which an unguarded delegation surfaces when "
+        f"`set -e` kills the router at the failing call\n{diagnose(result)}"
+    )
+
+
+def unfiltered_list_reads(script: str) -> int:
+    """
+    Count a lint router's code-line references to the pre-filter changed-file list.
+
+    Whole-line comments are dropped before counting, so prose describing the
+    variable — which the two routers carry above the assignment — cannot move
+    the count. Trailing comments are not stripped: ``#`` appears inside the
+    routers' grep patterns, and a naive split there would truncate real code.
+
+    Args:
+        script: Router filename under ``ci/``.
+
+    Returns:
+        Occurrences of ``UNFILTERED_LIST_VAR`` across the script's code lines.
+    """
+    lines = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8").splitlines()
+    return sum(line.count(UNFILTERED_LIST_VAR) for line in lines if not line.lstrip().startswith("#"))
+
+
+def assert_unfiltered_list_reads_pinned(script: str) -> None:
+    """
+    Assert only the three reviewer gates read a router's pre-filter changed-file list.
+
+    Args:
+        script: Router filename under ``ci/``.
+    """
+    found = unfiltered_list_reads(script)
+    assert found == UNFILTERED_LIST_OCCURRENCES, (
+        f"ci/{script}: {UNFILTERED_LIST_VAR} appears {found} times on code lines, expected "
+        f"{UNFILTERED_LIST_OCCURRENCES} — one assignment plus the three reviewer-gate greps. "
+        "A stage repointed at the pre-filter list would be handed paths the diff deleted. "
+        "Whole-line comments are excluded from the count, so rewording the prose around the "
+        "assignment cannot trip this."
+    )
+
+
 def mirrored_region_delegations(script: str) -> Counter[str]:
     """
     Count the task targets a lint router delegates to below the anchor.
@@ -319,9 +424,9 @@ class LintRouterContract:
 
     Subclassed once per script rather than duplicated, for the same reason
     ``RouterContract`` is: the defect these tests exist to catch is drift
-    between the two files. The CI ``lint`` job runs ``task lint:changed`` and
-    nothing else, so a check only ``lint_staged.sh`` carries never fires on a
-    pull request.
+    between the two files. ``task lint:changed`` is the CI ``lint`` job's only
+    lint step, so a check only ``lint_staged.sh`` carries never fires on a pull
+    request.
 
     Subclasses set ``SCRIPT`` to the filename under ``ci/``.
     """
@@ -408,6 +513,44 @@ class LintRouterContract:
         """
         result = lint_route(self.SCRIPT, [trigger], absent=[trigger])
         assert_check_ran(result, ENVELOPE_ANNOUNCEMENT, ENVELOPE_TASK)
+
+    def test_failing_template_check_fails_the_router(self, lint_route: LintRouteFn) -> None:
+        """A failing template check fails the router, and only after the run finishes.
+
+        An envelope trigger is routed alongside so the later gate's delegation
+        witnesses that the router carried on and accumulated the failure. The
+        wiring exists so a broken reviewer template fails the PR; nothing else
+        in this contract exercises a non-zero task.
+        """
+        result = lint_route(
+            self.SCRIPT,
+            [REVIEWER_TEMPLATE_TRIGGERS[0], REVIEWER_ENVELOPE_TRIGGERS[0]],
+            failing_task=TEMPLATE_TASK,
+        )
+        assert_check_failure_propagates(result, TEMPLATE_ANNOUNCEMENT, TEMPLATE_FAILURE_NOTICE)
+        assert ENVELOPE_TASK in delegated_targets(result), (
+            f"the router stopped before {ENVELOPE_TASK!r} — a failing check must be collected, "
+            f"not allowed to abort the remaining gates\n{diagnose(result)}"
+        )
+
+    def test_failing_envelope_check_fails_the_router(self, lint_route: LintRouteFn) -> None:
+        """A failing envelope check fails the router.
+
+        Asserted separately from the template gate because each gate carries
+        its own guard, and either could be written bare on its own.
+        """
+        result = lint_route(self.SCRIPT, [REVIEWER_ENVELOPE_TRIGGERS[0]], failing_task=ENVELOPE_TASK)
+        assert_check_failure_propagates(result, ENVELOPE_ANNOUNCEMENT, ENVELOPE_FAILURE_NOTICE)
+
+    def test_pre_filter_list_reaches_only_the_reviewer_gates(self) -> None:
+        """Only the assignment and the three reviewer-gate greps name the pre-filter list.
+
+        Read off ``SCRIPT``'s text rather than routed, because the behavioural
+        half of this boundary can only sample one stage at a time: every stage
+        not sampled is free to switch to the pre-filter list unobserved. See
+        ``assert_unfiltered_list_reads_pinned``.
+        """
+        assert_unfiltered_list_reads_pinned(self.SCRIPT)
 
     @pytest.mark.parametrize("marker", MIRRORED_BLOCK_MARKERS)
     def test_mirrored_block_is_byte_identical(self, marker: str) -> None:

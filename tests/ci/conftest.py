@@ -13,8 +13,16 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-from helpers.lint_router_harness import TASK_STUB, LintRouteFn
+from helpers.lint_router_harness import FAILING_TASK_ENV, TASK_STUB, LintRouteFn
 from helpers.router_harness import GIT_STUB, NOOP_STUB, REPO_ROOT, RouteFn
+
+#: Event name pinning the push branch of ``lint_changed.sh`` /
+#: ``test_changed.sh``, so CHANGED_FILES comes from a single intercepted
+#: ``git diff --name-only``. The local branch is stubbed just as completely,
+#: but it unions four queries through ``sort -u``, which would deliver the
+#: synthetic list deduplicated and reordered; pinning keeps each router's input
+#: identical to what the test wrote. The ``*_staged.sh`` routers ignore it.
+PINNED_EVENT_NAME = "push"
 
 
 @pytest.fixture
@@ -68,15 +76,7 @@ def route(tmp_path: Path) -> RouteFn:
         env = os.environ.copy()
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
         env["ROUTER_TEST_CHANGED_FILES"] = str(listing)
-        # Pin the push branch of test_changed.sh so CHANGED_FILES comes from a
-        # single intercepted `git diff --name-only`. The local branch is fully
-        # stubbed too — GIT_STUB answers every `diff`, `ls-files` and
-        # `rev-parse` it issues, so nothing leaks in from the real worktree —
-        # but it unions four queries and pipes them through `sort -u`, which
-        # would deliver the synthetic list deduplicated and reordered. Pinning
-        # keeps the router's input identical to what the test wrote.
-        # test_staged.sh ignores this variable.
-        env["GITHUB_EVENT_NAME"] = "push"
+        env["GITHUB_EVENT_NAME"] = PINNED_EVENT_NAME
 
         return subprocess.run(
             ["bash", str(REPO_ROOT / "ci" / script), target],
@@ -100,8 +100,9 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
 
     Returns:
         Callable taking the script filename under ``ci/`` and the changed-file
-        list, plus an optional keyword-only ``absent`` naming listed paths to
-        leave uncreated, and returning the completed process.
+        list, plus optional keyword-only ``absent`` (listed paths to leave
+        uncreated) and ``failing_task`` (a target the stubbed ``task`` must
+        exit non-zero on), and returning the completed process.
     """
     bin_dir = tmp_path / "lint-bin"
     bin_dir.mkdir()
@@ -128,6 +129,7 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
         changed_files: Sequence[str],
         *,
         absent: Sequence[str] = (),
+        failing_task: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         # One workspace per call, not one per fixture: the placeholders below
         # would otherwise survive into the next call within the same test,
@@ -162,15 +164,11 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
         env = os.environ.copy()
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
         env["ROUTER_TEST_CHANGED_FILES"] = str(listing)
-        # Pin the push branch of lint_changed.sh so CHANGED_FILES comes from a
-        # single intercepted `git diff --name-only`. The local branch is fully
-        # stubbed too — GIT_STUB answers every `diff`, `ls-files` and
-        # `rev-parse` it issues, so nothing leaks in from the real worktree —
-        # but it unions four queries and pipes them through `sort -u`, which
-        # would deliver the synthetic list deduplicated and reordered. Pinning
-        # keeps the router's input identical to what the test wrote.
-        # lint_staged.sh ignores this variable.
-        env["GITHUB_EVENT_NAME"] = "push"
+        env["GITHUB_EVENT_NAME"] = PINNED_EVENT_NAME
+        # Written unconditionally: an empty value is the stub's off switch, and
+        # assigning it here means an inherited value cannot turn the failure
+        # mode on for a route that did not ask for it.
+        env[FAILING_TASK_ENV] = failing_task or ""
 
         return subprocess.run(
             ["bash", str(REPO_ROOT / "ci" / script)],

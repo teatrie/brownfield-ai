@@ -7,8 +7,11 @@ inject a synthetic changed-file list) plus ``docker`` and ``task`` (to swallow
 the execution stage), and the assertions here read the targets back off the
 router's own announcement line.
 
-The security gate is stubbed, so its path-containment and tracked-file checks
-belong to ``tests/scripts/test_python_security_gate.py``, not here.
+The security gate is stubbed rather than run: it writes
+``tmp/.python-gate-pass``, which in CI is already owned by the outer gate run's
+uid, so a nested invocation fails with EACCES and ``set -e`` kills the router
+before it announces anything. Its path-containment and tracked-file checks
+therefore belong to ``tests/scripts/test_python_security_gate.py``, not here.
 
 The test routers get per-block byte-identity only, with no region-level
 delegation comparison of the kind ``helpers.lint_router_harness`` runs over the
@@ -36,7 +39,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: Every hook registered in .claude/settings.json.
+#: Every hook registered in .claude/settings.json. None resolves under a
+#: derive-the-test-filename scheme, which is why the router targets the
+#: directory; see RouterContract.test_no_filename_derivation.
 HOOKS: tuple[str, ...] = (
     ".claude/hooks/block-container-escape.sh",
     ".claude/hooks/block-docker-build-escape.sh",
@@ -54,7 +59,9 @@ SETTINGS_FILES: tuple[str, ...] = (
 HOOKS_SUITE = "tests/hooks/"
 
 #: Helper modules under tests/helpers/ that are imported by other suites rather
-#: than exercised in place.
+#: than exercised in place. The two router harnesses and aws_env.py have no test
+#: file at all, which is why the branch routes to directories instead of
+#: deriving a name; see RouterContract.test_no_helper_filename_derivation.
 HELPER_MODULES: tuple[str, ...] = (
     "tests/helpers/eval_utils.py",
     "tests/helpers/runners.py",
@@ -89,13 +96,25 @@ REVIEWER_TEMPLATE_SOURCES: tuple[str, ...] = (
 #: reaches that branch in neither, for two unrelated reasons.
 #: ``ci/test_staged.sh`` carries no ``docker/agent-cli/`` prefix in its
 #: ``CHANGED_SCRIPTS`` filter, so the path is dropped before the dispatch chain
-#: sees it. ``ci/test_changed.sh`` carries the prefix but places its
-#: ``docker/agent-cli/`` branch ahead of the reviewer-template branch, and
-#: first match wins, so the path is handled there instead — and neither of the
-#: two test names that branch derives from it exists. The reviewer-template
-#: invariants are still gated on this path through
-#: ``task lint:reviewer-templates``, which both lint routers trigger on it.
+#: sees it and the router selects nothing at all. ``ci/test_changed.sh`` carries
+#: the prefix but places its ``docker/agent-cli/`` branch ahead of the
+#: reviewer-template branch, and first match wins, so the path is handled there
+#: instead — and neither of the two test names that branch derives from it
+#: exists, so no pytest target is announced. Announcing nothing is not the same
+#: as doing nothing there: the prefix also matches ``AGENT_CLI_RELEVANT`` after
+#: the dispatch loop, which delegates to ``task test:container-integration``
+#: outside the announced target list. The reviewer-template invariants are
+#: still gated on this path through ``task lint:reviewer-templates``, which both
+#: lint routers trigger on it.
 INERT_REVIEWER_TEMPLATE_SOURCE = "docker/agent-cli/codex-config.toml"
+
+#: Substring of the line ``ci/test_changed.sh`` prints before delegating to the
+#: host-side container-integration re-run. ``ci/test_staged.sh`` has no such
+#: stage, so its absence there is as much a pinned outcome as its presence here.
+CONTAINER_INTEGRATION_RERUN_MARKER = "running task test:container-integration"
+
+#: The only router carrying the container-integration re-run.
+CONTAINER_INTEGRATION_RERUN_ROUTER = "test_changed.sh"
 
 #: The single target every reviewer-template source produces.
 REVIEWER_TEMPLATE_SUITE = "tests/scripts/test_reviewer_templates.py"
@@ -515,15 +534,28 @@ class RouterContract:
         result = route(self.SCRIPT, [source])
         assert routed_targets(result) == [REVIEWER_TEMPLATE_SUITE], f"{source}\n{diagnose(result)}"
 
-    def test_inert_reviewer_template_source_routes_nothing(self, route: RouteFn) -> None:
-        """The agent-cli codex config selects no target in either router.
+    def test_inert_reviewer_template_source_selects_no_pytest_target(self, route: RouteFn) -> None:
+        """The agent-cli codex config announces no pytest target in either router.
 
         Pins the outcome, not an intent: both routers name this path in their
         reviewer-template branch condition, and in both it is unreachable — see
         ``INERT_REVIEWER_TEMPLATE_SOURCE`` for the two mechanisms. Asserting it
         keeps the branch condition from reading as coverage that exists.
+
+        The empty target list is only half the outcome, and the half the
+        announcement line can show: in ``ci/test_changed.sh`` the path also
+        triggers the host-side container-integration re-run, which delegates to
+        ``task`` rather than to pytest. That leg is asserted off the router's
+        own stdout, in both directions, so the path cannot quietly gain or lose
+        it in either router.
         """
-        assert_routed_nothing(route(self.SCRIPT, [INERT_REVIEWER_TEMPLATE_SOURCE]))
+        result = route(self.SCRIPT, [INERT_REVIEWER_TEMPLATE_SOURCE])
+        assert_routed_nothing(result)
+        rerun_announced = CONTAINER_INTEGRATION_RERUN_MARKER in result.stdout
+        rerun_expected = self.SCRIPT == CONTAINER_INTEGRATION_RERUN_ROUTER
+        assert rerun_announced == rerun_expected, (
+            f"ci/{self.SCRIPT}: container-integration re-run announced={rerun_announced}, expected={rerun_expected}\n{diagnose(result)}"
+        )
 
     def test_many_reviewer_template_sources_collapse_to_one_target(self, route: RouteFn) -> None:
         """Several changed reviewer-template sources deduplicate to a single target."""
@@ -542,7 +574,7 @@ class RouterContract:
         route: RouteFn,
         source: str,
     ) -> None:
-        """The defect: the parity guard's own sources selected no targets at all."""
+        """Neither silent-zero message is printed for a lone reviewer-template source."""
         result = route(self.SCRIPT, [source])
         assert "No scripts or script tests changed." not in result.stdout, f"{source}\n{diagnose(result)}"
         assert "No testable scripts found." not in result.stdout, f"{source}\n{diagnose(result)}"

@@ -98,7 +98,9 @@ while IFS= read -r file; do
     fi
 done <<< "$(echo "$CHANGED_FILES" | tr ' ' '\n')"
 # Gate triggers below select on path alone and must still fire for a file
-# the diff removes, so they read the list from before the existence filter.
+# the diff removes, so they read the list from before the loop above, which
+# drops files missing from disk and files matching the pyproject or
+# markdownlint ignore globs.
 UNFILTERED_CHANGED_FILES="$CHANGED_FILES"
 CHANGED_FILES="$EXISTING_FILES"
 

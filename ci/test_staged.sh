@@ -102,17 +102,20 @@ if [ "$TARGET" == "scripts" ]; then
                     TEST_TARGETS_ARRAY+=("tests/helpers/" "tests/ci/")
                 fi
             elif [[ "$file" == .claude/prompts/reviewer/* ]] || [[ "$file" == .claude/skills/diff-review/* ]] || [[ "$file" == scripts/lint_reviewer_templates.py ]] || [[ "$file" == .codex/config.toml ]] || [[ "$file" == docker/agent-cli/codex-config.toml ]]; then
-                # The reviewer-template parity check compares a rubric that
-                # is mirrored across several sources. Every one of them, and
-                # the checker itself, routes here. The condition above is the
-                # enumeration — repeating it in prose would be a second copy
-                # to keep current.
-                # Explicit rather than derivation-driven: most of these paths
-                # have no derivable test name at all, and the checker would
-                # otherwise fall through to the scripts/* derivation below,
-                # which builds tests/scripts/test_lint_reviewer_templates.py
-                # — a name that does not exist, silently routing the parity
-                # guard's own checker to zero tests.
+                # The reviewer-template parity check compares a rubric
+                # mirrored across several sources. Four of the five
+                # patterns above route here. The fifth,
+                # docker/agent-cli/codex-config.toml, reaches this branch
+                # in neither router; its parity is gated instead by
+                # `task lint:reviewer-templates`, which both lint routers
+                # fire on it. Dropping that pattern from one router alone
+                # would fail this branch's byte-identity check.
+                # Most of these paths have no derivable test name at all,
+                # and the checker would otherwise fall through to the
+                # scripts/* derivation below, which builds
+                # tests/scripts/test_lint_reviewer_templates.py — a name
+                # that does not exist, silently routing the parity guard's
+                # own checker to zero tests.
                 test_file="tests/scripts/test_reviewer_templates.py"
                 if [ -f "$test_file" ]; then
                     TEST_TARGETS_ARRAY+=("$test_file")

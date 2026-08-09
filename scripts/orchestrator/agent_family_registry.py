@@ -231,9 +231,9 @@ def schema_family_enum() -> tuple[str, ...]:
 
 
 def lint_router_agent_ids() -> tuple[str, ...]:
-    """Return every agent-ID that the shell ``ENVELOPE_AGENTS`` regex
-    in ``ci/lint_staged.sh`` and ``ci/lint_changed.sh`` MUST match.
+    """Return every agent-ID the shell ``ENVELOPE_AGENTS`` regexes MUST match.
 
+    The regexes live in ``ci/lint_staged.sh`` and ``ci/lint_changed.sh``.
     Both routers hand-maintain their own copy of the regex for
     portability (CI bash on macOS doesn't import Python at runtime).
     The registry-consistency test compiles the agent-ID list here, runs
