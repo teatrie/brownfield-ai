@@ -73,6 +73,51 @@ ENVELOPE_TASK = "lint:reviewer-envelope"
 #: A file no reviewer-facing lint branch should react to.
 UNRELATED_FILE = "README.md"
 
+#: Paths that share a prefix with a template trigger but must not reach the
+#: check. ``UNRELATED_FILE`` shares no prefix with any trigger, so it passes
+#: against an unanchored or extension-blind rewrite of the trigger regex as
+#: readily as against the current one; each entry here is a near miss on a
+#: different part of that regex — file extension, exact filename, and the
+#: leading ``^`` — so relaxing any of the three fails.
+TEMPLATE_NEAR_MISSES: tuple[str, ...] = (
+    ".claude/prompts/reviewer/diff.txt",
+    ".claude/skills/diff-review/README.md",
+    "docs/notes/.claude/skills/diff-review/SKILL.md",
+)
+
+#: An agent definition under the directory the envelope trigger matches, whose
+#: ID is outside the reviewer alternation. The gate is deliberately broader
+#: than the registry, so this pins the outer edge of that slack rather than the
+#: registry's own boundary.
+ENVELOPE_NEAR_MISSES: tuple[str, ...] = (".claude/agents/orchestrator.md",)
+
+#: Template triggers asserted to reach the check on a diff that *deletes*
+#: them. Both routers narrow their changed-file list to paths present in the
+#: working tree before the per-language lint dispatch, since linting a file
+#: that is no longer there is meaningless. The reviewer gates select on path
+#: alone and re-run a whole check rather than lint the named file, so they read
+#: the list from before that filter — a removed reviewer prompt changes what
+#: the check concludes just as much as an edited one does. One trigger suffices
+#: here: a single grep, ``TEMPLATE_FILES``, feeds this gate.
+DELETED_TEMPLATE_TRIGGERS: tuple[str, ...] = (".claude/prompts/reviewer/diff.md",)
+
+#: Envelope triggers asserted to reach the gate on a diff that deletes them,
+#: for the reason given above. Two entries because two greps feed this gate —
+#: ``ENVELOPE_AGENTS`` and ``ENVELOPE_DOCS`` — and either reading the filtered
+#: list must fail on its own.
+DELETED_ENVELOPE_TRIGGERS: tuple[str, ...] = (
+    ".claude/agents/code-review.md",
+    "docs/reviewer_envelope.md",
+)
+
+#: A template trigger that is also an ordinary Markdown file, used to pin the
+#: other side of the pre-filter boundary: the reviewer gates read the
+#: unfiltered list, every per-filetype lint stage reads the filtered one.
+MARKDOWN_TEMPLATE_TRIGGER = ".claude/prompts/reviewer/diff.md"
+
+#: The per-filetype stage ``MARKDOWN_TEMPLATE_TRIGGER`` reaches when it exists.
+MARKDOWN_TASK = "lint:markdown"
+
 #: Prefix the task stub prints for each delegation.
 TASK_MARKER = "TASK-INVOKED: "
 
@@ -80,9 +125,9 @@ TASK_MARKER = "TASK-INVOKED: "
 #: the prefix and ``delegated_targets`` strips it, so hand-kept copies would
 #: drift.
 TASK_STUB = f"""#!/usr/bin/env bash
-# Echo the delegation so an assertion can prove *which* task target ran rather
-# than only that the router printed its announcement line.
-echo "{TASK_MARKER}$*"
+# Report the delegation so an assertion can prove *which* task target ran
+# rather than only that the router printed its announcement line.
+printf '%s%s\\n' "{TASK_MARKER}" "$*"
 exit 0
 """
 
@@ -294,6 +339,48 @@ class LintRouterContract:
         result = lint_route(self.SCRIPT, [UNRELATED_FILE])
         assert_check_skipped(result, TEMPLATE_ANNOUNCEMENT, TEMPLATE_TASK)
 
+    @pytest.mark.parametrize("near_miss", TEMPLATE_NEAR_MISSES)
+    def test_near_miss_path_does_not_run_template_check(self, lint_route: LintRouteFn, near_miss: str) -> None:
+        """A path that near-misses a template trigger leaves the check alone."""
+        result = lint_route(self.SCRIPT, [near_miss])
+        assert_check_skipped(result, TEMPLATE_ANNOUNCEMENT, TEMPLATE_TASK)
+
+    @pytest.mark.parametrize("trigger", DELETED_TEMPLATE_TRIGGERS)
+    def test_deleted_template_trigger_runs_template_check(self, lint_route: LintRouteFn, trigger: str) -> None:
+        """A template trigger the diff removes still reaches the invariant check.
+
+        The path is listed as changed but withheld from the working tree, so it
+        is dropped by the routers' existence filter and survives only in the
+        pre-filter list the trigger grep reads.
+        """
+        result = lint_route(self.SCRIPT, [trigger], absent=[trigger])
+        assert_check_ran(result, TEMPLATE_ANNOUNCEMENT, TEMPLATE_TASK)
+
+    def test_deleted_template_trigger_does_not_reach_markdown_lint(self, lint_route: LintRouteFn) -> None:
+        """A deleted trigger reaches the reviewer gate but not the Markdown stage.
+
+        The pre-filter list is read by the three reviewer-gate triggers and by
+        nothing else; handing a path that is no longer on disk to a stage that
+        opens the file would break it. Only the reviewer gate's own trigger may
+        widen, so the same route is asserted from both sides at once.
+
+        The control route establishes that the path does reach the Markdown
+        stage when it exists, without which the negative assertion would hold
+        for a path that never routed there in the first place.
+        """
+        control = lint_route(self.SCRIPT, [MARKDOWN_TEMPLATE_TRIGGER])
+        assert MARKDOWN_TASK in delegated_targets(control), (
+            f"{MARKDOWN_TEMPLATE_TRIGGER!r} no longer reaches {MARKDOWN_TASK!r} when present, "
+            f"so the deletion assertion below would prove nothing\n{diagnose(control)}"
+        )
+
+        result = lint_route(self.SCRIPT, [MARKDOWN_TEMPLATE_TRIGGER], absent=[MARKDOWN_TEMPLATE_TRIGGER])
+        assert_check_ran(result, TEMPLATE_ANNOUNCEMENT, TEMPLATE_TASK)
+        assert MARKDOWN_TASK not in delegated_targets(result), (
+            f"deleted {MARKDOWN_TEMPLATE_TRIGGER!r} was handed to {MARKDOWN_TASK!r} — "
+            f"the Markdown stage must read the existence-filtered list\n{diagnose(result)}"
+        )
+
     @pytest.mark.parametrize("trigger", REVIEWER_ENVELOPE_TRIGGERS)
     def test_envelope_trigger_runs_envelope_check(self, lint_route: LintRouteFn, trigger: str) -> None:
         """A reviewer agent definition, the envelope doc, or its schema triggers the gate."""
@@ -304,6 +391,23 @@ class LintRouterContract:
         """A file outside the envelope trigger set leaves that gate alone."""
         result = lint_route(self.SCRIPT, [UNRELATED_FILE])
         assert_check_skipped(result, ENVELOPE_ANNOUNCEMENT, ENVELOPE_TASK)
+
+    @pytest.mark.parametrize("near_miss", ENVELOPE_NEAR_MISSES)
+    def test_near_miss_path_does_not_run_envelope_check(self, lint_route: LintRouteFn, near_miss: str) -> None:
+        """An agent definition outside the reviewer alternation leaves the gate alone."""
+        result = lint_route(self.SCRIPT, [near_miss])
+        assert_check_skipped(result, ENVELOPE_ANNOUNCEMENT, ENVELOPE_TASK)
+
+    @pytest.mark.parametrize("trigger", DELETED_ENVELOPE_TRIGGERS)
+    def test_deleted_envelope_trigger_runs_envelope_check(self, lint_route: LintRouteFn, trigger: str) -> None:
+        """An envelope trigger the diff removes still reaches the gate.
+
+        Parametrized across an agent definition and the canonical doc because
+        the gate fires off two separate greps, either of which could be pointed
+        back at the post-filter list on its own.
+        """
+        result = lint_route(self.SCRIPT, [trigger], absent=[trigger])
+        assert_check_ran(result, ENVELOPE_ANNOUNCEMENT, ENVELOPE_TASK)
 
     @pytest.mark.parametrize("marker", MIRRORED_BLOCK_MARKERS)
     def test_mirrored_block_is_byte_identical(self, marker: str) -> None:

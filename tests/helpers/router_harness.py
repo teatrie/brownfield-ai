@@ -16,6 +16,9 @@ lint pair: outside the mirrored branch they legitimately diverge —
 ``test_changed.sh`` carries a ``docker/agent-cli/`` branch and a host-side
 container-integration re-run that ``test_staged.sh`` has no counterpart for —
 so an anchored region comparison would report intended divergence as drift.
+The one derived comparison that does apply across the pair is over the
+``CHANGED_SCRIPTS`` path filters, whose two prefix lists are compared against a
+pinned divergence rather than byte-for-byte.
 
 Lives under ``tests/helpers/`` because ``pytest.ini`` sets
 ``--import-mode=importlib``, which keeps a test's own directory off
@@ -24,6 +27,7 @@ Lives under ``tests/helpers/`` because ``pytest.ini`` sets
 """
 
 import difflib
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -76,15 +80,40 @@ LINT_SUITE_TEST = "tests/lint/test_reviewer_envelope_required.py"
 REVIEWER_TEMPLATE_SOURCES: tuple[str, ...] = (
     ".claude/prompts/reviewer/diff.md",
     ".claude/prompts/reviewer/_invariants.md",
+    ".codex/config.toml",
     ".claude/skills/diff-review/SKILL.md",
     "scripts/lint_reviewer_templates.py",
 )
+
+#: A path named in both routers' reviewer-template branch condition that
+#: reaches that branch in neither, for two unrelated reasons.
+#: ``ci/test_staged.sh`` carries no ``docker/agent-cli/`` prefix in its
+#: ``CHANGED_SCRIPTS`` filter, so the path is dropped before the dispatch chain
+#: sees it. ``ci/test_changed.sh`` carries the prefix but places its
+#: ``docker/agent-cli/`` branch ahead of the reviewer-template branch, and
+#: first match wins, so the path is handled there instead — and neither of the
+#: two test names that branch derives from it exists. The reviewer-template
+#: invariants are still gated on this path through
+#: ``task lint:reviewer-templates``, which both lint routers trigger on it.
+INERT_REVIEWER_TEMPLATE_SOURCE = "docker/agent-cli/codex-config.toml"
 
 #: The single target every reviewer-template source produces.
 REVIEWER_TEMPLATE_SUITE = "tests/scripts/test_reviewer_templates.py"
 
 #: The routers that hard-code REVIEWER_TEMPLATE_SUITE as a literal.
 TEST_ROUTERS: tuple[str, str] = ("test_staged.sh", "test_changed.sh")
+
+#: Lifts the alternation body out of a router's ``CHANGED_SCRIPTS=`` filter,
+#: written as ``CHANGED_SCRIPTS=$(... grep -E "^(<alternation>)" ...)``. The
+#: closing ``)"`` is an unambiguous stop: the only nested group either filter
+#: contains, ``(\.local)?``, closes onto its quantifier rather than the quote.
+CHANGED_SCRIPTS_PATTERN = re.compile(r'^[ \t]*CHANGED_SCRIPTS=.*?-E\s+"\^\((.+?)\)"', re.MULTILINE)
+
+#: Prefixes ``ci/test_changed.sh`` legitimately carries that
+#: ``ci/test_staged.sh`` does not. ``docker/agent-cli/`` has a dispatch branch
+#: and a host-side container-integration re-run in ``test_changed.sh`` only, so
+#: in ``test_staged.sh`` the prefix would admit paths that then match no branch.
+KNOWN_ROUTER_DIVERGENCE: frozenset[str] = frozenset({"docker/agent-cli/"})
 
 #: Opening line of the reviewer-template branch both test routers must carry
 #: byte-identically.
@@ -214,6 +243,57 @@ def assert_reviewer_template_suite_pinned() -> None:
     for script in TEST_ROUTERS:
         source = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8")
         assert REVIEWER_TEMPLATE_SUITE in source, f"ci/{script} no longer routes to {REVIEWER_TEMPLATE_SUITE}"
+
+
+def changed_scripts_prefixes(script: str) -> frozenset[str]:
+    """
+    Read the path prefixes a test router's ``CHANGED_SCRIPTS`` filter admits.
+
+    Args:
+        script: Router filename under ``ci/``.
+
+    Returns:
+        One entry per alternative of the filter, exactly as written — regex
+        escaping included, since the result is only ever compared against the
+        other router's.
+    """
+    source = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8")
+    alternations = CHANGED_SCRIPTS_PATTERN.findall(source)
+    assert len(alternations) == 1, (
+        f"ci/{script}: found {len(alternations)} CHANGED_SCRIPTS filters, expected exactly 1 — "
+        'this guard reads the line shape `CHANGED_SCRIPTS=$(... grep -E "^(<alternation>)" ...)`'
+    )
+    return frozenset(alternations[0].split("|"))
+
+
+def assert_changed_scripts_prefixes_agree() -> None:
+    """
+    Assert the two test routers admit the same path prefixes, bar a pinned divergence.
+
+    The filter decides whether a changed path reaches the dispatch chain at
+    all, and it is hand-maintained in both files. A prefix *dropped* from one
+    router fails the behavioural assertions, which enumerate paths that must
+    route; a prefix *added* to one router only passes every one of them,
+    because an enumeration cannot list a prefix that does not exist yet.
+    Byte-identity cannot close that direction here — the two filters differ by
+    design — so the prefix sets are compared instead.
+
+    Splitting the alternation on ``|`` would mis-split a nested alternation
+    such as ``(a|b)``. Both routers would split it the same way, so the
+    comparison stays sound; only the rendered failure message would read
+    oddly.
+    """
+    staged_script, changed_script = TEST_ROUTERS
+    staged = changed_scripts_prefixes(staged_script)
+    changed = changed_scripts_prefixes(changed_script)
+    surplus = changed - staged
+    missing = staged - changed
+    assert surplus == KNOWN_ROUTER_DIVERGENCE and not missing, (
+        "the CHANGED_SCRIPTS prefix filters of the two test routers disagree\n"
+        f"in ci/{changed_script} only: {sorted(surplus)} (pinned: {sorted(KNOWN_ROUTER_DIVERGENCE)})\n"
+        f"in ci/{staged_script} only: {sorted(missing)} (pinned: none)\n"
+        "add the prefix to both routers, or pin the divergence in KNOWN_ROUTER_DIVERGENCE"
+    )
 
 
 def extract_marked_block(
@@ -435,6 +515,16 @@ class RouterContract:
         result = route(self.SCRIPT, [source])
         assert routed_targets(result) == [REVIEWER_TEMPLATE_SUITE], f"{source}\n{diagnose(result)}"
 
+    def test_inert_reviewer_template_source_routes_nothing(self, route: RouteFn) -> None:
+        """The agent-cli codex config selects no target in either router.
+
+        Pins the outcome, not an intent: both routers name this path in their
+        reviewer-template branch condition, and in both it is unreachable — see
+        ``INERT_REVIEWER_TEMPLATE_SOURCE`` for the two mechanisms. Asserting it
+        keeps the branch condition from reading as coverage that exists.
+        """
+        assert_routed_nothing(route(self.SCRIPT, [INERT_REVIEWER_TEMPLATE_SOURCE]))
+
     def test_many_reviewer_template_sources_collapse_to_one_target(self, route: RouteFn) -> None:
         """Several changed reviewer-template sources deduplicate to a single target."""
         result = route(self.SCRIPT, list(REVIEWER_TEMPLATE_SOURCES))
@@ -484,3 +574,15 @@ class RouterContract:
             routers=TEST_ROUTERS,
             boundaries=BRANCH_BOUNDARY_MARKERS,
         )
+
+    def test_changed_scripts_prefix_filters_agree(self) -> None:
+        """Both routers admit the same path prefixes, bar the pinned divergence.
+
+        The byte-identity check above covers one branch of the dispatch chain;
+        this covers the filter that gates entry to the chain, which is not
+        byte-comparable. See ``assert_changed_scripts_prefixes_agree``.
+
+        Ignores ``SCRIPT`` and reads both routers, for the same reason as
+        ``test_reviewer_template_suite_path_is_pinned``.
+        """
+        assert_changed_scripts_prefixes_agree()

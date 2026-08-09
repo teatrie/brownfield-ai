@@ -100,7 +100,8 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
 
     Returns:
         Callable taking the script filename under ``ci/`` and the changed-file
-        list, and returning the completed process.
+        list, plus an optional keyword-only ``absent`` naming listed paths to
+        leave uncreated, and returning the completed process.
     """
     bin_dir = tmp_path / "lint-bin"
     bin_dir.mkdir()
@@ -125,6 +126,8 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
     def _lint_route(
         script: str,
         changed_files: Sequence[str],
+        *,
+        absent: Sequence[str] = (),
     ) -> subprocess.CompletedProcess[str]:
         # One workspace per call, not one per fixture: the placeholders below
         # would otherwise survive into the next call within the same test,
@@ -133,12 +136,23 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
         workspace = workspaces / str(next(workspace_serial))
         workspace.mkdir()
 
+        # A misspelt `absent` entry would materialise the path it meant to
+        # withhold, and a deletion assertion would then pass against a router
+        # that never reads the pre-filter list. Fail on the typo instead.
+        unlisted = [path for path in absent if path not in changed_files]
+        assert not unlisted, f"`absent` paths must also appear in `changed_files`: {unlisted}"
+
         # Both routers drop changed paths that are absent from the working
         # tree, so an un-materialised list would route nothing and every
         # assertion would read as a routing hole. Placeholders are created in
         # place rather than symlinked from the repository, so no assertion can
-        # depend on real file contents.
+        # depend on real file contents. `absent` withholds the placeholder for
+        # a named path, which is the shape of a diff that deletes a file: the
+        # changed-file listing still reports it, the working tree does not
+        # carry it.
         for path in changed_files:
+            if path in absent:
+                continue
             placeholder = workspace / path
             placeholder.parent.mkdir(parents=True, exist_ok=True)
             placeholder.touch()

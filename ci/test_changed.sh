@@ -107,7 +107,7 @@ run_pytest_venv() {
 }
 
 if [ "$TARGET" == "scripts" ]; then
-    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|tests/lint/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|\.claude/prompts/reviewer/|\.claude/skills/diff-review/|docker/shared/|docker/agent-cli/|\.claude/settings(\.local)?\.json)" || true)
+    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|tests/lint/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|\.claude/prompts/reviewer/|\.claude/skills/diff-review/|\.codex/|docker/shared/|docker/agent-cli/|\.claude/settings(\.local)?\.json)" || true)
 
     if [ -n "$CHANGED_SCRIPTS" ]; then
         declare -a TEST_TARGETS_ARRAY=()
@@ -164,19 +164,18 @@ if [ "$TARGET" == "scripts" ]; then
                         TEST_TARGETS_ARRAY+=("$candidate")
                     fi
                 done
-            elif [[ "$file" == .claude/prompts/reviewer/* ]] || [[ "$file" == .claude/skills/diff-review/* ]] || [[ "$file" == scripts/lint_reviewer_templates.py ]]; then
-                # The reviewer rubric is mirrored across two sources — the
-                # SHARED: regions of .claude/skills/diff-review/SKILL.md and
-                # the bridge template rendered from them — and one checker
-                # compares them. All three must re-run that comparison, and
-                # none can reach it any other way: the two rubric halves match
-                # no other branch, and the checker would fall through to the
-                # scripts/* derivation below, which builds
-                # tests/scripts/test_lint_reviewer_templates.py — a name that
-                # does not exist, silently routing the parity guard's own
-                # checker to zero tests. The branch is explicit rather than
-                # derivation-driven because neither rubric half has any
-                # derivable test name at all — no rename would route them.
+            elif [[ "$file" == .claude/prompts/reviewer/* ]] || [[ "$file" == .claude/skills/diff-review/* ]] || [[ "$file" == scripts/lint_reviewer_templates.py ]] || [[ "$file" == .codex/config.toml ]] || [[ "$file" == docker/agent-cli/codex-config.toml ]]; then
+                # The reviewer-template parity check compares a rubric that
+                # is mirrored across several sources. Every one of them, and
+                # the checker itself, routes here. The condition above is the
+                # enumeration — repeating it in prose would be a second copy
+                # to keep current.
+                # Explicit rather than derivation-driven: most of these paths
+                # have no derivable test name at all, and the checker would
+                # otherwise fall through to the scripts/* derivation below,
+                # which builds tests/scripts/test_lint_reviewer_templates.py
+                # — a name that does not exist, silently routing the parity
+                # guard's own checker to zero tests.
                 test_file="tests/scripts/test_reviewer_templates.py"
                 if [ -f "$test_file" ]; then
                     TEST_TARGETS_ARRAY+=("$test_file")
