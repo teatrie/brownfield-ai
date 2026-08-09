@@ -107,12 +107,12 @@ run_pytest_venv() {
 }
 
 if [ "$TARGET" == "scripts" ]; then
-    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|docker/shared/|docker/agent-cli/|\.claude/settings(\.local)?\.json)" || true)
+    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|tests/lint/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|\.claude/prompts/reviewer/|\.claude/skills/diff-review/|\.codex/|docker/shared/|docker/agent-cli/|\.claude/settings(\.local)?\.json)" || true)
 
     if [ -n "$CHANGED_SCRIPTS" ]; then
         declare -a TEST_TARGETS_ARRAY=()
         for file in $CHANGED_SCRIPTS; do
-            if [[ "$file" == tests/scripts/* ]] || [[ "$file" == tests/ci/* ]] || [[ "$file" == tests/hooks/* ]] || [[ "$file" == tests/agents/* ]]; then
+            if [[ "$file" == tests/scripts/* ]] || [[ "$file" == tests/ci/* ]] || [[ "$file" == tests/lint/* ]] || [[ "$file" == tests/hooks/* ]] || [[ "$file" == tests/agents/* ]]; then
                 # Include only actual test files (test_*.py), skip fixtures
                 if [ -f "$file" ] && [[ "$(basename "$file")" == test_*.py ]]; then
                     TEST_TARGETS_ARRAY+=("$file")
@@ -164,6 +164,25 @@ if [ "$TARGET" == "scripts" ]; then
                         TEST_TARGETS_ARRAY+=("$candidate")
                     fi
                 done
+            elif [[ "$file" == .claude/prompts/reviewer/* ]] || [[ "$file" == .claude/skills/diff-review/* ]] || [[ "$file" == scripts/lint_reviewer_templates.py ]] || [[ "$file" == .codex/config.toml ]] || [[ "$file" == docker/agent-cli/codex-config.toml ]]; then
+                # The reviewer-template parity check compares a rubric
+                # mirrored across several sources. Four of the five
+                # patterns above route here. The fifth,
+                # docker/agent-cli/codex-config.toml, reaches this branch
+                # in neither router; its parity is gated instead by
+                # `task lint:reviewer-templates`, which both lint routers
+                # fire on it. Dropping that pattern from one router alone
+                # would fail this branch's byte-identity check.
+                # Most of these paths have no derivable test name at all,
+                # and the checker would otherwise fall through to the
+                # scripts/* derivation below, which builds
+                # tests/scripts/test_lint_reviewer_templates.py — a name
+                # that does not exist, silently routing the parity guard's
+                # own checker to zero tests.
+                test_file="tests/scripts/test_reviewer_templates.py"
+                if [ -f "$test_file" ]; then
+                    TEST_TARGETS_ARRAY+=("$test_file")
+                fi
             elif [[ "$file" == scripts/* ]] || [[ "$file" == ci/* ]]; then
                 # Map script to its test file. Strip the source extension and
                 # append .py: tests are Python, so keeping the original suffix

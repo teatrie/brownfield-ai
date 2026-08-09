@@ -97,6 +97,11 @@ while IFS= read -r file; do
         EXISTING_FILES="$EXISTING_FILES $file"
     fi
 done <<< "$(echo "$CHANGED_FILES" | tr ' ' '\n')"
+# Gate triggers below select on path alone and must still fire for a file
+# the diff removes, so they read the list from before the loop above, which
+# drops files missing from disk and files matching the pyproject or
+# markdownlint ignore globs.
+UNFILTERED_CHANGED_FILES="$CHANGED_FILES"
 CHANGED_FILES="$EXISTING_FILES"
 
 echo "Changed files:"
@@ -242,10 +247,11 @@ if [ -n "$NON_PY_SQL_FILES" ]; then
     fi
 fi
 
-# Reviewer template invariant check — triggered when reviewer prompts or
-# codex config change. Delegates to `task lint:reviewer-templates`
+# Reviewer template invariant check — triggered when a reviewer prompt, a
+# codex config, the mirrored rubric half in the diff-review SKILL.md, or the
+# checker itself changes. Delegates to `task lint:reviewer-templates`
 # which runs the lint inside the pytest-cli container.
-TEMPLATE_FILES=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/prompts/reviewer/.*\.md$|^\.codex/config\.toml$|^docker/agent-cli/codex-config\.toml$' | xargs || true)
+TEMPLATE_FILES=$(echo "$UNFILTERED_CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/prompts/reviewer/.*\.md$|^\.codex/config\.toml$|^docker/agent-cli/codex-config\.toml$|^\.claude/skills/diff-review/SKILL\.md$|^scripts/lint_reviewer_templates\.py$' | xargs || true)
 if [ -n "$TEMPLATE_FILES" ]; then
     echo "--------------------------------------------------"
     echo "Checking reviewer template invariants..."
@@ -257,13 +263,12 @@ fi
 
 # Reviewer Output Envelope compliance — triggered when a reviewer agent
 # definition, the envelope canonical doc, or the envelope schema
-# changes. Per the per-wave scope-expansion contract (plan §10.3,
-# Req-018 / B-3 R2), the trigger pattern is intentionally broader than
-# the W1 SCOPE constant in tests/lint/test_reviewer_envelope_required.py
-# so future-wave reviewer files (codex-reviewer*, gemini-reviewer*,
-# qa-*) automatically invoke the gate once W2/W3 add them to SCOPE.
-ENVELOPE_AGENTS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/agents/(code-review|codex-reviewer|gemini-reviewer|copilot-reviewer|qa-(standards|lint|test))(-(high|xhigh|max))?\.md$' | xargs || true)
-ENVELOPE_DOCS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^docs/reviewer_envelope\.md$|^docs/schemas/reviewer_envelope\.schema\.json$' | xargs || true)
+# changes. Deliberately broader than the lint's own scope, which
+# tests/lint/test_reviewer_envelope_required.py derives from the
+# agent-family registry: a reviewer file whose family the registry has
+# not migrated still trips the gate, so migrating it needs no edit here.
+ENVELOPE_AGENTS=$(echo "$UNFILTERED_CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/agents/(code-review|codex-reviewer|gemini-reviewer|copilot-reviewer|qa-(standards|lint|test))(-(high|xhigh|max))?\.md$' | xargs || true)
+ENVELOPE_DOCS=$(echo "$UNFILTERED_CHANGED_FILES" | tr ' ' '\n' | grep -E '^docs/reviewer_envelope\.md$|^docs/schemas/reviewer_envelope\.schema\.json$' | xargs || true)
 if [ -n "$ENVELOPE_AGENTS" ] || [ -n "$ENVELOPE_DOCS" ]; then
     echo "--------------------------------------------------"
     echo "Checking reviewer envelope compliance..."

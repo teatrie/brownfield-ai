@@ -12,12 +12,15 @@ otherwise duplicated agent-family metadata:
    third module is the drift surface this registry closes.
 3. ``docs/schemas/reviewer_envelope.schema.json`` — the ``agent_family``
    enum lists the same set of family names.
-4. ``ci/lint_staged.sh`` — the ``ENVELOPE_AGENTS`` regex selects agent
-   markdown paths whose stems are exactly the agent IDs declared here.
+4. ``ci/lint_staged.sh`` and ``ci/lint_changed.sh`` — each router
+   carries its own ``ENVELOPE_AGENTS`` regex selecting agent markdown
+   paths whose stems are exactly the agent IDs declared here.
+   ``lint_changed.sh`` is the router the CI ``lint`` job gates pull
+   requests on; ``lint_staged.sh`` is the local pre-commit fast path.
 
 The registry stores the canonical fact about each family in one place;
 the four surfaces above derive their views from it. The schema enum
-and shell regex stay hand-maintained for portability (JSON Schema and
+and shell regexes stay hand-maintained for portability (JSON Schema and
 shell scripts can't import Python at runtime), but a registry-driven
 consistency test catches drift the moment a new family or agent ID is
 added without updating one of the dependents.
@@ -227,15 +230,16 @@ def schema_family_enum() -> tuple[str, ...]:
     return tuple(AGENT_FAMILY_REGISTRY.keys())
 
 
-def lint_staged_agent_ids() -> tuple[str, ...]:
-    """Return every agent-ID that the shell ``ENVELOPE_AGENTS`` regex
-    in ``ci/lint_staged.sh`` MUST match.
+def lint_router_agent_ids() -> tuple[str, ...]:
+    """Return every agent-ID the shell ``ENVELOPE_AGENTS`` regexes MUST match.
 
-    The shell script's regex is hand-maintained for portability (CI
-    bash on macOS doesn't import Python at runtime). The
-    registry-consistency test compiles the agent-ID list here, runs
-    them through the regex, and asserts every entry matches. Adding a
-    new agent ID here without widening the shell regex fails the test.
+    The regexes live in ``ci/lint_staged.sh`` and ``ci/lint_changed.sh``.
+    Both routers hand-maintain their own copy of the regex for
+    portability (CI bash on macOS doesn't import Python at runtime).
+    The registry-consistency test compiles the agent-ID list here, runs
+    them through each router's regex, and asserts every entry matches
+    in both. Adding a new agent ID here without widening both shell
+    regexes fails the test.
 
     Returns every realized agent ID, including those in families with
     empty ``waves`` (forward-compat coverage — when a family is added

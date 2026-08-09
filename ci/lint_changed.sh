@@ -137,6 +137,11 @@ while IFS= read -r file; do
         EXISTING_FILES="$EXISTING_FILES $file"
     fi
 done <<< "$(echo "$CHANGED_FILES" | tr ' ' '\n')"
+# Gate triggers below select on path alone and must still fire for a file
+# the diff removes, so they read the list from before the loop above, which
+# drops files missing from disk and files matching the pyproject or
+# markdownlint ignore globs.
+UNFILTERED_CHANGED_FILES="$CHANGED_FILES"
 CHANGED_FILES="$EXISTING_FILES"
 
 echo "Changed files:"
@@ -279,6 +284,45 @@ if [ -n "$NON_PY_SQL_FILES" ]; then
     if echo "$NON_PY_SQL_FILES" | xargs rg -U -i '(select|returning)\s+([a-zA-Z0-9_]+\.)?\*' 2>/dev/null; then
         echo "WARNING: SQL wildcard(s) found in non-Python files above."
         echo "Review per .claude/rules/sql.queries.md — this is advisory, not blocking."
+    fi
+fi
+
+# The CI `lint` job runs `task lint:changed` as its only lint step
+# (.github/workflows/ci.yml), so this router — not lint_staged.sh — is what a
+# pull request is gated on, and a check present only in the staged gate never
+# fires on a PR at all. The two blocks below are byte-identical to their
+# lint_staged.sh counterparts, which a byte-identity test asserts directly;
+# tests/ci/ subclasses one shared LintRouterContract for both routers so a
+# trigger dropped from either one also fails.
+
+# Reviewer template invariant check — triggered when a reviewer prompt, a
+# codex config, the mirrored rubric half in the diff-review SKILL.md, or the
+# checker itself changes. Delegates to `task lint:reviewer-templates`
+# which runs the lint inside the pytest-cli container.
+TEMPLATE_FILES=$(echo "$UNFILTERED_CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/prompts/reviewer/.*\.md$|^\.codex/config\.toml$|^docker/agent-cli/codex-config\.toml$|^\.claude/skills/diff-review/SKILL\.md$|^scripts/lint_reviewer_templates\.py$' | xargs || true)
+if [ -n "$TEMPLATE_FILES" ]; then
+    echo "--------------------------------------------------"
+    echo "Checking reviewer template invariants..."
+    if ! "${TASK_CMD[@]}" lint:reviewer-templates; then
+        echo "Reviewer template invariant lint failed"
+        EXIT_CODE=1
+    fi
+fi
+
+# Reviewer Output Envelope compliance — triggered when a reviewer agent
+# definition, the envelope canonical doc, or the envelope schema
+# changes. Deliberately broader than the lint's own scope, which
+# tests/lint/test_reviewer_envelope_required.py derives from the
+# agent-family registry: a reviewer file whose family the registry has
+# not migrated still trips the gate, so migrating it needs no edit here.
+ENVELOPE_AGENTS=$(echo "$UNFILTERED_CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/agents/(code-review|codex-reviewer|gemini-reviewer|copilot-reviewer|qa-(standards|lint|test))(-(high|xhigh|max))?\.md$' | xargs || true)
+ENVELOPE_DOCS=$(echo "$UNFILTERED_CHANGED_FILES" | tr ' ' '\n' | grep -E '^docs/reviewer_envelope\.md$|^docs/schemas/reviewer_envelope\.schema\.json$' | xargs || true)
+if [ -n "$ENVELOPE_AGENTS" ] || [ -n "$ENVELOPE_DOCS" ]; then
+    echo "--------------------------------------------------"
+    echo "Checking reviewer envelope compliance..."
+    if ! "${TASK_CMD[@]}" lint:reviewer-envelope; then
+        echo "Reviewer envelope lint failed"
+        EXIT_CODE=1
     fi
 fi
 

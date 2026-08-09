@@ -1,40 +1,38 @@
 """Shared pieces for the ``ci/`` changed-file router tests.
 
 ``ci/test_staged.sh`` and ``ci/test_changed.sh`` decide which pytest targets a
-diff maps to, then hand those targets to Docker. The routing decision is the
-part worth testing; the container run is not. The ``route`` fixture in
-``tests/ci/conftest.py`` shadows ``git`` (to inject a synthetic changed-file
-list), plus ``docker`` and ``task`` (to swallow the execution stage), and the
-assertions here read the targets back off the router's own announcement line.
+diff maps to. The routing decision is what is under test; the container run is
+not. The ``route`` fixture in ``tests/ci/conftest.py`` shadows ``git`` (to
+inject a synthetic changed-file list) plus ``docker`` and ``task`` (to swallow
+the execution stage), and the assertions here read the targets back off the
+router's own announcement line.
 
-The routers run in a fake workspace rather than the repository, which is what
-lets the security gate be shadowed — it is invoked by a path relative to the
-working directory, not through ``PATH``. Nothing here touches the real
-repository state, so these tests assert on routing alone and nothing else.
+The security gate is stubbed rather than run: it writes
+``tmp/.python-gate-pass``, which in CI is already owned by the outer gate run's
+uid, so a nested invocation fails with EACCES and ``set -e`` kills the router
+before it announces anything. Its path-containment and tracked-file checks
+therefore belong to ``tests/scripts/test_python_security_gate.py``, not here.
 
-Two deliberate limits:
+The test routers get per-block byte-identity only, with no region-level
+delegation comparison of the kind ``helpers.lint_router_harness`` runs over the
+lint pair: outside the mirrored branch they legitimately diverge —
+``test_changed.sh`` carries a ``docker/agent-cli/`` branch and a host-side
+container-integration re-run that ``test_staged.sh`` has no counterpart for —
+so an anchored region comparison would report intended divergence as drift.
+The one derived comparison that does apply across the pair is over the
+``CHANGED_SCRIPTS`` path filters, whose two prefix lists are compared against a
+pinned divergence rather than byte-for-byte.
 
-- The security gate is stubbed, so its path-containment and tracked-file
-  checks are **not** covered here. They belong to
-  ``tests/scripts/test_python_security_gate.py``. Running the real gate was
-  tried and abandoned: it writes ``tmp/.python-gate-pass``, which in CI is
-  already owned by the outer gate run's uid, so the nested write failed with
-  EACCES and ``set -e`` killed the router before it announced anything.
-- Assertions read the announced targets rather than the exit code, because the
-  code reports on the stubbed execution stage. It is not meaningless, though:
-  the stubs exit 0, so a non-zero code means the router itself failed, and
-  ``assert_routed_nothing`` checks it — otherwise a router that crashed before
-  announcing would be indistinguishable from one that deliberately selected
-  nothing.
-
-Lives under ``tests/helpers/`` rather than beside the tests because
-``pytest.ini`` sets ``--import-mode=importlib``, which does not put a test's
-own directory on ``sys.path``; ``pythonpath = tests`` makes this package
-importable as ``helpers.router_harness``.
+Lives under ``tests/helpers/`` because ``pytest.ini`` sets
+``--import-mode=importlib``, which keeps a test's own directory off
+``sys.path``; ``pythonpath = tests`` makes this package importable as
+``helpers.router_harness``.
 """
 
+import difflib
+import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -61,19 +59,97 @@ SETTINGS_FILES: tuple[str, ...] = (
 HOOKS_SUITE = "tests/hooks/"
 
 #: Helper modules under tests/helpers/ that are imported by other suites rather
-#: than exercised in place. router_harness.py and aws_env.py have no test file
-#: at all, which is why the branch routes to directories instead of deriving a
-#: name; see RouterContract.test_no_helper_filename_derivation.
+#: than exercised in place. The two router harnesses and aws_env.py have no test
+#: file at all, which is why the branch routes to directories instead of
+#: deriving a name; see RouterContract.test_no_helper_filename_derivation.
 HELPER_MODULES: tuple[str, ...] = (
     "tests/helpers/eval_utils.py",
     "tests/helpers/runners.py",
     "tests/helpers/router_harness.py",
+    "tests/helpers/lint_router_harness.py",
     "tests/helpers/aws_env.py",
 )
 
 #: The two directory targets a changed helper module produces. tests/ci/ is in
 #: the pair because its router contracts import helpers.router_harness.
 HELPER_SUITES = ("tests/ci/", "tests/helpers/")
+
+#: The only test under tests/lint/, and the entire enforcement body of
+#: ``task lint:reviewer-envelope``. Both routers guard it with ``[ -f ]``, so a
+#: rename that misses this constant surfaces as an empty target list rather
+#: than as a missing file.
+LINT_SUITE_TEST = "tests/lint/test_reviewer_envelope_required.py"
+
+#: A representative sample of the sources that must route to
+#: REVIEWER_TEMPLATE_SUITE, not a closed enumeration: the branch matches the
+#: reviewer-prompt and diff-review directories wholesale, so unlisted siblings
+#: route here too.
+REVIEWER_TEMPLATE_SOURCES: tuple[str, ...] = (
+    ".claude/prompts/reviewer/diff.md",
+    ".claude/prompts/reviewer/_invariants.md",
+    ".codex/config.toml",
+    ".claude/skills/diff-review/SKILL.md",
+    "scripts/lint_reviewer_templates.py",
+)
+
+#: A path named in both routers' reviewer-template branch condition that
+#: reaches that branch in neither, for two unrelated reasons.
+#: ``ci/test_staged.sh`` carries no ``docker/agent-cli/`` prefix in its
+#: ``CHANGED_SCRIPTS`` filter, so the path is dropped before the dispatch chain
+#: sees it and the router selects nothing at all. ``ci/test_changed.sh`` carries
+#: the prefix but places its ``docker/agent-cli/`` branch ahead of the
+#: reviewer-template branch, and first match wins, so the path is handled there
+#: instead — and neither of the two test names that branch derives from it
+#: exists, so no pytest target is announced. Announcing nothing is not the same
+#: as doing nothing there: the prefix also matches ``AGENT_CLI_RELEVANT`` after
+#: the dispatch loop, which delegates to ``task test:container-integration``
+#: outside the announced target list. The reviewer-template invariants are
+#: still gated on this path through ``task lint:reviewer-templates``, which both
+#: lint routers trigger on it.
+INERT_REVIEWER_TEMPLATE_SOURCE = "docker/agent-cli/codex-config.toml"
+
+#: Substring of the line ``ci/test_changed.sh`` prints before delegating to the
+#: host-side container-integration re-run. ``ci/test_staged.sh`` has no such
+#: stage, so its absence there is as much a pinned outcome as its presence here.
+CONTAINER_INTEGRATION_RERUN_MARKER = "running task test:container-integration"
+
+#: The only router carrying the container-integration re-run.
+CONTAINER_INTEGRATION_RERUN_ROUTER = "test_changed.sh"
+
+#: The single target every reviewer-template source produces.
+REVIEWER_TEMPLATE_SUITE = "tests/scripts/test_reviewer_templates.py"
+
+#: The routers that hard-code REVIEWER_TEMPLATE_SUITE as a literal.
+TEST_ROUTERS: tuple[str, str] = ("test_staged.sh", "test_changed.sh")
+
+#: Lifts the alternation body out of a router's ``CHANGED_SCRIPTS=`` filter,
+#: written as ``CHANGED_SCRIPTS=$(... grep -E "^(<alternation>)" ...)``. The
+#: closing ``)"`` is an unambiguous stop: the only nested group either filter
+#: contains, ``(\.local)?``, closes onto its quantifier rather than the quote.
+CHANGED_SCRIPTS_PATTERN = re.compile(r'^[ \t]*CHANGED_SCRIPTS=.*?-E\s+"\^\((.+?)\)"', re.MULTILINE)
+
+#: Prefixes ``ci/test_changed.sh`` legitimately carries that
+#: ``ci/test_staged.sh`` does not. ``docker/agent-cli/`` has a dispatch branch
+#: and a host-side container-integration re-run in ``test_changed.sh`` only, so
+#: in ``test_staged.sh`` the prefix would admit paths that then match no branch.
+KNOWN_ROUTER_DIVERGENCE: frozenset[str] = frozenset({"docker/agent-cli/"})
+
+#: Opening line of the reviewer-template branch both test routers must carry
+#: byte-identically.
+REVIEWER_TEMPLATE_BRANCH_MARKER = 'elif [[ "$file" == .claude/prompts/reviewer/* ]]'
+
+#: Opening prefix shared by every branch of the changed-file dispatch chain.
+#: Bounding a block slice at the next sibling branch is what keeps it from
+#: running on to the enclosing loop's ``fi`` and swallowing the rest of the
+#: dispatch chain.
+BRANCH_BOUNDARY_MARKERS: tuple[str, ...] = ('elif [[ "$file" == ',)
+
+#: The line that closes a block. How strictly it is matched belongs to the
+#: caller, not to this value: ``extract_marked_block`` compares the
+#: indentation-stripped line, so a nested ``fi`` matches, while the region scan
+#: in ``helpers.lint_router_harness`` compares the raw line, so only a
+#: column-zero ``fi`` does.
+BLOCK_TERMINATOR = "fi"
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
@@ -135,9 +211,8 @@ def diagnose(result: subprocess.CompletedProcess[str]) -> str:
     """
     Render a router run for an assertion message.
 
-    stderr carries as much as stdout here: under ``set -e`` a router that dies
-    early prints nothing to stdout, so a stdout-only message reports that the
-    target list was empty without saying why.
+    stderr is included because under ``set -e`` a router that dies early prints
+    nothing to stdout.
 
     Args:
         result: Completed router process.
@@ -153,9 +228,7 @@ def assert_routed_nothing(result: subprocess.CompletedProcess[str]) -> None:
     Assert the router ran successfully and deliberately selected no targets.
 
     The exit-code check is what separates "chose nothing" from "died before it
-    could announce anything" — both produce an empty target list. Nothing
-    downstream of the stubs runs on this path, so a non-zero code here is
-    always a real router failure.
+    could announce anything" — both produce an empty target list.
 
     Args:
         result: Completed router process.
@@ -164,13 +237,165 @@ def assert_routed_nothing(result: subprocess.CompletedProcess[str]) -> None:
     assert routed_targets(result) == [], f"expected no targets\n{diagnose(result)}"
 
 
+def assert_reviewer_template_suite_pinned() -> None:
+    """
+    Assert both routers still name the reviewer-template suite, and that it exists.
+
+    The branch in each router guards its literal with ``[ -f "$test_file" ]``,
+    so a renamed or deleted suite makes both routers route *nothing* and report
+    success — the silent zero-tests outcome that whole branch exists to
+    prevent.
+
+    ``tests/scripts/test_reviewer_templates.py`` inlines the same assertion
+    rather than importing it, for routing reasons: the helper fan-out in both
+    routers sends a changed module under ``tests/helpers/`` to
+    ``tests/helpers/`` and ``tests/ci/`` only, so an import from
+    ``tests/scripts/`` would be a dependency no router covers. Do not merge the
+    two copies.
+    """
+    suite = REPO_ROOT / REVIEWER_TEMPLATE_SUITE
+    assert suite.is_file(), (
+        f"{REVIEWER_TEMPLATE_SUITE} is missing; both routers guard it with `[ -f ]` "
+        "and will route nothing — update the literal in "
+        f"{', '.join(f'ci/{script}' for script in TEST_ROUTERS)} alongside the rename"
+    )
+    for script in TEST_ROUTERS:
+        source = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8")
+        assert REVIEWER_TEMPLATE_SUITE in source, f"ci/{script} no longer routes to {REVIEWER_TEMPLATE_SUITE}"
+
+
+def changed_scripts_prefixes(script: str) -> frozenset[str]:
+    """
+    Read the path prefixes a test router's ``CHANGED_SCRIPTS`` filter admits.
+
+    Args:
+        script: Router filename under ``ci/``.
+
+    Returns:
+        One entry per alternative of the filter, exactly as written — regex
+        escaping included, since the result is only ever compared against the
+        other router's.
+    """
+    source = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8")
+    alternations = CHANGED_SCRIPTS_PATTERN.findall(source)
+    assert len(alternations) == 1, (
+        f"ci/{script}: found {len(alternations)} CHANGED_SCRIPTS filters, expected exactly 1 — "
+        'this guard reads the line shape `CHANGED_SCRIPTS=$(... grep -E "^(<alternation>)" ...)`'
+    )
+    return frozenset(alternations[0].split("|"))
+
+
+def assert_changed_scripts_prefixes_agree() -> None:
+    """
+    Assert the two test routers admit the same path prefixes, bar a pinned divergence.
+
+    The filter decides whether a changed path reaches the dispatch chain at
+    all, and it is hand-maintained in both files. A prefix *dropped* from one
+    router fails the behavioural assertions, which enumerate paths that must
+    route; a prefix *added* to one router only passes every one of them,
+    because an enumeration cannot list a prefix that does not exist yet.
+    Byte-identity cannot close that direction here — the two filters differ by
+    design — so the prefix sets are compared instead.
+
+    Splitting the alternation on ``|`` would mis-split a nested alternation
+    such as ``(a|b)``. Both routers would split it the same way, so the
+    comparison stays sound; only the rendered failure message would read
+    oddly.
+    """
+    staged_script, changed_script = TEST_ROUTERS
+    staged = changed_scripts_prefixes(staged_script)
+    changed = changed_scripts_prefixes(changed_script)
+    surplus = changed - staged
+    missing = staged - changed
+    assert surplus == KNOWN_ROUTER_DIVERGENCE and not missing, (
+        "the CHANGED_SCRIPTS prefix filters of the two test routers disagree\n"
+        f"in ci/{changed_script} only: {sorted(surplus)} (pinned: {sorted(KNOWN_ROUTER_DIVERGENCE)})\n"
+        f"in ci/{staged_script} only: {sorted(missing)} (pinned: none)\n"
+        "add the prefix to both routers, or pin the divergence in KNOWN_ROUTER_DIVERGENCE"
+    )
+
+
+def extract_marked_block(
+    script: str,
+    marker: str,
+    *,
+    boundaries: Sequence[str],
+) -> str:
+    """
+    Slice a marked block out of a router script, line endings preserved.
+
+    A marker seen more or fewer than once fails here instead of silently
+    slicing the wrong region.
+
+    The block ends at the *last* ``BLOCK_TERMINATOR`` inside the window running
+    from the marker to the next sibling boundary, not the first: stopping at
+    the first truncates any block holding more than one top-level statement,
+    leaving the un-compared tail free to diverge while the assertion still
+    passes. Over-slicing fails loudly instead, which is the safe direction for
+    a parity guard.
+
+    Args:
+        script: Router filename under ``ci/``.
+        marker: Opening line of the block, matched as a prefix of the
+            indentation-stripped line.
+        boundaries: Opening-line prefixes of the sibling blocks that bound the
+            search window.
+
+    Returns:
+        The block from its opening line through its closing terminator.
+    """
+    lines = (REPO_ROOT / "ci" / script).read_text(encoding="utf-8").splitlines(keepends=True)
+    starts = [index for index, line in enumerate(lines) if line.lstrip().startswith(marker)]
+    assert len(starts) == 1, f"ci/{script}: marker {marker!r} found {len(starts)} times, expected exactly 1"
+
+    start = starts[0]
+    window_end = next(
+        (index for index in range(start + 1, len(lines)) if any(lines[index].lstrip().startswith(boundary) for boundary in boundaries)),
+        len(lines),
+    )
+    ends = [index for index in range(start, window_end) if lines[index].strip() == BLOCK_TERMINATOR]
+    assert ends, f"ci/{script}: no closing {BLOCK_TERMINATOR!r} between marker {marker!r} and the next block boundary"
+    return "".join(lines[start : ends[-1] + 1])
+
+
+def assert_block_mirrored(
+    marker: str,
+    *,
+    routers: tuple[str, str],
+    boundaries: Sequence[str],
+) -> None:
+    """
+    Assert a marked block is byte-identical across a pair of routers.
+
+    Args:
+        marker: Opening line of the block, matched as a prefix of the
+            indentation-stripped line.
+        routers: The two router filenames under ``ci/``, in the order the
+            rendered diff labels them.
+        boundaries: Opening-line prefixes of the sibling blocks that bound the
+            search window.
+    """
+    left, right = routers
+    left_block = extract_marked_block(left, marker, boundaries=boundaries)
+    right_block = extract_marked_block(right, marker, boundaries=boundaries)
+    # Rendered eagerly so the message names *what* diverged — indentation and
+    # trailing whitespace included.
+    diff = "".join(
+        difflib.unified_diff(
+            left_block.splitlines(keepends=True),
+            right_block.splitlines(keepends=True),
+            fromfile=f"ci/{left}",
+            tofile=f"ci/{right}",
+        )
+    )
+    assert left_block == right_block, f"mirrored block {marker!r} diverged between ci/{left} and ci/{right}\n{diff}"
+
+
 class RouterContract:
     """Routing contract both routers must satisfy identically.
 
     Subclassed once per script rather than duplicated, because the defect these
-    tests exist to catch was drift between the two files: ``test_changed.sh``
-    carried a byte-identical copy of the broken branch in ``test_staged.sh``,
-    so fixing one without the other would leave the pre-push gate blind.
+    tests exist to catch is drift between the two files.
 
     Subclasses set ``SCRIPT`` to the filename under ``ci/``.
     """
@@ -252,9 +477,9 @@ class RouterContract:
     def test_no_helper_filename_derivation(self, route: RouteFn, module: str) -> None:
         """No per-module test filename is derived.
 
-        Guards the reason for directory routing: two of the four modules have
-        no test file, so a derivation rule resolves them to nothing — the
-        silent un-routing this branch exists to close.
+        Guards the reason for directory routing: some of these modules have no
+        test file of their own, so a derivation rule resolves them to nothing —
+        the silent un-routing this branch exists to close.
         """
         derived = f"tests/helpers/test_{Path(module).stem}.py"
         result = route(self.SCRIPT, [module])
@@ -276,3 +501,120 @@ class RouterContract:
         result = route(self.SCRIPT, ["tests/helpers/router_harness.py"])
         assert "No scripts or script tests changed." not in result.stdout, diagnose(result)
         assert "No testable scripts found." not in result.stdout, diagnose(result)
+
+    def test_lint_suite_test_file_routes_directly(self, route: RouteFn) -> None:
+        """A changed test under tests/lint/ is added as itself.
+
+        tests/lint/ is the whole enforcement body of
+        ``task lint:reviewer-envelope``, and no other branch reaches it: no
+        source directory fans out to it and no derivation rule produces its
+        name, so un-routing leaves it running only in a full
+        ``task test:scripts``.
+        """
+        result = route(self.SCRIPT, [LINT_SUITE_TEST])
+        assert routed_targets(result) == [LINT_SUITE_TEST], diagnose(result)
+
+    def test_lint_suite_test_file_alone_is_not_reported_as_untestable(self, route: RouteFn) -> None:
+        """Guards the silent-zero outcome for a lone test under tests/lint/.
+
+        Separates the two ways the routing is lost, which the assertion above
+        cannot tell apart: dropping ``tests/lint/`` from the ``CHANGED_SCRIPTS``
+        grep filters the path out before any branch sees it and prints "No
+        scripts or script tests changed.", while dropping it from the branch
+        condition lets the path through to a dispatch chain that matches
+        nothing and prints "No testable scripts found."
+        """
+        result = route(self.SCRIPT, [LINT_SUITE_TEST])
+        assert "No scripts or script tests changed." not in result.stdout, diagnose(result)
+        assert "No testable scripts found." not in result.stdout, diagnose(result)
+
+    @pytest.mark.parametrize("source", REVIEWER_TEMPLATE_SOURCES)
+    def test_reviewer_template_source_routes_to_parity_test(self, route: RouteFn, source: str) -> None:
+        """Each mirrored rubric half, and the checker itself, routes to the parity test."""
+        result = route(self.SCRIPT, [source])
+        assert routed_targets(result) == [REVIEWER_TEMPLATE_SUITE], f"{source}\n{diagnose(result)}"
+
+    def test_inert_reviewer_template_source_selects_no_pytest_target(self, route: RouteFn) -> None:
+        """The agent-cli codex config announces no pytest target in either router.
+
+        Pins the outcome, not an intent: both routers name this path in their
+        reviewer-template branch condition, and in both it is unreachable — see
+        ``INERT_REVIEWER_TEMPLATE_SOURCE`` for the two mechanisms. Asserting it
+        keeps the branch condition from reading as coverage that exists.
+
+        The empty target list is only half the outcome, and the half the
+        announcement line can show: in ``ci/test_changed.sh`` the path also
+        triggers the host-side container-integration re-run, which delegates to
+        ``task`` rather than to pytest. That leg is asserted off the router's
+        own stdout, in both directions, so the path cannot quietly gain or lose
+        it in either router.
+        """
+        result = route(self.SCRIPT, [INERT_REVIEWER_TEMPLATE_SOURCE])
+        assert_routed_nothing(result)
+        rerun_announced = CONTAINER_INTEGRATION_RERUN_MARKER in result.stdout
+        rerun_expected = self.SCRIPT == CONTAINER_INTEGRATION_RERUN_ROUTER
+        assert rerun_announced == rerun_expected, (
+            f"ci/{self.SCRIPT}: container-integration re-run announced={rerun_announced}, expected={rerun_expected}\n{diagnose(result)}"
+        )
+
+    def test_many_reviewer_template_sources_collapse_to_one_target(self, route: RouteFn) -> None:
+        """Several changed reviewer-template sources deduplicate to a single target."""
+        result = route(self.SCRIPT, list(REVIEWER_TEMPLATE_SOURCES))
+        assert routed_targets(result) == [REVIEWER_TEMPLATE_SUITE], diagnose(result)
+
+    def test_reviewer_template_branch_accumulates_with_agent_branch(self, route: RouteFn) -> None:
+        """The reviewer-template branch adds a target rather than shadowing the agent branch."""
+        result = route(self.SCRIPT, [".claude/skills/diff-review/SKILL.md", ".claude/agents/code-review.md"])
+        expected = sorted([REVIEWER_TEMPLATE_SUITE, "tests/agents/test_variant_parity.py"])
+        assert sorted(routed_targets(result)) == expected, diagnose(result)
+
+    @pytest.mark.parametrize("source", REVIEWER_TEMPLATE_SOURCES)
+    def test_reviewer_template_source_alone_is_not_reported_as_untestable(
+        self,
+        route: RouteFn,
+        source: str,
+    ) -> None:
+        """Neither silent-zero message is printed for a lone reviewer-template source."""
+        result = route(self.SCRIPT, [source])
+        assert "No scripts or script tests changed." not in result.stdout, f"{source}\n{diagnose(result)}"
+        assert "No testable scripts found." not in result.stdout, f"{source}\n{diagnose(result)}"
+
+    def test_reviewer_template_suite_path_is_pinned(self) -> None:
+        """Both routers name the reviewer-template suite, and it exists on disk.
+
+        Ignores ``SCRIPT`` and reads both routers, so it is redundant across
+        the two subclasses by construction. Each router routes only to its own
+        test file, so a cross-file invariant asserted in one subclass would not
+        run when the other router is edited.
+        """
+        assert_reviewer_template_suite_pinned()
+
+    def test_reviewer_template_branch_is_byte_identical(self) -> None:
+        """Both routers carry the reviewer-template branch byte-identically.
+
+        The behavioural assertions above enumerate ``REVIEWER_TEMPLATE_SOURCES``
+        and so catch a trigger *dropped* from one router; a trigger *added* to
+        one router only passes all of them, because an enumeration cannot list
+        a trigger that does not exist yet. Comparing the branch text closes
+        that direction without any list to maintain.
+
+        Ignores ``SCRIPT`` and reads both routers, for the same reason as
+        ``test_reviewer_template_suite_path_is_pinned``.
+        """
+        assert_block_mirrored(
+            REVIEWER_TEMPLATE_BRANCH_MARKER,
+            routers=TEST_ROUTERS,
+            boundaries=BRANCH_BOUNDARY_MARKERS,
+        )
+
+    def test_changed_scripts_prefix_filters_agree(self) -> None:
+        """Both routers admit the same path prefixes, bar the pinned divergence.
+
+        The byte-identity check above covers one branch of the dispatch chain;
+        this covers the filter that gates entry to the chain, which is not
+        byte-comparable. See ``assert_changed_scripts_prefixes_agree``.
+
+        Ignores ``SCRIPT`` and reads both routers, for the same reason as
+        ``test_reviewer_template_suite_path_is_pinned``.
+        """
+        assert_changed_scripts_prefixes_agree()
