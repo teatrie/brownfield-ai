@@ -20,7 +20,7 @@ otherwise duplicated agent-family metadata:
 
 The registry stores the canonical fact about each family in one place;
 the four surfaces above derive their views from it. The schema enum
-and shell regex stay hand-maintained for portability (JSON Schema and
+and shell regexes stay hand-maintained for portability (JSON Schema and
 shell scripts can't import Python at runtime), but a registry-driven
 consistency test catches drift the moment a new family or agent ID is
 added without updating one of the dependents.

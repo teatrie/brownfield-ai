@@ -83,19 +83,28 @@ UNRELATED_FILE = "README.md"
 #: check. ``UNRELATED_FILE`` shares no prefix with any trigger, so it passes
 #: against an unanchored or extension-blind rewrite of the trigger regex as
 #: readily as against the current one; each entry here is a near miss on a
-#: different part of that regex — file extension, exact filename, and the
-#: leading ``^`` — so relaxing any of the three fails.
+#: different part of that regex — file extension, exact filename, the leading
+#: ``^``, and the trailing ``$`` of the ``SKILL.md`` alternative — so relaxing
+#: any of the four fails.
 TEMPLATE_NEAR_MISSES: tuple[str, ...] = (
     ".claude/prompts/reviewer/diff.txt",
     ".claude/skills/diff-review/README.md",
     "docs/notes/.claude/skills/diff-review/SKILL.md",
+    ".claude/skills/diff-review/SKILL.md.bak",
 )
 
-#: An agent definition under the directory the envelope trigger matches, whose
-#: ID is outside the reviewer alternation. The gate is deliberately broader
-#: than the registry, so this pins the outer edge of that slack rather than the
-#: registry's own boundary.
-ENVELOPE_NEAR_MISSES: tuple[str, ...] = (".claude/agents/orchestrator.md",)
+#: Paths the envelope gate must not select. The first is an agent definition
+#: under the directory ``ENVELOPE_AGENTS`` matches, whose ID is outside the
+#: reviewer alternation — the gate is deliberately broader than the registry,
+#: so it pins the outer edge of that slack rather than the registry's own
+#: boundary. The other two are the only entries reaching ``ENVELOPE_DOCS``, and
+#: pin the trailing ``$`` and the leading ``^`` of its ``reviewer_envelope.md``
+#: alternative.
+ENVELOPE_NEAR_MISSES: tuple[str, ...] = (
+    ".claude/agents/orchestrator.md",
+    "docs/reviewer_envelope.md.bak",
+    "notes/docs/reviewer_envelope.md",
+)
 
 #: Template triggers asserted to reach the check on a diff that *deletes*
 #: them. Both routers narrow their changed-file list to paths present in the
@@ -303,8 +312,9 @@ def unfiltered_list_reads(script: str) -> int:
 
     Whole-line comments are dropped before counting, so prose describing the
     variable — which the two routers carry above the assignment — cannot move
-    the count. Trailing comments are not stripped: ``#`` appears inside the
-    routers' grep patterns, and a naive split there would truncate real code.
+    the count. Trailing comments are left in place: stripping them safely needs
+    a shell-aware tokenizer, since ``#`` can sit inside a quoted grep pattern.
+    Leaving them can only over-count, which fails loudly.
 
     Args:
         script: Router filename under ``ci/``.
@@ -499,7 +509,7 @@ class LintRouterContract:
 
     @pytest.mark.parametrize("near_miss", ENVELOPE_NEAR_MISSES)
     def test_near_miss_path_does_not_run_envelope_check(self, lint_route: LintRouteFn, near_miss: str) -> None:
-        """An agent definition outside the reviewer alternation leaves the gate alone."""
+        """A path that near-misses an envelope trigger leaves the gate alone."""
         result = lint_route(self.SCRIPT, [near_miss])
         assert_check_skipped(result, ENVELOPE_ANNOUNCEMENT, ENVELOPE_TASK)
 

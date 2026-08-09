@@ -3,10 +3,10 @@
 Epic: REVIEWER-ENVELOPE-001 (TODO-0146 W4 prep).
 
 The registry in :mod:`scripts.orchestrator.agent_family_registry` is the
-single source of truth across four hand-maintained surfaces. Three of
+single source of truth across five hand-maintained surfaces. Three of
 those surfaces import the registry directly at runtime (parser, merge
 function, lint test SCOPE). The other two — the JSON Schema's
-``agent_family`` enum and the ``ENVELOPE_AGENTS`` regex carried by both
+``agent_family`` enum and the ``ENVELOPE_AGENTS`` regexes carried by
 ``ci/lint_staged.sh`` and ``ci/lint_changed.sh`` — cannot import Python
 at runtime (JSON has no import; bash CI must stay portable across
 macOS / Linux without a Python bootstrap). These tests cross-check
