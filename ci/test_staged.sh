@@ -69,12 +69,12 @@ run_pytest_venv() {
 }
 
 if [ "$TARGET" == "scripts" ]; then
-    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|\.claude/prompts/reviewer/|\.claude/skills/diff-review/|docker/shared/|\.claude/settings(\.local)?\.json)" || true)
+    CHANGED_SCRIPTS=$(echo "$CHANGED_FILES" | grep -E "^(scripts/|tests/scripts/|ci/|tests/ci/|tests/helpers/|tests/lint/|\.claude/hooks/|tests/hooks/|\.claude/agents/|tests/agents/|\.claude/prompts/reviewer/|\.claude/skills/diff-review/|docker/shared/|\.claude/settings(\.local)?\.json)" || true)
 
     if [ -n "$CHANGED_SCRIPTS" ]; then
         declare -a TEST_TARGETS_ARRAY=()
         for file in $CHANGED_SCRIPTS; do
-            if [[ "$file" == tests/scripts/* ]] || [[ "$file" == tests/ci/* ]] || [[ "$file" == tests/hooks/* ]] || [[ "$file" == tests/agents/* ]]; then
+            if [[ "$file" == tests/scripts/* ]] || [[ "$file" == tests/ci/* ]] || [[ "$file" == tests/lint/* ]] || [[ "$file" == tests/hooks/* ]] || [[ "$file" == tests/agents/* ]]; then
                 # Include test files directly if they are Python files and still exist
                 if [[ "$file" == *.py ]] && [ -f "$file" ]; then
                     TEST_TARGETS_ARRAY+=("$file")

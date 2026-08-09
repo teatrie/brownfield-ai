@@ -306,11 +306,10 @@ fi
 
 # Reviewer Output Envelope compliance — triggered when a reviewer agent
 # definition, the envelope canonical doc, or the envelope schema
-# changes. Per the per-wave scope-expansion contract (plan §10.3,
-# Req-018 / B-3 R2), the trigger pattern is intentionally broader than
-# the W1 SCOPE constant in tests/lint/test_reviewer_envelope_required.py
-# so future-wave reviewer files (codex-reviewer*, gemini-reviewer*,
-# qa-*) automatically invoke the gate once W2/W3 add them to SCOPE.
+# changes. Deliberately broader than the lint's own scope, which
+# tests/lint/test_reviewer_envelope_required.py derives from the
+# agent-family registry: a reviewer file whose family the registry has
+# not migrated still trips the gate, so migrating it needs no edit here.
 ENVELOPE_AGENTS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^\.claude/agents/(code-review|codex-reviewer|gemini-reviewer|copilot-reviewer|qa-(standards|lint|test))(-(high|xhigh|max))?\.md$' | xargs || true)
 ENVELOPE_DOCS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -E '^docs/reviewer_envelope\.md$|^docs/schemas/reviewer_envelope\.schema\.json$' | xargs || true)
 if [ -n "$ENVELOPE_AGENTS" ] || [ -n "$ENVELOPE_DOCS" ]; then

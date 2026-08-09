@@ -6,6 +6,7 @@ The harnesses themselves — constants, assertions, and the shared
 fixtures need to be here.
 """
 
+import itertools
 import os
 import subprocess
 from collections.abc import Sequence
@@ -110,13 +111,14 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
         stub.write_text(body, encoding="utf-8")
         stub.chmod(0o755)
 
-    # A bare workspace: both routers read pyproject.toml and
-    # .markdownlint-cli2.yaml from the working directory for ignore patterns,
-    # and absent means "no ignores", which is what these assertions want.
-    # ci/repo_routing.sh is sourced relative to BASH_SOURCE, so it still
+    # Parent of the bare per-call workspaces. Both routers read pyproject.toml
+    # and .markdownlint-cli2.yaml from the working directory for ignore
+    # patterns, and absent means "no ignores", which is what these assertions
+    # want. ci/repo_routing.sh is sourced relative to BASH_SOURCE, so it still
     # resolves against the repository — harmless, since `task` is stubbed.
-    workspace = tmp_path / "lint-workspace"
-    workspace.mkdir()
+    workspaces = tmp_path / "lint-workspaces"
+    workspaces.mkdir()
+    workspace_serial = itertools.count()
 
     listing = tmp_path / "lint-changed-files.txt"
 
@@ -124,6 +126,13 @@ def lint_route(tmp_path: Path) -> LintRouteFn:
         script: str,
         changed_files: Sequence[str],
     ) -> subprocess.CompletedProcess[str]:
+        # One workspace per call, not one per fixture: the placeholders below
+        # would otherwise survive into the next call within the same test,
+        # where an assertion on a path's *absence* would be satisfied by the
+        # leftover rather than by the router.
+        workspace = workspaces / str(next(workspace_serial))
+        workspace.mkdir()
+
         # Both routers drop changed paths that are absent from the working
         # tree, so an un-materialised list would route nothing and every
         # assertion would read as a routing hole. Placeholders are created in

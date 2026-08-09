@@ -63,6 +63,12 @@ HELPER_MODULES: tuple[str, ...] = (
 #: the pair because its router contracts import helpers.router_harness.
 HELPER_SUITES = ("tests/ci/", "tests/helpers/")
 
+#: The only test under tests/lint/, and the entire enforcement body of
+#: ``task lint:reviewer-envelope``. Both routers guard it with ``[ -f ]``, so a
+#: rename that misses this constant surfaces as an empty target list rather
+#: than as a missing file.
+LINT_SUITE_TEST = "tests/lint/test_reviewer_envelope_required.py"
+
 #: A representative sample of the sources that must route to
 #: REVIEWER_TEMPLATE_SUITE, not a closed enumeration: the branch matches the
 #: reviewer-prompt and diff-review directories wholesale, so unlisted siblings
@@ -90,17 +96,12 @@ REVIEWER_TEMPLATE_BRANCH_MARKER = 'elif [[ "$file" == .claude/prompts/reviewer/*
 #: dispatch chain.
 BRANCH_BOUNDARY_MARKERS: tuple[str, ...] = ('elif [[ "$file" == ',)
 
-#: Closing line of a block, matched with **indentation stripped** — so an
-#: indented ``fi`` matches. Used by ``extract_marked_block``.
+#: The line that closes a block. How strictly it is matched belongs to the
+#: caller, not to this value: ``extract_marked_block`` compares the
+#: indentation-stripped line, so a nested ``fi`` matches, while the region scan
+#: in ``helpers.lint_router_harness`` compares the raw line, so only a
+#: column-zero ``fi`` does.
 BLOCK_TERMINATOR = "fi"
-
-#: Closing line of a block, matched at **column zero**, so a nested ``fi`` does
-#: not match. Not interchangeable with ``BLOCK_TERMINATOR``: the anchor block
-#: ``mirrored_region_delegations`` scans forward from wraps a nested ``if``
-#: whose own ``fi`` is indented, and column-zero matching is what makes that
-#: scan stop at the *outer* one. Relaxing it to the indentation-stripped form
-#: would silently move the region boundary.
-COLUMN_ZERO_BLOCK_TERMINATOR = "fi"
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
@@ -220,7 +221,6 @@ def extract_marked_block(
     marker: str,
     *,
     boundaries: Sequence[str],
-    terminator: str = BLOCK_TERMINATOR,
 ) -> str:
     """
     Slice a marked block out of a router script, line endings preserved.
@@ -228,12 +228,12 @@ def extract_marked_block(
     A marker seen more or fewer than once fails here instead of silently
     slicing the wrong region.
 
-    The block ends at the *last* terminator inside the window running from the
-    marker to the next sibling boundary, not the first: stopping at the first
-    truncates any block holding more than one top-level statement, leaving the
-    un-compared tail free to diverge while the assertion still passes.
-    Over-slicing fails loudly instead, which is the safe direction for a parity
-    guard.
+    The block ends at the *last* ``BLOCK_TERMINATOR`` inside the window running
+    from the marker to the next sibling boundary, not the first: stopping at
+    the first truncates any block holding more than one top-level statement,
+    leaving the un-compared tail free to diverge while the assertion still
+    passes. Over-slicing fails loudly instead, which is the safe direction for
+    a parity guard.
 
     Args:
         script: Router filename under ``ci/``.
@@ -241,7 +241,6 @@ def extract_marked_block(
             indentation-stripped line.
         boundaries: Opening-line prefixes of the sibling blocks that bound the
             search window.
-        terminator: Line content, indentation stripped, that closes the block.
 
     Returns:
         The block from its opening line through its closing terminator.
@@ -255,8 +254,8 @@ def extract_marked_block(
         (index for index in range(start + 1, len(lines)) if any(lines[index].lstrip().startswith(boundary) for boundary in boundaries)),
         len(lines),
     )
-    ends = [index for index in range(start, window_end) if lines[index].strip() == terminator]
-    assert ends, f"ci/{script}: no closing {terminator!r} between marker {marker!r} and the next block boundary"
+    ends = [index for index in range(start, window_end) if lines[index].strip() == BLOCK_TERMINATOR]
+    assert ends, f"ci/{script}: no closing {BLOCK_TERMINATOR!r} between marker {marker!r} and the next block boundary"
     return "".join(lines[start : ends[-1] + 1])
 
 
@@ -265,7 +264,6 @@ def assert_block_mirrored(
     *,
     routers: tuple[str, str],
     boundaries: Sequence[str],
-    terminator: str = BLOCK_TERMINATOR,
 ) -> None:
     """
     Assert a marked block is byte-identical across a pair of routers.
@@ -277,11 +275,10 @@ def assert_block_mirrored(
             rendered diff labels them.
         boundaries: Opening-line prefixes of the sibling blocks that bound the
             search window.
-        terminator: Line content, indentation stripped, that closes the block.
     """
     left, right = routers
-    left_block = extract_marked_block(left, marker, boundaries=boundaries, terminator=terminator)
-    right_block = extract_marked_block(right, marker, boundaries=boundaries, terminator=terminator)
+    left_block = extract_marked_block(left, marker, boundaries=boundaries)
+    right_block = extract_marked_block(right, marker, boundaries=boundaries)
     # Rendered eagerly so the message names *what* diverged — indentation and
     # trailing whitespace included.
     diff = "".join(
@@ -403,6 +400,32 @@ class RouterContract:
     def test_helper_module_alone_is_not_reported_as_untestable(self, route: RouteFn) -> None:
         """The defect: a lone helper module selected no targets at all."""
         result = route(self.SCRIPT, ["tests/helpers/router_harness.py"])
+        assert "No scripts or script tests changed." not in result.stdout, diagnose(result)
+        assert "No testable scripts found." not in result.stdout, diagnose(result)
+
+    def test_lint_suite_test_file_routes_directly(self, route: RouteFn) -> None:
+        """A changed test under tests/lint/ is added as itself.
+
+        tests/lint/ is the whole enforcement body of
+        ``task lint:reviewer-envelope``, and no other branch reaches it: no
+        source directory fans out to it and no derivation rule produces its
+        name, so un-routing leaves it running only in a full
+        ``task test:scripts``.
+        """
+        result = route(self.SCRIPT, [LINT_SUITE_TEST])
+        assert routed_targets(result) == [LINT_SUITE_TEST], diagnose(result)
+
+    def test_lint_suite_test_file_alone_is_not_reported_as_untestable(self, route: RouteFn) -> None:
+        """Guards the silent-zero outcome for a lone test under tests/lint/.
+
+        Separates the two ways the routing is lost, which the assertion above
+        cannot tell apart: dropping ``tests/lint/`` from the ``CHANGED_SCRIPTS``
+        grep filters the path out before any branch sees it and prints "No
+        scripts or script tests changed.", while dropping it from the branch
+        condition lets the path through to a dispatch chain that matches
+        nothing and prints "No testable scripts found."
+        """
+        result = route(self.SCRIPT, [LINT_SUITE_TEST])
         assert "No scripts or script tests changed." not in result.stdout, diagnose(result)
         assert "No testable scripts found." not in result.stdout, diagnose(result)
 

@@ -172,12 +172,9 @@ tasks:
     desc: >-
       Lint reviewer prompt templates for invariant-block drift against
       .claude/prompts/reviewer/_invariants.md and assert the codex TOML
-      contains no stale criteria. Part of the aggregate `task lint`, and
-      triggered by both ci/lint_changed.sh and ci/lint_staged.sh when
-      .claude/prompts/reviewer/*.md, .codex/config.toml,
-      docker/agent-cli/codex-config.toml,
-      .claude/skills/diff-review/SKILL.md, or
-      scripts/lint_reviewer_templates.py change.
+      contains no stale criteria. Part of the aggregate `task lint`;
+      ci/lint_changed.sh and ci/lint_staged.sh own the incremental
+      trigger set and are its source of truth.
     cmds:
       - >-
         ./docker/shared/python-security-gate.sh lint
@@ -222,16 +219,13 @@ tasks:
   reviewer-envelope:
     desc: >-
       Lint reviewer agent definitions for Reviewer Output Envelope
-      compliance (Req-018, plan §10.3). Runs
+      compliance. Runs
       tests/lint/test_reviewer_envelope_required.py inside pytest-cli
       to assert the in-scope reviewer agents instruct the model to
       emit the discriminated `json envelope` fence and link to
-      docs/reviewer_envelope.md. Part of the aggregate `task lint`, and
-      triggered by both ci/lint_changed.sh and ci/lint_staged.sh when a
-      .claude/agents/ reviewer definition (code-review, codex-reviewer,
-      gemini-reviewer, copilot-reviewer, qa-standards, qa-lint, qa-test,
-      with optional -high/-xhigh/-max suffix), docs/reviewer_envelope.md,
-      or docs/schemas/reviewer_envelope.schema.json changes.
+      docs/reviewer_envelope.md. Part of the aggregate `task lint`;
+      ci/lint_changed.sh and ci/lint_staged.sh own the incremental
+      trigger set and are its source of truth.
       Uses the `test` mode of python-security-gate.sh (path-validated
       pytest invocation) rather than `lint` mode whose allowlist is
       restricted to ruff/mypy/specific lint scripts.

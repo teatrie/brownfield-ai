@@ -37,7 +37,8 @@ from typing import Any
 import pytest
 import yaml
 
-from helpers.router_harness import COLUMN_ZERO_BLOCK_TERMINATOR, REPO_ROOT, assert_block_mirrored, diagnose
+from helpers.router_harness import BLOCK_TERMINATOR, REPO_ROOT, assert_block_mirrored, diagnose
+from scripts.orchestrator.agent_family_registry import lint_router_agent_ids
 
 #: Paths that must reach the reviewer-template check from either router.
 REVIEWER_TEMPLATE_TRIGGERS: tuple[str, ...] = (
@@ -52,10 +53,15 @@ TEMPLATE_ANNOUNCEMENT = "Checking reviewer template invariants..."
 
 TEMPLATE_TASK = "lint:reviewer-templates"
 
-#: Files that must re-run the Reviewer Output Envelope gate.
+#: Files that must re-run the Reviewer Output Envelope gate. The agent paths
+#: are derived from the same registry the routers' ``ENVELOPE_AGENTS`` regex is
+#: cross-checked against in
+#: ``tests/scripts/orchestrator/test_agent_family_registry.py``, so an agent ID
+#: added there is exercised here without a second list to keep current. The doc
+#: and schema paths are selected by the routers' separate ``ENVELOPE_DOCS``
+#: pattern and have no registry counterpart.
 REVIEWER_ENVELOPE_TRIGGERS: tuple[str, ...] = (
-    ".claude/agents/code-review.md",
-    ".claude/agents/codex-reviewer.md",
+    *(f".claude/agents/{agent_id}.md" for agent_id in lint_router_agent_ids()),
     "docs/reviewer_envelope.md",
     "docs/schemas/reviewer_envelope.schema.json",
 )
@@ -92,10 +98,13 @@ MIRRORED_BLOCK_MARKERS: tuple[str, ...] = (
     "# Reviewer Output Envelope compliance —",
 )
 
-#: Anchor for the mirrored region: the last check both routers carry *outside*
-#: it. Everything after that block's closing ``fi`` is the tail the structural
-#: assertion compares. The two routers legitimately diverge above this line, so
-#: a whole-file comparison would report drift that is not drift.
+#: Anchor bounding the region ``mirrored_region_delegations`` tallies: the last
+#: check both routers carry *outside* the mirrored tail. Everything after that
+#: block's closing ``fi`` is compared. The comparison is an order-insensitive
+#: multiset of task targets, not a byte comparison, so it already tolerates the
+#: two routers running the same checks in a different order; what the anchor
+#: buys is scope — each router's own dispatch chain above this line is under no
+#: parity contract here.
 MIRROR_REGION_ANCHOR = 'NON_PY_SQL_FILES=$(echo "$CHANGED_FILES"'
 
 #: A delegation to ``task``, as both routers write it. The target names the
@@ -181,6 +190,9 @@ def mirrored_region_delegations(script: str) -> Counter[str]:
     The region opens at the *first* column-zero terminator at or after the
     anchor, which maximises the compared text: opening at a later one would
     drop the leading blocks of the mirrored region and let them diverge unseen.
+    Matching ``BLOCK_TERMINATOR`` at column zero rather than with indentation
+    stripped is what makes that scan stop at the anchor block's *outer* ``fi``:
+    the block wraps a nested ``if`` whose own ``fi`` is indented.
 
     Args:
         script: Router filename under ``ci/``.
@@ -193,8 +205,8 @@ def mirrored_region_delegations(script: str) -> Counter[str]:
     anchors = [index for index, line in enumerate(lines) if line.startswith(MIRROR_REGION_ANCHOR)]
     assert len(anchors) == 1, f"ci/{script}: anchor {MIRROR_REGION_ANCHOR!r} found {len(anchors)} times, expected exactly 1"
 
-    ends = [index for index in range(anchors[0], len(lines)) if lines[index].rstrip("\r\n") == COLUMN_ZERO_BLOCK_TERMINATOR]
-    assert ends, f"ci/{script}: anchor block has no closing {COLUMN_ZERO_BLOCK_TERMINATOR!r} at column zero"
+    ends = [index for index in range(anchors[0], len(lines)) if lines[index].rstrip("\r\n") == BLOCK_TERMINATOR]
+    assert ends, f"ci/{script}: anchor block has no closing {BLOCK_TERMINATOR!r} at column zero"
 
     targets = Counter(TASK_DELEGATION.findall("".join(lines[ends[0] + 1 :])))
     # Two empty counters compare equal, so a mis-anchored slice would pass
