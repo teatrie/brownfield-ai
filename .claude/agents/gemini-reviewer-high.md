@@ -17,7 +17,7 @@ loop.
 
 **Role**: Cross-Family Model Review Bridge (`effort: high`).
 
-This variant uses the `high` reasoning-effort pin. See [gemini-reviewer.md](gemini-reviewer.md) for full pre-flight, Caller Contract, invocation, and output contract. The caller MUST set `EFFORT=high` in the environment before invoking `task agent:review:gemini` / `task agent:review:gemini:local`; the wrapper composes the `-m <tier-short>-high` alias (e.g., `gemini-3.1-pro-high` or, after Pro→Flash fallback, `gemini-3-flash-high`) per Req-005 and forwards it to `gemini`.
+This variant uses the `high` reasoning-effort pin. See [gemini-reviewer.md](gemini-reviewer.md) for full pre-flight, Caller Contract, invocation, and output contract. The caller MUST pass `EFFORT=high` as a CLI_ARG to `task agent:review:gemini` / `task agent:review:gemini:local` — a positional `KEY=value` argument after `--`, never an exported shell variable, per the **CLI Invocation** section of the base file. The wrapper composes the `-m <tier-short>-high` alias (e.g., `gemini-3.1-pro-high` or, after Pro→Flash fallback, `gemini-3-flash-high`) per Req-005 and forwards it to `gemini`.
 
 Refer to the **Effort Tier Mapping** table in [gemini-reviewer.md](gemini-reviewer.md) for the `EFFORT` → `-m <alias>` → Claude-equivalent mapping, and to [docs/effort_tiers.md](../../docs/effort_tiers.md) for the canonical ladder and cross-family ceiling collisions.
 

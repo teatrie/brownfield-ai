@@ -52,9 +52,7 @@ tasks:
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
       Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
-      MODEL, REVIEW_TYPE, DIFF_FILE, REVIEW_MODE. Pass REVIEW_MODE=fixture
-      for fixture-driven smokes where DIFF_FILE does not match the
-      working-tree git diff (TODO-0114); default is branch.
+      MODEL, REVIEW_TYPE, DIFF_FILE.
     cmds:
       - >-
         scripts/agent-cli/cli-args-to-env.sh
@@ -110,9 +108,7 @@ tasks:
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:codex:local -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
       Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
-      MODEL, REVIEW_TYPE, DIFF_FILE, REVIEW_MODE. Pass REVIEW_MODE=fixture
-      for fixture-driven smokes where DIFF_FILE does not match the
-      working-tree git diff (TODO-0114); default is branch.
+      MODEL, REVIEW_TYPE, DIFF_FILE.
     env:
       CODEX_EXECUTION_CONTEXT: 'host'
     cmds:

@@ -1,26 +1,36 @@
 #!/usr/bin/env bash
 # codex-review.sh — Invoke the Codex CLI to perform a structured code review.
-# Usage: codex-review.sh [--base BRANCH] [--round N] [--model MODEL]
-#   BRANCH defaults to main.
+# Usage: codex-review.sh [--round N] [--model MODEL]
 #   ROUND defaults to 1.
 #   MODEL is optional — overrides profile model (passed as -m to codex exec).
 #   REVIEW_TYPE (required): one of {plan, spec, diff, epic, spec-req-verification}.
 #   DIFF_FILE (required): path to the subject artifact under tmp/ or agent-review/.
-#   REVIEW_MODE (optional, default branch): one of {branch, fixture}. Only
-#     meaningful for REVIEW_TYPE=diff. In branch mode, the wrapper invokes
-#     `codex review --base` so Codex runs its native 10-point rubric against
-#     `git diff $BASE_BRANCH..HEAD`; the combined prompt rides along as
-#     instructions supplement. In fixture mode, the wrapper invokes plain
-#     `codex exec -p reviewer` with the combined template+DIFF_FILE prompt
-#     on stdin as the sole subject — required when DIFF_FILE is a synthetic
-#     or fixture diff that does not match the working-tree git diff
-#     (otherwise `--base` would silently override the fixture and review
-#     the live working tree instead). Non-diff review types ignore
-#     REVIEW_MODE and always use plain `codex exec -p reviewer`.
+#   EFFORT (optional): one of {medium, high, xhigh, max}, mapped onto the Codex
+#     model_reasoning_effort key (ceiling-collapse: medium/high -> high,
+#     xhigh/max -> xhigh).
+#   Every review type invokes `codex exec -p reviewer` with the combined
+#     reviewer template + DIFF_FILE prompt on stdin as the sole subject.
 #   Output written to tmp/codex-review-output-<ROUND>.md.
 #   Signals written to tmp/codex-exit.json on unavailability or error.
 
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Signal hygiene — runs above EVERY exit path, including the secrets guard.
+# The bridge agent reads tmp/codex-exit.json as this run's authoritative
+# outcome, so a leftover is reported as this run's result. The secrets guard
+# below exits without writing a signal, so clearing after it would leave the
+# catastrophic path attributing a previous run's verdict to itself.
+#
+# The clear is fail-loud: an unwritable tmp/ would otherwise abort under
+# `set -e` with no message and no signal — the verdict-less outcome this
+# whole block exists to prevent.
+# ---------------------------------------------------------------------------
+mkdir -p tmp
+if ! rm -f tmp/codex-exit.json; then
+  echo "FATAL: cannot clear tmp/codex-exit.json — tmp/ is not writable" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # SECRETS GUARD — must never run inside a container where .env is readable
@@ -31,33 +41,18 @@ if [ -f /app/.env ] && [ -r /app/.env ]; then
 fi
 # Note: /app/.env only exists inside the container. On host, this check no-ops.
 
-mkdir -p tmp
-
 # ---------------------------------------------------------------------------
 # Parse arguments
 # ---------------------------------------------------------------------------
 ROUND="${ROUND:-1}"
-BASE_BRANCH="main"
-# BASE_BRANCH_EXPLICIT flips to 1 only when the caller passes `--base <X>`.
-# Read later to emit a visibility notice when `--base` is silently ignored
-# by REVIEW_MODE=fixture or by a non-diff REVIEW_TYPE (TODO-0120/0126).
-BASE_BRANCH_EXPLICIT=0
 MODEL="${MODEL:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --base)
-      if [ -z "${2:-}" ]; then
-        echo "Error: --base requires a value" >&2
-        exit 1
-      fi
-      BASE_BRANCH="$2"
-      BASE_BRANCH_EXPLICIT=1
-      shift 2
-      ;;
     --round)
       if [ -z "${2:-}" ]; then
         echo "Error: --round requires a value" >&2
+        printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"arg_validation","stderr_excerpt":"--round requires a value"}\n' > tmp/codex-exit.json
         exit 1
       fi
       ROUND="$2"
@@ -66,13 +61,15 @@ while [[ $# -gt 0 ]]; do
     --model)
       if [ -z "${2:-}" ]; then
         echo "Error: --model requires a value" >&2
+        printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"arg_validation","stderr_excerpt":"--model requires a value"}\n' > tmp/codex-exit.json
         exit 1
       fi
       MODEL="$2"
       shift 2
       ;;
     *)
-      echo "Usage: $0 [--base BRANCH] [--round N] [--model MODEL]" >&2
+      printf 'Usage: %s [--round N] [--model MODEL]\n' "$0" >&2
+      printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"arg_validation","stderr_excerpt":"unknown argument"}\n' > tmp/codex-exit.json
       exit 1
       ;;
   esac
@@ -100,52 +97,6 @@ if ! _review_validate_diff_file; then
 fi
 
 # ---------------------------------------------------------------------------
-# REVIEW_MODE — {branch, fixture}, default "branch". Enum validation.
-# Controls the REVIEW_TYPE=diff dispatch path (see `run_codex`). Non-diff
-# review types ignore this flag. TODO-0114: fixture-driven smokes require
-# a stdin-subject path that `codex review --base` does not honor.
-# ---------------------------------------------------------------------------
-REVIEW_MODE="${REVIEW_MODE:-branch}"
-case "$REVIEW_MODE" in
-  branch|fixture) ;;
-  *)
-    echo "Error: REVIEW_MODE must be one of {branch,fixture}, got '$REVIEW_MODE'" >&2
-    printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"arg_validation","stderr_excerpt":"REVIEW_MODE enum rejected"}\n' > tmp/codex-exit.json
-    exit 1
-    ;;
-esac
-
-# TODO-0120 + TODO-0126: visibility when `--base <X>` is silently ignored.
-# Guard on BASE_BRANCH_EXPLICIT (not just BASE_BRANCH != default) so callers
-# who default BASE_BRANCH don't get a spurious notice. Two dispatch paths
-# silently override --base:
-#
-#   1. REVIEW_MODE=fixture (TODO-0114): routes REVIEW_TYPE=diff through plain
-#      `codex exec -p reviewer` instead of `codex review --base`, so the
-#      combined template+DIFF_FILE prompt on stdin is the sole subject.
-#   2. REVIEW_TYPE != diff (TODO-0126): non-diff types (plan/spec/epic/
-#      spec-req-verification) always use plain `codex exec -p reviewer`;
-#      the `review --base` subcommand is gated on REVIEW_TYPE=diff inside
-#      `run_codex`, so --base never reaches the CLI for non-diff invocations.
-#
-# Branch 1 takes precedence when both conditions hold (editorial choice:
-# REVIEW_MODE=fixture is the TODO-0114 regression context and the most
-# likely caller-intent signal, even though for non-diff REVIEW_TYPEs the
-# fixture gate is itself a no-op and the non-diff dispatch is technically
-# the operative override — locked by test_fixture_precedence_when_both_
-# override_conditions_hold). Direct-invocation only: the Taskfile
-# CLI_ARGS shim forwards only KEY=value tokens, not argv flags, so in
-# task-driven calls BASE_BRANCH_EXPLICIT is always 0 and this notice is
-# unreachable.
-if [ "${BASE_BRANCH_EXPLICIT}" = "1" ]; then
-  if [ "${REVIEW_MODE}" = "fixture" ]; then
-    echo "NOTICE: --base ${BASE_BRANCH} ignored because REVIEW_MODE=fixture routes through plain \`codex exec -p reviewer\`; the combined template+DIFF_FILE prompt on stdin is the sole subject." >&2
-  elif [ "${REVIEW_TYPE}" != "diff" ]; then
-    echo "NOTICE: --base ${BASE_BRANCH} ignored because REVIEW_TYPE=${REVIEW_TYPE} routes through plain \`codex exec -p reviewer\`; the \`review --base\` subcommand applies only to REVIEW_TYPE=diff." >&2
-  fi
-fi
-
-# ---------------------------------------------------------------------------
 # Req-003: EFFORT env var — upfront enum validation.
 # Accepts {medium, high, xhigh, max}. Rejects "low" and "minimal"
 # (reviewers run at HIGH internal reasoning minimum) and any other
@@ -159,7 +110,12 @@ fi
 #   max    -> model_reasoning_effort=xhigh  (ceiling collision — Codex tops
 #             out at xhigh; max and xhigh share the same -c value)
 # ---------------------------------------------------------------------------
-EFFORT="${EFFORT:-}"
+# Default to the reviewer floor rather than to empty. An unset EFFORT composes
+# no -c, which lands the run on the CLI's own default — below the
+# {medium,high,xhigh,max} enum enforced just below, so the wrapper would refuse
+# a named low tier while accepting no tier at all. Defaulting here holds the
+# floor for every caller, not only those following the skill's caller contract.
+EFFORT="${EFFORT:-high}"
 if [ -n "$EFFORT" ]; then
   case "$EFFORT" in
     medium|high|xhigh|max) ;;
@@ -215,11 +171,18 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
+# Clear any output artifact from a previous run at this same path. Round-stamped
+# names are reused across cycles, so a codex process that exits zero WITHOUT
+# writing -o would leave the final non-empty-output check reading the previous
+# review — returning a stale verdict as this run's. Clearing up front makes that
+# case surface as empty output instead of as someone else's answer.
+rm -f "${OUTPUT_FILE}"
+
 # ---------------------------------------------------------------------------
 # Resolve template + sanitize subject + build combined prompt file.
-# Codex `review --base` reads the git diff against BASE_BRANCH; the combined
-# prompt on stdin is the instructions channel (criteria + adversarial rigor
-# + subject data).
+# The combined prompt is the sole subject channel: reviewer criteria and
+# adversarial rigor from the template, then the sanitized DIFF_FILE contents,
+# piped to `codex exec` on stdin.
 # ---------------------------------------------------------------------------
 TEMPLATE_PATH=$(_review_template_path)
 if [ ! -f "$TEMPLATE_PATH" ]; then
@@ -234,8 +197,6 @@ cat "$TEMPLATE_PATH" "$SANITIZED_SUBJECT" > "$COMBINED_PROMPT"
 
 # ---------------------------------------------------------------------------
 # Invoke Codex CLI — output captured to tmp files, never piped into eval.
-# exec-level flags (-p, --sandbox, -o, -m) come BEFORE the review subcommand.
-# review-level flags (--base, --ephemeral) come AFTER the review subcommand.
 # ---------------------------------------------------------------------------
 EXIT_CODE=0
 
@@ -247,12 +208,18 @@ run_codex() {
   # under macOS nested sandboxing, so the inner layer provides no added
   # protection — it only blocks operation entirely. Scope is narrow:
   # this flag applies to review invocations only.
-  local cmd_args=(-p reviewer --sandbox danger-full-access -o "${OUTPUT_FILE}")
+  #
+  # --ephemeral keeps the run out of Codex's on-disk session store: the prompt
+  # carries repository contents and the trace carries the reviewed diff, and
+  # nothing here prunes that store.
+  local cmd_args=(-p reviewer --ephemeral --sandbox danger-full-access -o "${OUTPUT_FILE}")
   if [ -n "${MODEL:-}" ]; then
     cmd_args+=(-m "$MODEL")
   fi
 
-  # Req-003: thread EFFORT into Codex via -c override on the reviewer profile.
+  # Thread EFFORT into Codex via a top-level -c override.
+  # model_reasoning_effort is honored as a top-level key only; the same key
+  # nested under `profiles.<name>.` does not reach the run.
   # The local EFFORT_OVERRIDE shadow allows Req-017's retry path to inject
   # a different value without mutating the outer EFFORT var.
   # Apply ceiling-collapse mapping (medium/high -> high; xhigh/max -> xhigh).
@@ -265,29 +232,15 @@ run_codex() {
     _effort=$(_map_effort_to_codex "$EFFORT")
   fi
   if [ -n "$_effort" ]; then
-    cmd_args+=(-c "profiles.reviewer.model_reasoning_effort=${_effort}")
+    cmd_args+=(-c "model_reasoning_effort=${_effort}")
   fi
 
-  # Non-diff REVIEW_TYPE values (plan/spec/epic/spec-req-verification)
-  # supply a static subject artifact — `codex review --base` would
-  # ignore that artifact and critique the git diff against BASE_BRANCH
-  # instead. Gate the `review` subcommand on REVIEW_TYPE=diff; other
-  # types invoke plain `codex exec -p reviewer` with the combined
-  # prompt on stdin as the sole input channel.
-  #
-  # TODO-0114: REVIEW_MODE=fixture forces the same stdin-subject path
-  # for REVIEW_TYPE=diff. `codex review --base` runs `git diff
-  # $BASE_BRANCH..HEAD` and treats the live working-tree diff as the
-  # subject — which silently overrides a synthetic/fixture DIFF_FILE
-  # that does not match the working tree. Fixture-driven smokes must
-  # opt into REVIEW_MODE=fixture so the stdin combined-prompt becomes
-  # the sole subject channel.
-  if [ "${REVIEW_TYPE}" = "diff" ] && [ "${REVIEW_MODE}" = "branch" ]; then
-    local review_args=(--base "$BASE_BRANCH" --ephemeral)
-    codex exec "${cmd_args[@]}" review "${review_args[@]}" < "$COMBINED_PROMPT" 2>| "${ERR_FILE}"
-  else
-    codex exec "${cmd_args[@]}" < "$COMBINED_PROMPT" 2>| "${ERR_FILE}"
-  fi
+  # The combined template+DIFF_FILE prompt on stdin is the sole subject
+  # channel for every review type. The `review` subcommand is deliberately
+  # not used: it takes its subject from the live working-tree diff, and its
+  # [PROMPT] argument carries no implicit-stdin clause, so a piped prompt is
+  # discarded rather than read.
+  codex exec "${cmd_args[@]}" < "$COMBINED_PROMPT" 2>| "${ERR_FILE}"
 }
 
 set +e
@@ -340,8 +293,9 @@ if [ "$EXIT_CODE" -ne 0 ]; then
   # TODO-0123 broadened the regex with gateway/TLS/DNS/Envoy tokens:
   # reset-by-peer, broken-pipe, TLS-handshake, DNS-lookup, no-route-to-host,
   # upstream-connect-error.
-  # If MODEL was unset (default gpt-5.3-codex from TOML pin already in effect),
-  # the fallback is a no-op: retrying with the same model is pointless.
+  # If MODEL is unset the wrapper passed no -m at all, so there is no
+  # caller-selected model to step down from and the fallback is a no-op; the
+  # transient-retry path handles same-model retries instead.
   #
   # _NETWORK_TOKENS is the shared network-class token list referenced by both
   # the IS_4XX_5XX_RETRY gate and the _status_hit network-bucket cascade below.

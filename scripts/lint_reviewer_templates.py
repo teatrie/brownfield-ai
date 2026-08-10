@@ -54,13 +54,17 @@ import defopt
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 INVARIANTS_PATH: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer" / "_invariants.md"
 TEMPLATES_DIR: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer"
-# Both the canonical dev-host config AND the container-bundled source are
-# checked — `docker/agent-cli/codex-config.toml` is COPYed into
-# `/home/agent/.codex/config.toml` during the agent-cli image build and is
-# also consumed by `scripts/setup_codex_reviewer.sh` when provisioning a
-# developer's host `~/.codex/config.toml`. If either drifts back to
-# numbered criteria, container reviews and newly-provisioned host reviews
-# would silently run stale duplicated instructions.
+# Both the project-local config AND the user-level source are checked.
+# `.codex/config.toml` is project-local and declares no profile table: on
+# codex-cli 0.146.0, `codex exec -p reviewer` fails to load when a config.toml
+# declares the named profile, so that file is a drift surface rather than a
+# live reviewer config.
+# `docker/agent-cli/codex-config.toml` is the canonical user-level config —
+# COPYed into `/home/agent/.codex/config.toml` during the agent-cli image
+# build, and provisioned into a developer's host `~/.codex/config.toml` by
+# `scripts/setup_codex_reviewer.sh`. If either drifts back to numbered
+# criteria, container reviews and newly-provisioned host reviews would
+# silently run stale duplicated instructions.
 TOML_PATHS: tuple[Path, ...] = (
     REPO_ROOT / ".codex" / "config.toml",
     REPO_ROOT / "docker" / "agent-cli" / "codex-config.toml",

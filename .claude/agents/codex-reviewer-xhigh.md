@@ -17,13 +17,13 @@ loop.
 
 **Role**: Cross-Family Model Review Bridge (`effort: xhigh`).
 
-This variant uses the `xhigh` reasoning-effort pin. See [codex-reviewer.md](codex-reviewer.md) for full pre-flight, invocation, Caller Contract, and output contract. The caller MUST set `EFFORT=xhigh` in the environment before invoking `task agent:review:codex` / `task agent:review:codex:local`; the wrapper composes `-c "profiles.reviewer.model_reasoning_effort=xhigh"` and forwards it to `codex exec`.
+This variant uses the `xhigh` reasoning-effort pin. See [codex-reviewer.md](codex-reviewer.md) for full pre-flight, invocation, Caller Contract, and output contract. The caller MUST pass `EFFORT=xhigh` as a CLI_ARG to `task agent:review:codex` / `task agent:review:codex:local` — never as an exported shell variable, per the **CLI Invocation** section of the base file; the wrapper composes the top-level `-c "model_reasoning_effort=xhigh"` and forwards it to `codex exec`.
 
 Refer to the **Effort Tier Mapping** table in [codex-reviewer.md](codex-reviewer.md) for the `EFFORT` → Codex `model_reasoning_effort` → Claude-equivalent mapping, and to [docs/effort_tiers.md](../../docs/effort_tiers.md) for the canonical ladder and cross-family ceiling collisions (Codex tops out at `xhigh`).
 
 ## Caller Contract
 
-Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-reviewer.md#caller-contract). Callers pass `REVIEW_TYPE` + `DIFF_FILE` CLI_ARGS; the wrapper loads the template from `.claude/prompts/reviewer/<REVIEW_TYPE>.md` and pipes it concatenated with the sanitized subject onto `codex exec review`'s stdin. The bridge agent does not author prompts.
+Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-reviewer.md#caller-contract). Callers pass `REVIEW_TYPE` + `DIFF_FILE` CLI_ARGS; the wrapper loads the template from `.claude/prompts/reviewer/<REVIEW_TYPE>.md` and pipes it concatenated with the sanitized subject onto `codex exec -p reviewer`'s stdin, which is the sole subject channel for every `REVIEW_TYPE`. The bridge agent does not author prompts.
 
 **Plan-review example at `xhigh` effort**:
 

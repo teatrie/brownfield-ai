@@ -38,7 +38,7 @@ VARIANT_EFFORT_BY_SUFFIX = {
 
 # Bridge-reviewer families have their own contract for variant tier
 # selection (e.g., Gemini variants override `model_tier` to flip Flash
-# vs Pro; Codex variants override via `-c profiles.reviewer.model_reasoning_effort`).
+# vs Pro; Codex variants override via the top-level `-c model_reasoning_effort`).
 # Their parity pins live with the wrapper scripts under
 # `scripts/agent-cli/`, not here. The claude-native code-review family
 # is also excluded because its W1 envelope example (REVIEWER-ENVELOPE-001)

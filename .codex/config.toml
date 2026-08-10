@@ -1,13 +1,35 @@
-[profiles.reviewer]
-model = "gpt-5.3-codex"
-model_reasoning_effort = "high"
-
+# Project-local Codex CLI config for this workspace.
+#
+# No `[profiles.*]` table is declared here, and none may be added. On
+# codex-cli 0.146.0, `codex exec -p reviewer` aborts with a fatal
+# config-load error when a loaded `config.toml` declares the named
+# profile: "--profile `reviewer` cannot be used while
+# <path>/config.toml contains legacy `profile = "reviewer"` or
+# `[profiles.reviewer]` config; move those settings into
+# <path>/reviewer.config.toml". The honored form on this version is the
+# separate `$CODEX_HOME/<name>.config.toml` file. A profile table added
+# here does not degrade the run, it breaks it.
+#
+# The `-p reviewer` profile is defined in a user-level config instead:
+# docker/agent-cli/codex-config.toml, which the agent-cli image installs
+# at /home/agent/.codex/config.toml and scripts/setup_codex_reviewer.sh
+# provisions into a developer's ~/.codex/config.toml. That profile
+# supplies the reviewer model; scripts/agent-cli/codex-review.sh
+# overrides it with `-m` only when the caller passes MODEL, and carries
+# the reasoning effort itself as a top-level
+# `-c model_reasoning_effort=<value>` on the invocation — no config
+# layer sets that key.
+#
 # Criteria live in .claude/prompts/reviewer/_invariants.md
-# (INVARIANT:criteria + INVARIANT:adversarial-rigor blocks).
-# For default `codex review --base` usage, the codex-reviewer
-# wrapper passes the `diff.md` template via stdin.
-# Raw `codex exec -p reviewer` invocations (bypassing the task
-# wrapper) are NOT a supported path — the task wrapper is the
+# (INVARIANT:criteria + INVARIANT:adversarial-rigor blocks) and the
+# per-type templates beside it. For every REVIEW_TYPE the wrapper
+# concatenates the selected template with the sanitized subject and pipes
+# the result to `codex exec -p reviewer` on stdin, which is the sole
+# subject channel. Raw `codex exec -p reviewer` invocations (bypassing
+# the task wrapper) are NOT a supported path — the task wrapper is the
 # single source of criteria since criteria live in the templates.
-# Do not duplicate criteria here — the template-lint fails if
-# this block is re-introduced.
+# Do not duplicate criteria here. The template-lint
+# (`_check_codex_toml_file` in scripts/lint_reviewer_templates.py)
+# inspects only `[profiles.reviewer.instructions]`, a section this file
+# may never declare, so nothing written here is checked — this
+# instruction is the only control on that path.
