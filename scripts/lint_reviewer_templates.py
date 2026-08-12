@@ -6,9 +6,10 @@ copies in each reviewer template
 (``.claude/prompts/reviewer/<type>.md`` for
 ``type in {diff, plan, spec, epic, spec-req-verification}``).
 
-Also verifies the ``.codex/config.toml`` ``[profiles.reviewer.instructions]``
-section contains zero numbered criteria — the 10-point criteria now
-live only in the committed templates.
+Also verifies that the ``[profiles.reviewer.instructions]`` section of
+both reviewer TOMLs — ``.codex/config.toml`` and
+``docker/agent-cli/codex-config.toml`` — contains zero numbered
+criteria; the 10-point criteria live only in the committed templates.
 
 Finally, asserts the ``SHARED:`` blocks carrying the diff-only review
 dimensions are identical between ``.claude/skills/diff-review/SKILL.md``
@@ -56,13 +57,15 @@ INVARIANTS_PATH: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer" / "_invar
 TEMPLATES_DIR: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer"
 # Both the project-local config AND the user-level source are checked.
 # `.codex/config.toml` is project-local and declares no profile table: on
-# codex-cli 0.146.0, `codex exec -p reviewer` fails to load when a config.toml
-# declares the named profile, so that file is a drift surface rather than a
-# live reviewer config.
+# codex-cli 0.146.0 that path is not a config layer codex loads at all, so a
+# profile table there would be inert and misleading rather than live — a drift
+# surface, not a live reviewer config.
 # `docker/agent-cli/codex-config.toml` is the canonical user-level config —
 # COPYed into `/home/agent/.codex/config.toml` during the agent-cli image
 # build, and provisioned into a developer's host `~/.codex/config.toml` by
-# `scripts/setup_codex_reviewer.sh`. If either drifts back to numbered
+# `scripts/setup_codex_reviewer.sh`. That path IS loaded, so a
+# `[profiles.reviewer]` table there aborts `codex exec -p reviewer` with a
+# fatal config-load error. If either drifts back to numbered
 # criteria, container reviews and newly-provisioned host reviews would
 # silently run stale duplicated instructions.
 TOML_PATHS: tuple[Path, ...] = (

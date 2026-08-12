@@ -214,8 +214,10 @@ passes the result as a **top-level** `-c` override:
 The key must be top-level. The same key sent in a
 `profiles.reviewer.`-prefixed form does not reach the run — the CLI
 accepts the override and still reports its own default effort in the
-startup banner. A sample invocation threading a `high` override, with
-the combined template+subject prompt on stdin:
+startup banner. The command the wrapper composes for a `high` override,
+with the combined template+subject prompt on stdin, is shown below as an
+illustration only — raw `codex exec` invocations that bypass the task
+wrapper are not a supported path:
 
 ```bash
 codex exec -p reviewer \
@@ -283,7 +285,8 @@ enums; update this section when the asymmetry narrows.
 Three canonical invocations, one per family, at `-xhigh`:
 
 ```text
-task agent:code-review-xhigh     # Claude native
+Agent(subagent_type="code-review-xhigh")   # Claude native — subagent
+                                          # dispatch; no task alias exists
 task agent:review:codex:local -- ROUND=1 EFFORT=xhigh REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 task agent:review:gemini:local -- ROUND=1 EFFORT=xhigh GEMINI_MODEL=gemini-3.1-pro-preview REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```

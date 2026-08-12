@@ -156,6 +156,11 @@ model for the current round:
 task agent:review:codex:local -- ROUND=$ROUND EFFORT=high MODEL=gpt-5.4 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
 
+The profile itself pins nothing today — its `[profiles.reviewer]`
+table aborts `codex exec -p reviewer` (**TODO-0228**); see
+[docs/effort_tiers.md](../../docs/effort_tiers.md) §"Where the Codex
+Effort Value Comes From".
+
 ---
 
 ## Model Selection Matrix

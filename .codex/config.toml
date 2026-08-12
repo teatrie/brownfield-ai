@@ -12,12 +12,15 @@
 # The `-p reviewer` profile is defined in a user-level config instead:
 # docker/agent-cli/codex-config.toml, which the agent-cli image installs
 # at /home/agent/.codex/config.toml and scripts/setup_codex_reviewer.sh
-# provisions into a developer's ~/.codex/config.toml. That profile
-# supplies the reviewer model; scripts/agent-cli/codex-review.sh
-# overrides it with `-m` only when the caller passes MODEL, and carries
-# the reasoning effort itself as a top-level
-# `-c model_reasoning_effort=<value>` on the invocation — no config
-# layer sets that key.
+# provisions into a developer's ~/.codex/config.toml. That profile is
+# intended to supply the reviewer model, but installed at that loaded
+# path its `[profiles.reviewer]` table aborts `codex exec -p reviewer`
+# with a fatal config-load error instead of pinning anything;
+# relocating it to `$CODEX_HOME/reviewer.config.toml` is tracked as
+# TODO-0228. scripts/agent-cli/codex-review.sh overrides the model with
+# `-m` only when the caller passes MODEL, and carries the reasoning
+# effort itself as a top-level `-c model_reasoning_effort=<value>` on
+# the invocation — no config layer sets that key.
 #
 # Criteria live in .claude/prompts/reviewer/_invariants.md
 # (INVARIANT:criteria + INVARIANT:adversarial-rigor blocks) and the

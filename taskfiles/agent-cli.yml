@@ -17,7 +17,7 @@ tasks:
 
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:copilot -- ROUND=3 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
-      Allowlisted keys: ROUND, REVIEW_TYPE, DIFF_FILE.
+      Keys this target consumes: ROUND, REVIEW_TYPE, DIFF_FILE.
     cmds:
       - >-
         scripts/agent-cli/cli-args-to-env.sh
@@ -29,17 +29,18 @@ tasks:
 
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:gemini -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt GEMINI_MODEL=gemini-3.1-pro-high
-      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
-      REVIEW_TYPE, DIFF_FILE, GEMINI_MODEL, GEMINI_TIMEOUT.
+      Keys this target consumes: ROUND, EFFORT, REVIEW_SESSION_ID,
+      WORKSPACE, REVIEW_TYPE, DIFF_FILE, GEMINI_MODEL, GEMINI_TIMEOUT.
 
-      The shim (cli-args-to-env.sh) validates each token against a key
-      allowlist and value-character allowlist before exec'ing the target
-      wrapper with the values injected via `env`. This closes the
-      `$(...)` injection surface that the previous `env:` map guarded
-      against — values that contain shell metacharacters or expansion
-      tokens are rejected. The wrapper script (gemini-review-container.sh)
-      owns the docker compose invocation so the shim target is always
-      a single-word script path.
+      The shim (cli-args-to-env.sh) validates each token against a
+      single global key allowlist — shared by every bridge target, not
+      filtered per target — and a value-character allowlist before
+      exec'ing the target wrapper with the values injected via `env`.
+      This closes the `$(...)` injection surface that the previous
+      `env:` map guarded against — values that contain shell
+      metacharacters or expansion tokens are rejected. The wrapper
+      script (gemini-review-container.sh) owns the docker compose
+      invocation so the shim target is always a single-word script path.
     cmds:
       - >-
         scripts/agent-cli/cli-args-to-env.sh
@@ -51,8 +52,8 @@ tasks:
 
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
-      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
-      MODEL, REVIEW_TYPE, DIFF_FILE.
+      Keys this target consumes: ROUND, EFFORT, REVIEW_SESSION_ID,
+      WORKSPACE, MODEL, REVIEW_TYPE, DIFF_FILE.
     cmds:
       - >-
         scripts/agent-cli/cli-args-to-env.sh
@@ -82,8 +83,10 @@ tasks:
 
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:gemini:local -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt GEMINI_MODEL=gemini-3.1-pro-high
-      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
-      REVIEW_TYPE, DIFF_FILE, GEMINI_MODEL, GEMINI_TIMEOUT.
+      Keys this target consumes: ROUND, EFFORT, REVIEW_SESSION_ID,
+      WORKSPACE, REVIEW_TYPE, DIFF_FILE, GEMINI_MODEL, GEMINI_TIMEOUT.
+      The shim allowlist is global (see review:gemini desc), not
+      per-target.
     env:
       GEMINI_EXECUTION_CONTEXT: 'host'
     cmds:
@@ -107,8 +110,8 @@ tasks:
 
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:codex:local -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
-      Allowlisted keys: ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
-      MODEL, REVIEW_TYPE, DIFF_FILE.
+      Keys this target consumes: ROUND, EFFORT, REVIEW_SESSION_ID,
+      WORKSPACE, MODEL, REVIEW_TYPE, DIFF_FILE.
     env:
       CODEX_EXECUTION_CONTEXT: 'host'
     cmds:
