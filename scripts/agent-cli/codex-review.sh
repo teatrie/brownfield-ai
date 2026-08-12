@@ -22,11 +22,22 @@ set -euo pipefail
 # below exits without writing a signal, so clearing after it would leave the
 # catastrophic path attributing a previous run's verdict to itself.
 #
-# The clear is fail-loud: an unwritable tmp/ would otherwise abort under
-# `set -e` with no message and no signal — the verdict-less outcome this
-# whole block exists to prevent.
+# Writability is probed directly rather than inferred from the clear: `rm -f`
+# on a missing operand returns 0 even under a read-only parent, so an unwritable
+# tmp/ with no stale signal passes the clear and aborts later on the first
+# signal write instead — under `set -e`, with no message and no signal, the
+# verdict-less outcome this whole block exists to prevent. The mkdir, the
+# probe, and the clear are each checked so a failure reports itself here.
 # ---------------------------------------------------------------------------
-mkdir -p tmp
+if ! mkdir -p tmp; then
+  echo "FATAL: cannot create tmp/ — nowhere to record an exit signal" >&2
+  exit 1
+fi
+if ! touch tmp/.codex-write-probe 2>/dev/null; then
+  echo "FATAL: tmp/ is not writable — this run could not record an exit signal" >&2
+  exit 1
+fi
+rm -f tmp/.codex-write-probe
 if ! rm -f tmp/codex-exit.json; then
   echo "FATAL: cannot clear tmp/codex-exit.json — tmp/ is not writable" >&2
   exit 1
@@ -37,6 +48,7 @@ fi
 # ---------------------------------------------------------------------------
 if [ -f /app/.env ] && [ -r /app/.env ]; then
   echo "FATAL: .env is readable inside container" >&2
+  printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"secrets_guard","stderr_excerpt":".env is readable inside container"}\n' > tmp/codex-exit.json
   exit 1
 fi
 # Note: /app/.env only exists inside the container. On host, this check no-ops.

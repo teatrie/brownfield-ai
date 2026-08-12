@@ -188,12 +188,19 @@ re-invocation. Treating `max` as the default erases the signal that
 
 No config file pins a reviewer reasoning effort. `.codex/config.toml`
 declares no `[profiles.*]` table and none may be added: on codex-cli
-0.146.0, `codex exec -p reviewer` aborts with a fatal config-load error
-when a loaded `config.toml` declares the named profile, directing the
-settings into a separate `$CODEX_HOME/<name>.config.toml` instead. A
-profile table there does not degrade the run, it breaks it. The
-user-level reviewer profile that ships in the agent-cli image
-(`docker/agent-cli/codex-config.toml`) pins the reviewer *model* only.
+0.146.0 that project-local path is not a config layer codex loads at
+all, so anything written there — a profile table included — is inert
+and reaches no run, while still reading like a live pin. Where a
+`config.toml` *is* loaded, a declared profile is worse than inert:
+`codex exec -p reviewer` aborts with a fatal config-load error,
+directing the settings into a separate
+`$CODEX_HOME/<name>.config.toml` instead. The user-level reviewer
+profile that ships in the agent-cli image
+(`docker/agent-cli/codex-config.toml`) pins the reviewer *model* only
+— and it is installed as a loaded `/home/agent/.codex/config.toml`, so
+its `[profiles.reviewer]` table currently trips that abort instead of
+pinning anything; relocating it to `$CODEX_HOME/reviewer.config.toml`
+is tracked as TODO-0228.
 
 Effort is therefore carried entirely on the invocation. When the
 wrapper is invoked with `EFFORT=<value>` it applies the ceiling

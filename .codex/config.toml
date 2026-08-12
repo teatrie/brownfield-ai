@@ -1,14 +1,13 @@
 # Project-local Codex CLI config for this workspace.
 #
 # No `[profiles.*]` table is declared here, and none may be added. On
-# codex-cli 0.146.0, `codex exec -p reviewer` aborts with a fatal
-# config-load error when a loaded `config.toml` declares the named
-# profile: "--profile `reviewer` cannot be used while
-# <path>/config.toml contains legacy `profile = "reviewer"` or
-# `[profiles.reviewer]` config; move those settings into
-# <path>/reviewer.config.toml". The honored form on this version is the
-# separate `$CODEX_HOME/<name>.config.toml` file. A profile table added
-# here does not degrade the run, it breaks it.
+# codex-cli 0.146.0 this project-local path is not a config layer codex
+# loads at all: keys written here — `model` and
+# `model_reasoning_effort` included — never reach the run, which falls
+# back to the CLI defaults even when `workdir` is this directory. A
+# profile table added here would therefore be inert, giving a false
+# impression that the reviewer is pinned by config. The honored form on
+# this version is a separate `$CODEX_HOME/<name>.config.toml` file.
 #
 # The `-p reviewer` profile is defined in a user-level config instead:
 # docker/agent-cli/codex-config.toml, which the agent-cli image installs

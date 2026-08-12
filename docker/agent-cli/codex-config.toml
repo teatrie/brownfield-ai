@@ -16,7 +16,7 @@ model = "gpt-5.3-codex"
 # honored shape is a separate `$CODEX_HOME/<name>.config.toml` holding
 # top-level keys and no `[profiles.*]` header. Relocating this table
 # there also touches the Dockerfile, setup_codex_reviewer.sh, and the
-# template-lint's TOML_PATHS, so it is tracked separately.
+# template-lint's TOML_PATHS, so it is tracked separately as TODO-0228.
 #
 # Criteria live in .claude/prompts/reviewer/_invariants.md
 # (INVARIANT:criteria + INVARIANT:adversarial-rigor blocks) and the

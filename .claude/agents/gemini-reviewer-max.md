@@ -17,7 +17,7 @@ loop.
 
 **Role**: Cross-Family Model Review Bridge (`effort: max`).
 
-This variant uses the `max` reasoning-effort pin. See [gemini-reviewer.md](gemini-reviewer.md) for full pre-flight, Caller Contract, invocation, and output contract. The caller MUST pass `EFFORT=max` as a CLI_ARG to `task agent:review:gemini` / `task agent:review:gemini:local` — a positional `KEY=value` argument after `--`, never an exported shell variable, per the **CLI Invocation** section of the base file. **Ceiling collision**: Gemini Pro tops out at `HIGH`, so the wrapper collapses both `EFFORT=xhigh` and `EFFORT=max` down to `-m gemini-3.1-pro-high` (or `-m gemini-3-flash-high` after Pro→Flash fallback) per Req-005 — see Risk-001 in [docs/effort_tiers.md](../../docs/effort_tiers.md).
+This variant uses the `max` reasoning-effort pin. See [gemini-reviewer.md](gemini-reviewer.md) for full pre-flight, Caller Contract, invocation, and output contract. The caller MUST pass `EFFORT=max` as a CLI_ARG to `task agent:review:gemini` / `task agent:review:gemini:local` — a positional `KEY=value` argument after `--`, never an exported shell variable, per the **CLI Invocation** section of the base file. **Ceiling collision**: Gemini Pro tops out at `HIGH`, so the wrapper collapses both `EFFORT=xhigh` and `EFFORT=max` down to `-m gemini-3.1-pro-high` (or `-m gemini-3-flash-high` after Pro→Flash fallback) per Req-005 — see [Cross-Family Asymmetry](../../docs/effort_tiers.md#cross-family-asymmetry) in `docs/effort_tiers.md`.
 
 Refer to the **Effort Tier Mapping** table in [gemini-reviewer.md](gemini-reviewer.md) for the full `EFFORT` → `-m <alias>` → Claude-equivalent mapping.
 
