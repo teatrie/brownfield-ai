@@ -11,6 +11,9 @@ caller-supplied ``PROMPT_FILE`` / legacy per-round prompt path to
 - New contract: REVIEW_TYPE / DIFF_FILE argument validation; template is
   hardcoded by the wrapper; every review type dispatches a plain
   ``codex exec --ephemeral``.
+- Startup signal hygiene: an unwritable ``tmp/`` aborts fatally, and no
+  signal from an earlier invocation survives into a run that completes
+  without writing one of its own.
 - Auth-failure cache invalidation and missing-binary handling.
 
 All tests use a PATH-prepended fake ``codex`` shim that captures argv plus
@@ -23,6 +26,7 @@ under ``tmp_path`` so no invocation writes into the real repository.
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 from pathlib import Path
@@ -397,7 +401,14 @@ class TestReviewTypeDispatch:
     property of it: the flag is what keeps the reviewed diff, the reviewer
     prompt and the agent's tool trace out of codex session storage. It rides
     on ``exec`` itself, so it does not depend on the subcommand chosen.
+
+    The stdin assertion is what makes the argv shape mean something: an
+    argv that omits ``review`` while delivering nothing on stdin is a
+    reviewer running with no criteria and no subject, which the argv
+    checks alone would accept.
     """
+
+    _PREAMBLE_MARKER: str = "<!-- INVARIANT:preamble start -->"
 
     def _run(
         self,
@@ -436,6 +447,13 @@ class TestReviewTypeDispatch:
             f"REVIEW_TYPE={review_type!r} must pass --ephemeral; without it the reviewed diff, the prompt and the tool trace persist to codex session storage. argv={argv!r}"
         )
         assert "-p" in argv and argv[argv.index("-p") + 1] == "reviewer"
+        stdin_payload = records[0]["stdin"]
+        assert self._PREAMBLE_MARKER in stdin_payload, (
+            f"REVIEW_TYPE={review_type!r} must deliver the reviewer template on stdin — it is the sole subject channel, so a dispatch that pipes nothing reviews nothing. stdin={stdin_payload[:200]!r}"
+        )
+        assert "diff --git" in stdin_payload, (
+            f"REVIEW_TYPE={review_type!r} must deliver the DIFF_FILE contents on stdin; stdin={stdin_payload[:200]!r}"
+        )
 
 
 class TestTemplateIsHardcoded:
@@ -515,6 +533,48 @@ class TestRetiredFlagRejection:
         assert _read_exit_json(tmp_path).get("error_class") == "arg_validation"
 
 
+class TestUnwritableTmpAbortsWithAFatalDiagnostic:
+    """An unwritable ``tmp/`` must abort at startup, saying so.
+
+    ``tmp/codex-exit.json`` is the only channel the wrapper has for
+    reporting an outcome, so a run that cannot write it has no way to
+    report anything — including the fact that it could not report. Neither
+    startup statement around the probe observes the condition: ``mkdir -p``
+    succeeds on an existing directory whatever its mode, and ``rm -f``
+    succeeds on an absent operand even under a read-only parent. Without an
+    explicit write probe the run proceeds until the first write fails, and
+    under ``set -e`` that is a bare non-zero exit with no message and no
+    signal — indistinguishable from a crash.
+
+    The chmod is safe here only because ``_workspace_root`` provisions a
+    throwaway root under ``tmp_path``; the mode is restored before the
+    assertions so the fixture teardown is never left a read-only tree.
+    """
+
+    @pytest.mark.skipif(
+        os.geteuid() == 0,
+        reason="root bypasses the write bit, so chmod cannot make tmp/ unwritable and the probe under test would succeed",
+    )
+    def test_unwritable_tmp_aborts_before_the_cli_with_a_writability_message(self, tmp_path: Path) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, log_path=log)
+        env = _default_env(bin_dir, tmp_path)
+        workspace_tmp = _workspace_root(tmp_path) / "tmp"
+        original_mode = stat.S_IMODE(workspace_tmp.stat().st_mode)
+        workspace_tmp.chmod(stat.S_IRUSR | stat.S_IXUSR)
+        try:
+            result = _run_review(tmp_path, env_overrides=env)
+        finally:
+            workspace_tmp.chmod(original_mode)
+        assert result.returncode == 1, f"an unwritable tmp/ must abort with exit 1; got {result.returncode} with stderr={result.stderr!r}"
+        assert "FATAL" in result.stderr and "not writable" in result.stderr, (
+            f"the abort must name the condition — a bare non-zero exit from the first failed write leaves the caller with no verdict and no reason. stderr={result.stderr!r}"
+        )
+        assert _read_shim_log(log) == [], (
+            "the run must abort before the CLI is invoked; a review whose outcome cannot be recorded must not be paid for"
+        )
+
+
 class TestStaleExitSignalCannotBeReadAsThisRunsVerdict:
     """A signal left by an earlier invocation must not outlive it.
 
@@ -560,6 +620,71 @@ class TestStaleExitSignalCannotBeReadAsThisRunsVerdict:
         assert _read_shim_log(log), "the CLI must have been reached; otherwise this is not the success path"
         assert not stale.exists(), (
             "a successful run writes no signal of its own, so the startup clear must have removed the earlier invocation's file outright; anything left on disk is readable as this run's verdict"
+        )
+
+    @pytest.mark.parametrize(
+        ("extra_env", "first_stderr", "expected_notice"),
+        [
+            (
+                {"MODEL": "gpt-5.4", "EFFORT": "high"},
+                "Error: 429 Too Many Requests",
+                "falling back to gpt-5.3-codex high",
+            ),
+            (
+                {"EFFORT": "xhigh", "EFFORT_FALLBACK_ON_REJECT": "1"},
+                "Error: unknown variant xhigh for model_reasoning_effort",
+                "retrying once with EFFORT=high",
+            ),
+            ({}, "Error: connection timeout", ""),
+        ],
+        ids=["high_tier_fallback", "xhigh_fallback", "transient_retry"],
+    )
+    def test_a_run_that_succeeds_on_retry_does_not_leave_a_prior_signal_readable(
+        self,
+        tmp_path: Path,
+        extra_env: dict[str, str],
+        first_stderr: str,
+        expected_notice: str,
+    ) -> None:
+        """Every exit that completes without a signal of its own must land on a cleared file.
+
+        Three exits reach success only after the first call failed — the
+        HIGH-tier fallback, the xhigh-rejection fallback and the transient
+        retry — and each writes a signal on the failure branch it did not
+        take, so on success it leaves ``tmp/codex-exit.json`` untouched
+        exactly as the plain first-call success does. Each is driven here by
+        a sequence shim scripted fail-then-succeed, with the failure stderr
+        selecting which branch handles it; ``expected_notice`` pins that
+        selection so a run that silently took a different path than the one
+        it is named for cannot satisfy the planted-signal assertion by
+        accident.
+        """
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim_with_sequence(
+            tmp_path,
+            exit_codes=[1, 0],
+            stderr_texts=[first_stderr, ""],
+            log_path=log,
+        )
+        env = _default_env(bin_dir, tmp_path)
+        env.update(extra_env)
+        stale = self._plant_stale_signal(tmp_path)
+        assert stale.exists(), "precondition: the stale signal must be on disk before the wrapper starts"
+        # The transient branch sleeps 5s before its retry.
+        result = _run_review(tmp_path, env_overrides=env, timeout=40)
+        assert result.returncode == 0, result.stderr
+        records = _read_shim_log(log)
+        assert len(records) == 2, (
+            f"expected an initial call plus one retry, got {len(records)}; without both this is not the retry-success path"
+        )
+        if expected_notice:
+            assert expected_notice in result.stderr, f"expected the run to take the branch under test; stderr={result.stderr!r}"
+        else:
+            assert "falling back to gpt-5.3-codex" not in result.stderr, (
+                f"the transient row must reach success through the same-model retry, not the HIGH-tier fallback; stderr={result.stderr!r}"
+            )
+        assert not stale.exists(), (
+            "this exit writes no signal of its own, so the earlier invocation's file must have been removed at startup; anything left on disk is readable as this run's verdict"
         )
 
 

@@ -55,19 +55,12 @@ import defopt
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 INVARIANTS_PATH: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer" / "_invariants.md"
 TEMPLATES_DIR: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer"
-# Both the project-local config AND the user-level source are checked.
-# `.codex/config.toml` is project-local and declares no profile table: on
-# codex-cli 0.146.0 that path is not a config layer codex loads at all, so a
-# profile table there would be inert and misleading rather than live — a drift
-# surface, not a live reviewer config.
-# `docker/agent-cli/codex-config.toml` is the canonical user-level config —
-# COPYed into `/home/agent/.codex/config.toml` during the agent-cli image
-# build, and provisioned into a developer's host `~/.codex/config.toml` by
-# `scripts/setup_codex_reviewer.sh`. That path IS loaded, so a
-# `[profiles.reviewer]` table there aborts `codex exec -p reviewer` with a
-# fatal config-load error. If either drifts back to numbered
-# criteria, container reviews and newly-provisioned host reviews would
-# silently run stale duplicated instructions.
+# Both TOMLs are checked, but they differ in reach. `.codex/config.toml` is
+# project-local, which codex loads nothing from: criteria drifting back in
+# there reach no run, so it is a drift surface only. The agent-cli TOML is the
+# user-level config that IS loaded, so drift there would silently run stale
+# duplicated instructions on container and newly-provisioned host reviews.
+# See docs/effort_tiers.md §"Where the Codex Effort Value Comes From".
 TOML_PATHS: tuple[Path, ...] = (
     REPO_ROOT / ".codex" / "config.toml",
     REPO_ROOT / "docker" / "agent-cli" / "codex-config.toml",

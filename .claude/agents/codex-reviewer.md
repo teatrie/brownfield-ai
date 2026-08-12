@@ -105,7 +105,7 @@ is tracked separately.
 The calling agent prepares a subject artifact under `tmp/` (or `agent-review/` in container mode) and passes two CLI_ARGS:
 
 - `REVIEW_TYPE`: one of `plan | spec | diff | epic | spec-req-verification`. Selects the template at `.claude/prompts/reviewer/<REVIEW_TYPE>.md` that the task wrapper concatenates onto the CLI's input.
-- `DIFF_FILE`: workspace-relative path to the subject artifact. The wrapper realpath-validates containment under `tmp/` or `agent-review/`; paths outside are rejected. Artifacts prepared outside `tmp/` must be copied or symlinked into `tmp/` first. This is the sole subject channel for every `REVIEW_TYPE`, `diff` included — nothing is read from the working tree, so a synthetic or fixture diff is reviewed exactly as supplied.
+- `DIFF_FILE`: workspace-relative path to the subject artifact. The wrapper realpath-validates containment under `tmp/` or `agent-review/`; paths outside are rejected. Artifacts prepared outside `tmp/` must be copied or symlinked into `tmp/` first. This is the sole subject channel for every `REVIEW_TYPE`, `diff` included — the reviewed subject is exactly the supplied `DIFF_FILE` whether or not it matches the working-tree git diff, so a synthetic or fixture diff is reviewed as given. The model still runs under `--sandbox danger-full-access` and retains filesystem access, so it may read the tree on its own initiative; what it is *given* to review never comes from there.
 
 The wrapper owns template loading, subject sanitization (ANSI/null/control-char stripping), and CLI construction. The bridge agent does NOT author prompt text, does NOT sanitize the subject, and does NOT construct a combined prompt file — those responsibilities moved to the wrapper in TODO-0092 Phase A.
 
@@ -167,7 +167,7 @@ Effort Value Comes From".
 
 | Context | Model | Rationale |
 |---|---|---|
-| Default code review | `gpt-5.3-codex` | Review-optimized, cheapest. No `gpt-5.5-codex` SKU exists yet (as of 2026-04-24). |
+| Default code review | caller-supplied via `MODEL`; the CLI's own default when unset | Pass `MODEL=gpt-5.3-codex` for the review-optimized, cheapest option. No `gpt-5.5-codex` SKU exists yet (as of 2026-04-24). |
 | Plan reviews (architecture/design) | `gpt-5.4` | Strongest reasoning for structural analysis at sustainable cost. |
 | Large diffs (>1000 lines) | `gpt-5.4` | 1M-context capacity shared with gpt-5.5 — no upgrade benefit at this scale. |
 | Rework plan reviews (MAX tier) | `gpt-5.5` (local OAuth) / `gpt-5.4` (container API-key) | Frontier-tier ceiling. gpt-5.5 leads on Terminal-Bench 2.0 (82.7%) and Expert-SWE long-horizon coding; 2× the per-token cost of gpt-5.4 ($5/$30 vs $2.50/$15 per 1M tokens) is justified only at low-volume frontier reviews. **Auth constraint**: gpt-5.5 is currently OAuth-only in Codex CLI. **Operator selection, not runtime auto-downgrade**: on an auth error the `ERROR_CLASS="auth"` branch in `scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with `error_class=auth` and stops — no retry, no downgrade — but it **exits 0**, so the caller must read `tmp/codex-exit.json` rather than the process exit status. Container-mode callers MUST pass `MODEL=gpt-5.4` explicitly until OpenAI ships API-key support for gpt-5.5. |
@@ -200,7 +200,7 @@ internal reasoning level. This is why `EFFORT=medium` maps to
 
 | `EFFORT` | Codex `model_reasoning_effort` | Model | Claude Equivalent |
 |----------|-------------------------------|-------|-------------------|
-| `medium` | `high` | `gpt-5.3-codex` | Sonnet `high` |
+| `medium` | `high` | caller-supplied via `MODEL`; the CLI's own default when unset | Sonnet `high` |
 | `high`   | `high` | `gpt-5.4` (MODEL override) | Opus 4.7 `high` |
 | `xhigh`  | `xhigh` | `gpt-5.4` | Opus 4.7 `xhigh` |
 | `max`    | `xhigh` (ceiling collision) | `gpt-5.5` local / `gpt-5.4` container | Opus 4.7 `max` |

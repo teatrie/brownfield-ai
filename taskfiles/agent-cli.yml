@@ -18,6 +18,8 @@ tasks:
       Caller values via CLI_ARGS (KEY=value after `--`):
         task agent:review:copilot -- ROUND=3 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
       Keys this target consumes: ROUND, REVIEW_TYPE, DIFF_FILE.
+      The shim allowlist is global (see review:gemini desc), not
+      per-target.
     cmds:
       - >-
         scripts/agent-cli/cli-args-to-env.sh
@@ -54,6 +56,8 @@ tasks:
         task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
       Keys this target consumes: ROUND, EFFORT, REVIEW_SESSION_ID,
       WORKSPACE, MODEL, REVIEW_TYPE, DIFF_FILE.
+      The shim allowlist is global (see review:gemini desc), not
+      per-target.
     cmds:
       - >-
         scripts/agent-cli/cli-args-to-env.sh
@@ -112,6 +116,8 @@ tasks:
         task agent:review:codex:local -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-5.4
       Keys this target consumes: ROUND, EFFORT, REVIEW_SESSION_ID,
       WORKSPACE, MODEL, REVIEW_TYPE, DIFF_FILE.
+      The shim allowlist is global (see review:gemini desc), not
+      per-target.
     env:
       CODEX_EXECUTION_CONTEXT: 'host'
     cmds:

@@ -18,7 +18,7 @@ Reviewer roster covered below (initial set — add new reviewers as they're onbo
 | Codex-builtin | `gpt-5.4` | high | Codex's **native 10-point review** against the branch diff, no custom prompt. Not invocable — the wrapper has no `review`-subcommand path. | — |
 | Sonnet (medium) | `claude-sonnet-4-6` | medium (high-reasoning) | Same as Opus — read-only, inherits main-session context. Default model selection for baseline `code-review` agent. | `code-review` |
 | Gemini Flash (medium) | `gemini-3-flash-high` | medium | Same bridge mechanism as Gemini Pro; default model when agent invoked without effort suffix. | `gemini-reviewer` |
-| Codex-custom (medium) | `gpt-5.3-codex` | medium (high) | Same bridge mechanism as Codex-custom HIGH; default model when agent invoked without effort suffix. Custom-prompt drift-mitigation preamble required. | `codex-reviewer` |
+| Codex-custom (medium) | caller-supplied via `MODEL`; the CLI's own default when unset | medium (high) | Same bridge mechanism as Codex-custom HIGH; default model when agent invoked without effort suffix. Custom-prompt drift-mitigation preamble required. | `codex-reviewer` |
 | Codex-builtin (medium) | `gpt-5.3-codex` | medium (high) | Same native-review mechanism as Codex-builtin HIGH, and likewise not invocable. | — |
 
 The `codex exec -p reviewer` rows above carry a caveat: the reviewer profile pins no model today — its `[profiles.reviewer]` table aborts that invocation (**TODO-0228**); see [effort_tiers.md](./effort_tiers.md) §"Where the Codex Effort Value Comes From".

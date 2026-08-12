@@ -16,28 +16,32 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Signal hygiene — runs above EVERY exit path, including the secrets guard.
-# The bridge agent reads tmp/codex-exit.json as this run's authoritative
-# outcome, so a leftover is reported as this run's result. The secrets guard
-# below exits without writing a signal, so clearing after it would leave the
-# catastrophic path attributing a previous run's verdict to itself.
+# Signal hygiene — must precede the FIRST signal write on any path, including
+# the secrets guard's own. The bridge agent reads tmp/codex-exit.json as this
+# run's authoritative outcome, so a leftover is reported as this run's result;
+# probing writability here reports an unwritable tmp/ instead of aborting
+# silently under `set -e` at whichever signal write comes first.
 #
-# Writability is probed directly rather than inferred from the clear: `rm -f`
-# on a missing operand returns 0 even under a read-only parent, so an unwritable
-# tmp/ with no stale signal passes the clear and aborts later on the first
-# signal write instead — under `set -e`, with no message and no signal, the
-# verdict-less outcome this whole block exists to prevent. The mkdir, the
-# probe, and the clear are each checked so a failure reports itself here.
+# The probe is a real write because `rm -f` on a missing operand returns 0 even
+# under a read-only parent. Its name carries the PID: `touch` on an existing
+# writable file succeeds even when the parent is not writable, so a fixed name
+# left behind by an earlier run would mask exactly the case being probed.
+# The mkdir, the probe, and both removals are each checked; nothing after this
+# block is covered.
 # ---------------------------------------------------------------------------
 if ! mkdir -p tmp; then
   echo "FATAL: cannot create tmp/ — nowhere to record an exit signal" >&2
   exit 1
 fi
-if ! touch tmp/.codex-write-probe 2>/dev/null; then
+WRITE_PROBE="tmp/.codex-write-probe.$$"
+if ! touch "${WRITE_PROBE}" 2>/dev/null; then
   echo "FATAL: tmp/ is not writable — this run could not record an exit signal" >&2
   exit 1
 fi
-rm -f tmp/.codex-write-probe
+if ! rm -f "${WRITE_PROBE}"; then
+  echo "FATAL: cannot remove ${WRITE_PROBE} — tmp/ is not writable" >&2
+  exit 1
+fi
 if ! rm -f tmp/codex-exit.json; then
   echo "FATAL: cannot clear tmp/codex-exit.json — tmp/ is not writable" >&2
   exit 1
@@ -171,6 +175,23 @@ fi
 WORKSPACE="${WORKSPACE:-brownfield-ai}"
 SESSION_ID="${REVIEW_SESSION_ID:-local}"
 
+# Both values are caller-supplied and are interpolated into the artifact paths
+# below, which this run creates, writes and deletes. The shared
+# cli-args-to-env.sh shim admits `/` and `.` in values because DIFF_FILE needs
+# them, so an unchecked WORKSPACE of ../tmp/victim would escape agent-review/
+# and aim those writes and that delete at an arbitrary path. Slug-only here:
+# with no separator admitted there is no traversal to reject separately.
+if ! [[ "$WORKSPACE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Error: WORKSPACE must match [A-Za-z0-9._-]+ (no path separators), got '$WORKSPACE'" >&2
+  printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"arg_validation","stderr_excerpt":"WORKSPACE is not a valid slug"}\n' > tmp/codex-exit.json
+  exit 1
+fi
+if ! [[ "$SESSION_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Error: REVIEW_SESSION_ID must match [A-Za-z0-9._-]+ (no path separators), got '$SESSION_ID'" >&2
+  printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"arg_validation","stderr_excerpt":"REVIEW_SESSION_ID is not a valid slug"}\n' > tmp/codex-exit.json
+  exit 1
+fi
+
 if [ "${CODEX_EXECUTION_CONTEXT:-}" != "host" ]; then
   OUTPUT_DIR="agent-review"
   OUTPUT_FILE="${OUTPUT_DIR}/${WORKSPACE}-codex-review-output-${SESSION_ID}.md"
@@ -182,13 +203,6 @@ else
 fi
 
 mkdir -p "${OUTPUT_DIR}"
-
-# Clear any output artifact from a previous run at this same path. Round-stamped
-# names are reused across cycles, so a codex process that exits zero WITHOUT
-# writing -o would leave the final non-empty-output check reading the previous
-# review — returning a stale verdict as this run's. Clearing up front makes that
-# case surface as empty output instead of as someone else's answer.
-rm -f "${OUTPUT_FILE}"
 
 # ---------------------------------------------------------------------------
 # Resolve template + sanitize subject + build combined prompt file.
@@ -213,6 +227,19 @@ cat "$TEMPLATE_PATH" "$SANITIZED_SUBJECT" > "$COMBINED_PROMPT"
 EXIT_CODE=0
 
 run_codex() {
+  # Clear the output artifact before EVERY attempt. The path is reused across
+  # attempts and across rounds, so an attempt that exits zero WITHOUT writing
+  # -o would leave the final non-empty-output check reading an earlier
+  # attempt's or an earlier round's review and returning it as this run's
+  # verdict. Clearing here rather than once at startup also keeps the
+  # destructive step behind the template-existence guard, which aborts before
+  # any call can reach this line.
+  if ! rm -f "${OUTPUT_FILE}"; then
+    echo "FATAL: cannot clear ${OUTPUT_FILE} - its directory is not writable" >&2
+    printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"output_clear_failed","stderr_excerpt":"cannot clear the review output artifact"}\n' > tmp/codex-exit.json
+    exit 1
+  fi
+
   # --sandbox danger-full-access disables Codex's internal sandbox layer
   # because Claude Code's outer sandbox already contains the process
   # (filesystem + network restrictions enforced). Codex's nested
