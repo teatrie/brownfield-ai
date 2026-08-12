@@ -1,19 +1,23 @@
-"""Tests for ``scripts/agent-cli/codex-review.sh`` (TODO-0092 Phase A contract).
+"""Tests for ``scripts/agent-cli/codex-review.sh``.
 
-Covers behaviors that remain after the wrapper contract migrated from the
-caller-supplied ``PROMPT_FILE`` / legacy per-round prompt path to
-``REVIEW_TYPE=<enum>`` + ``DIFF_FILE=<tmp-or-agent-review-path>``:
+The wrapper takes its subject as ``REVIEW_TYPE=<enum>`` +
+``DIFF_FILE=<tmp-or-agent-review-path>``. Covered behaviors:
 
 - Req-003: EFFORT enum validation and -c override composition.
 - Req-003: MEDIUM effort -> HIGH model_reasoning_effort; max collapses to xhigh.
 - Req-017: xhigh-rejection fail-closed behavior and opt-in fallback.
 - Req-019: non-default MODEL 429/503 -> gpt-5.3-codex + high retry.
-- New contract: REVIEW_TYPE / DIFF_FILE argument validation; template is
-  hardcoded by the wrapper; every review type dispatches a plain
+- REVIEW_TYPE / DIFF_FILE argument validation; the template is hardcoded by
+  the wrapper; every review type dispatches a plain
   ``codex exec --ephemeral``.
 - Startup signal hygiene: an unwritable ``tmp/`` aborts fatally, and no
   signal from an earlier invocation survives into a run that completes
   without writing one of its own.
+- Container-routing slug validation: ``WORKSPACE`` / ``REVIEW_SESSION_ID``
+  must carry no path separators before they are interpolated into the
+  artifact paths the run writes and deletes.
+- Output-artifact hygiene: every attempt starts from a cleared ``-o`` file,
+  so no attempt can return a predecessor's partial review as its verdict.
 - Auth-failure cache invalidation and missing-binary handling.
 
 All tests use a PATH-prepended fake ``codex`` shim that captures argv plus
@@ -52,6 +56,25 @@ except (OSError, ValueError):
 record = {"argv": argv, "stdin": stdin_content}
 with open(log_path, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(record) + "\\n")
+"""
+
+# Companion helper for the sequence shim: writes the caller-scripted payload
+# to whatever path the wrapper passed to ``-o``. The base shim writes no
+# output artifact at all, so on its own it cannot express the two cases a
+# retry has to keep apart — an attempt that leaves a partial file behind
+# before failing, and an attempt that exits zero having written nothing. A
+# blank payload for a call means that call writes nothing.
+_SHIM_OUTPUT_HELPER: str = """import sys
+
+payloads_path = sys.argv[1]
+call_index = int(sys.argv[2])
+argv = sys.argv[3:]
+with open(payloads_path, encoding="utf-8") as fh:
+    payloads = fh.read().splitlines()
+payload = payloads[call_index] if call_index < len(payloads) else ""
+if payload and "-o" in argv:
+    with open(argv[argv.index("-o") + 1], "w", encoding="utf-8") as out:
+        out.write(payload + "\\n")
 """
 
 
@@ -136,7 +159,7 @@ def _read_shim_log(log_path: Path) -> list[dict]:
 def _default_env(bin_dir: Path, tmp_path: Path, *, review_type: str = "diff") -> dict[str, str]:
     """Build the minimal env the wrapper needs to reach the shim.
 
-    Supplies ``REVIEW_TYPE``/``DIFF_FILE`` for the new contract, the host
+    Supplies the required ``REVIEW_TYPE``/``DIFF_FILE`` pair, the host
     execution context (so the token guard + OAuth path is exercised), and
     a token so the token-missing guard does not short-circuit. ``DIFF_FILE``
     names the subject ``_workspace_root`` provisions, so it always exists;
@@ -214,7 +237,7 @@ class TestEffortEnumValidation:
         *,
         effort: str | None,
     ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
-        """Invoke the wrapper with the given EFFORT under the new contract."""
+        """Invoke the wrapper with the given EFFORT."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
         env = _default_env(bin_dir, tmp_path)
@@ -291,7 +314,7 @@ class TestEffortEnumValidation:
 
 
 # ---------------------------------------------------------------------------
-# New-contract argument validation: REVIEW_TYPE / DIFF_FILE.
+# Argument validation: REVIEW_TYPE / DIFF_FILE.
 #
 # DIFF_FILE path-containment (realpath, absolute-outside-tmp/, symlink
 # escape, traversal, zero-byte) is covered exhaustively by
@@ -513,7 +536,7 @@ class TestRoundValidation:
 
 
 class TestRetiredFlagRejection:
-    """``--base`` is no longer a wrapper flag; the parser's catch-all owns it.
+    """``--base`` is not a wrapper flag; the parser's catch-all owns it.
 
     The dispatch tests assert ``--base`` is absent from the *codex* argv, which
     a wrapper that accepted the flag and dropped it would also satisfy. This
@@ -688,6 +711,95 @@ class TestStaleExitSignalCannotBeReadAsThisRunsVerdict:
         )
 
 
+class TestOutputFromAnEarlierAttemptCannotBeReadAsTheRetrysVerdict:
+    """Every attempt must begin from a cleared ``-o`` artifact, not just the first.
+
+    The output path is round-stamped, so it is reused across attempts within a
+    run and across runs at the same round, and codex can exit zero without
+    writing ``-o`` at all — the wrapper's closing non-empty check then reports
+    on whatever happens to be at that path. A failing attempt that left a
+    partial file behind is the dangerous case: unless the attempt that follows
+    it clears the path first, the retry's success is credited with its
+    predecessor's truncated review, and the run exits zero pointing at it.
+
+    Each row drives one of the three places a retry re-enters the CLI. The
+    scripted shim writes a partial file on the attempt that fails and nothing
+    at all on the attempt that succeeds, which is the only shape that tells
+    "cleared before the retry" apart from "the retry rewrote it anyway".
+    """
+
+    _EARLIER_ROUND_PAYLOAD: str = "verdict written at this path by an earlier run"
+    _PARTIAL_PAYLOAD: str = "truncated verdict from the attempt that failed"
+
+    @pytest.mark.parametrize(
+        ("extra_env", "first_stderr"),
+        [
+            ({"MODEL": "gpt-5.4", "EFFORT": "high"}, "Error: 429 Too Many Requests"),
+            ({"EFFORT": "xhigh", "EFFORT_FALLBACK_ON_REJECT": "1"}, "Error: unknown variant xhigh for model_reasoning_effort"),
+            ({}, "Error: connection timeout"),
+        ],
+        ids=["high_tier_fallback", "xhigh_fallback", "transient_retry"],
+    )
+    def test_a_retry_that_writes_no_output_reports_empty_not_the_failed_attempts_file(
+        self,
+        tmp_path: Path,
+        extra_env: dict[str, str],
+        first_stderr: str,
+    ) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim_with_sequence(
+            tmp_path,
+            exit_codes=[1, 0],
+            stderr_texts=[first_stderr, ""],
+            log_path=log,
+            output_payloads=[self._PARTIAL_PAYLOAD, ""],
+        )
+        env = _default_env(bin_dir, tmp_path)
+        env.update(extra_env)
+        # Host routing, ROUND=1 — the path _default_env's context selects.
+        output_file = _workspace_root(tmp_path) / "tmp" / "codex-review-output-1.md"
+        output_file.write_text(self._EARLIER_ROUND_PAYLOAD + "\n")
+        # The transient branch sleeps 5s before its retry.
+        result = _run_review(tmp_path, env_overrides=env, timeout=40)
+        assert result.returncode == 0, result.stderr
+        records = _read_shim_log(log)
+        assert len(records) == 2, (
+            f"expected an initial call plus one retry, got {len(records)}; without both this is not the retry-success path"
+        )
+        surviving = output_file.read_text() if output_file.exists() else ""
+        assert self._PARTIAL_PAYLOAD not in surviving, (
+            f"the successful attempt wrote no output, so the failed attempt's partial file must have been cleared before it ran; surviving output={surviving!r}"
+        )
+        assert self._EARLIER_ROUND_PAYLOAD not in surviving, (
+            f"an earlier run's review at the same round-stamped path must not be returned as this run's; surviving output={surviving!r}"
+        )
+        assert "Codex produced empty output" in result.stderr, (
+            f"with nothing written by the successful attempt the run must report empty output; a warning-free exit means the non-empty check read someone else's file. stderr={result.stderr!r}"
+        )
+
+    def test_a_retry_that_writes_output_keeps_its_own(self, tmp_path: Path) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim_with_sequence(
+            tmp_path,
+            exit_codes=[1, 0],
+            stderr_texts=["Error: connection timeout", ""],
+            log_path=log,
+            output_payloads=[self._PARTIAL_PAYLOAD, "the verdict this run actually produced"],
+        )
+        env = _default_env(bin_dir, tmp_path)
+        output_file = _workspace_root(tmp_path) / "tmp" / "codex-review-output-1.md"
+        output_file.write_text(self._EARLIER_ROUND_PAYLOAD + "\n")
+        result = _run_review(tmp_path, env_overrides=env, timeout=40)
+        assert result.returncode == 0, result.stderr
+        assert len(_read_shim_log(log)) == 2
+        assert output_file.read_text().strip() == "the verdict this run actually produced", (
+            "clearing before each attempt must not cost the successful attempt its own output"
+        )
+        assert "Codex produced empty output" not in result.stderr, (
+            f"a run that produced output must not warn about empty output; stderr={result.stderr!r}"
+        )
+
+
 class TestTokenAndSecretGuards:
     """Token-missing signal in non-host context without OPENAI_API_KEY."""
 
@@ -761,6 +873,83 @@ class TestOutputRouting:
         assert out_arg == "agent-review/brownfield-ai-codex-review-output-test-session.md"
 
 
+class TestRoutingValuesMustBeSlugsBeforeTheyBecomePaths:
+    """``WORKSPACE`` and ``REVIEW_SESSION_ID`` are rejected unless separator-free.
+
+    Both are caller-supplied and both are interpolated into the container-mode
+    artifact paths the run creates, writes and deletes — including the ``rm -f``
+    that clears the output artifact before each attempt. The shared
+    ``cli-args-to-env.sh`` shim admits ``/`` and ``.`` in values (``DIFF_FILE``
+    needs them), so a traversal-shaped value arrives at the wrapper intact and
+    the slug check here is the only thing standing between it and a delete
+    aimed outside ``agent-review/``.
+
+    The parametrized values are exactly the shapes that shim admits. The
+    positive case is what stops the check from being "fixed" by narrowing it
+    until the real container caller no longer routes.
+    """
+
+    _TRAVERSAL_VALUES: tuple[str, ...] = ("../evil", "a/b", "./x", "tmp/victim")
+
+    def _run(
+        self,
+        tmp_path: Path,
+        *,
+        workspace: str | None = None,
+        review_session_id: str | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
+        """Run the wrapper in container-routing mode, as ``TestOutputRouting`` does."""
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, log_path=log)
+        env = _default_env(bin_dir, tmp_path)
+        env.pop("CODEX_EXECUTION_CONTEXT")
+        if workspace is not None:
+            env["WORKSPACE"] = workspace
+        if review_session_id is not None:
+            env["REVIEW_SESSION_ID"] = review_session_id
+        result = _run_review(tmp_path, env_overrides=env)
+        return result, _read_shim_log(log)
+
+    def _assert_rejected(
+        self,
+        tmp_path: Path,
+        result: subprocess.CompletedProcess[str],
+        records: list[dict],
+        *,
+        variable: str,
+        value: str,
+    ) -> None:
+        """Assert the run refused ``variable=value`` before spending a CLI call."""
+        assert result.returncode != 0, f"{variable}={value!r} must abort; got exit 0 with stderr={result.stderr!r}"
+        assert records == [], (
+            f"{variable}={value!r} must be refused before the CLI is invoked — once codex runs, the interpolated path has already been created and cleared. records={records!r}"
+        )
+        exit_json = _read_exit_json(tmp_path)
+        assert exit_json.get("signal") == "CODEX_ERROR", f"{variable}={value!r} must report a readable signal; got {exit_json!r}"
+        assert exit_json.get("error_class") == "arg_validation", (
+            f"{variable}={value!r} must be classified as arg_validation so the caller can tell a rejected input from a failed review; got {exit_json!r}"
+        )
+
+    @pytest.mark.parametrize("value", _TRAVERSAL_VALUES)
+    def test_traversal_shaped_workspace_is_rejected(self, tmp_path: Path, value: str) -> None:
+        result, records = self._run(tmp_path, workspace=value)
+        self._assert_rejected(tmp_path, result, records, variable="WORKSPACE", value=value)
+
+    @pytest.mark.parametrize("value", _TRAVERSAL_VALUES)
+    def test_traversal_shaped_review_session_id_is_rejected(self, tmp_path: Path, value: str) -> None:
+        result, records = self._run(tmp_path, review_session_id=value)
+        self._assert_rejected(tmp_path, result, records, variable="REVIEW_SESSION_ID", value=value)
+
+    def test_slug_workspace_and_session_id_still_route_to_agent_review(self, tmp_path: Path) -> None:
+        result, records = self._run(tmp_path, workspace="brownfield-ai", review_session_id="a1b2c3d4")
+        assert result.returncode == 0, result.stderr
+        assert records, "the legitimate container caller must still reach the CLI"
+        argv = records[0]["argv"]
+        assert argv[argv.index("-o") + 1] == "agent-review/brownfield-ai-codex-review-output-a1b2c3d4.md", (
+            f"the hyphenated workspace name and the hex session id the container caller supplies must survive validation; argv={argv!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Req-017: xhigh-rejection fail-closed + opt-in fallback
 # ---------------------------------------------------------------------------
@@ -778,7 +967,7 @@ class TestXhighRejectionHandling:
         stderr_text: str,
         extra_env: dict[str, str] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
-        """Install a simple fail-shim and run the wrapper under the new contract."""
+        """Install a simple fail-shim and run the wrapper."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(
             tmp_path,
@@ -843,7 +1032,7 @@ class TestXhighRejectionHandling:
         """Non-xhigh rejection with opt-in must not retry via the xhigh path.
 
         The opt-in narrowly targets the xhigh-reject class. Generic transient
-        errors follow the existing transient-retry path (one retry).
+        errors follow the transient-retry path (one retry).
         """
         _, records = self._run_with_xhigh_stderr(
             tmp_path,
@@ -865,16 +1054,28 @@ def _install_shim_with_sequence(
     exit_codes: list[int],
     stderr_texts: list[str],
     log_path: Path | None = None,
+    output_payloads: list[str] | None = None,
 ) -> Path:
     """Install a fake ``codex`` shim whose exit code + stderr varies per call.
 
     Writes each invocation's exit code and stderr to a sequence state file so
     the shim can mimic a server returning 429 first, then success on retry.
+
+    ``output_payloads`` optionally scripts what each call writes to its ``-o``
+    path; a blank entry (or a call past the end of the list) writes nothing,
+    which is what every other caller here gets.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     helper_path = bin_dir / "_shim_helper.py"
     helper_path.write_text(_SHIM_HELPER)
+    output_line = ""
+    if output_payloads is not None:
+        output_helper_path = bin_dir / "_shim_output_helper.py"
+        output_helper_path.write_text(_SHIM_OUTPUT_HELPER)
+        payloads_file = bin_dir / "output_payloads.txt"
+        payloads_file.write_text("\n".join(output_payloads) + "\n")
+        output_line = f'python3 {output_helper_path!s} {payloads_file!s} "$_n" "$@"\n'
     state_file = bin_dir / "call_counter.txt"
     state_file.write_text("0")
     codes_file = bin_dir / "exit_codes.txt"
@@ -893,6 +1094,7 @@ def _install_shim_with_sequence(
         f"  _exit=$(tail -n1 {codes_file!s})\n"
         f"  _stderr=$(tail -n1 {stderr_file!s})\n"
         "fi\n"
+        f"{output_line}"
         f"echo $(( _n + 1 )) > {state_file!s}\n"
         'if [ -n "$_stderr" ]; then printf \'%s\\n\' "$_stderr" >&2; fi\n'
         'exit "$_exit"\n'
@@ -917,7 +1119,7 @@ class TestHighTier429_503Fallback:
         extra_env: dict[str, str] | None = None,
         timeout: int = 30,
     ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
-        """Install a sequence-shim and invoke the wrapper under the new contract."""
+        """Install a sequence-shim and invoke the wrapper."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim_with_sequence(
             tmp_path,
@@ -966,10 +1168,10 @@ class TestHighTier429_503Fallback:
     def test_gpt54_connection_timeout_retries_with_medium_tier(self, tmp_path: Path) -> None:
         """MODEL=gpt-5.4 + connection timeout -> HIGH-tier fallback, not generic transient retry.
 
-        TODO-0104: connection-layer failures against a non-default HIGH-tier
-        model must route through the HIGH->MEDIUM fallback. Retrying the same
-        unreachable model burns the single transient-retry slot without
-        changing the outcome.
+        Connection-layer failures against a non-default HIGH-tier model route
+        through the HIGH->MEDIUM fallback: retrying the same unreachable model
+        would burn the single transient-retry slot without changing the
+        outcome.
         """
         result, records = self._run_sequence(
             tmp_path,
@@ -988,8 +1190,8 @@ class TestHighTier429_503Fallback:
     def test_gpt54_connection_refused_retries_with_medium_tier(self, tmp_path: Path) -> None:
         """MODEL=gpt-5.4 + connection refused -> HIGH-tier fallback (network class).
 
-        TODO-0104 companion to the timeout case: asserts the ``network``
-        branch of the broadened regex + _status_hit taxonomy.
+        Companion to the timeout case: asserts the ``network`` branch of the
+        _status_hit taxonomy.
         """
         result, records = self._run_sequence(
             tmp_path,
@@ -1004,9 +1206,8 @@ class TestHighTier429_503Fallback:
     def test_gpt54_504_retries_with_medium_tier(self, tmp_path: Path) -> None:
         """MODEL=gpt-5.4 + 504 Gateway Timeout -> HIGH-tier fallback (5xx class).
 
-        TODO-0104: 502/504 join 429/503 in the retryable-at-another-model
-        family. Asserts the ``5xx`` branch of the broadened _status_hit
-        taxonomy.
+        502/504 belong to the retryable-at-another-model family alongside
+        429/503. Asserts the ``5xx`` branch of the _status_hit taxonomy.
         """
         result, records = self._run_sequence(
             tmp_path,
@@ -1021,13 +1222,11 @@ class TestHighTier429_503Fallback:
     @pytest.mark.parametrize(
         ("stderr_text", "expected_bucket"),
         [
-            # TODO-0124: previously-untested tokens in the existing Gate-1 regex.
             ("Error: deadline exceeded", "timeout"),
             ("Error: i/o timeout", "timeout"),
             ("Error: 502 Bad Gateway", "5xx"),
             ("Error: unexpected end of stream", "network"),
             ("Error: socket hang up", "network"),
-            # TODO-0123: new tokens added to the Gate-1 regex.
             ("Error: connection reset by peer", "network"),
             ("Error: broken pipe while writing", "network"),
             ("Error: tls handshake failure", "network"),
@@ -1038,9 +1237,9 @@ class TestHighTier429_503Fallback:
             # `timeout`. 5xx precedence over timeout is load-bearing — if the
             # cascade order flips, this row flips bucket and fails here.
             ("Error: 504 Gateway Timeout", "5xx"),
-            # Older alternations previously covered only by status-code tests;
-            # lock the text-only forms so a future regex refactor that drops
-            # one of these alternations is caught.
+            # Text-only forms of the status alternations: a regex refactor
+            # that drops one of them is caught here rather than only by the
+            # status-code rows above.
             ("Error: 503 Service Unavailable", "503"),
             ("Error: rate limit exceeded", "429"),
             ("Error: too many requests", "429"),
@@ -1075,10 +1274,9 @@ class TestHighTier429_503Fallback:
     ) -> None:
         """All retryable-at-another-model tokens route through the HIGH->MEDIUM fallback.
 
-        Locks the _status_hit taxonomy per token so a future regex tweak
-        that accidentally drops a token is caught at test time. Covers
-        TODO-0123 (new gateway/TLS/DNS/Envoy tokens) and TODO-0124
-        (previously-untested tokens in the existing regex).
+        Locks the _status_hit taxonomy per token — gateway, TLS, DNS and
+        Envoy shapes included — so a regex tweak that drops a token is
+        caught at test time.
         """
         result, records = self._run_sequence(
             tmp_path,
@@ -1094,7 +1292,7 @@ class TestHighTier429_503Fallback:
         assert second_argv[second_argv.index("-c") + 1] == "model_reasoning_effort=high"
 
     def test_default_model_429_no_fallback(self, tmp_path: Path) -> None:
-        """MODEL unset (default gpt-5.3-codex) + 429 -> no fallback.
+        """MODEL unset (no -m passed) + 429 -> no HIGH-tier fallback.
 
         Generic transient retry path still fires (one retry), so 2 calls;
         but the stderr NOTICE for HIGH->MEDIUM fallback must NOT appear.

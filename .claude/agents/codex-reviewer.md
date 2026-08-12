@@ -148,9 +148,9 @@ classification, retry logic, and exit signal JSON.
 The agent does NOT invoke `codex` directly — all CLI construction is
 encapsulated in the wrapper script.
 
-**Optional per-round model override**: The Orchestrator may pass a
-`MODEL` arg (e.g., `MODEL=gpt-5.4`) to override the profile's default
-model for the current round:
+**Optional per-round model selection**: The Orchestrator may pass a
+`MODEL` CLI_ARG (e.g., `MODEL=gpt-5.4`) to select the model for the
+current round:
 
 ```bash
 task agent:review:codex:local -- ROUND=$ROUND EFFORT=high MODEL=gpt-5.4 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
@@ -172,9 +172,13 @@ Effort Value Comes From".
 | Large diffs (>1000 lines) | `gpt-5.4` | 1M-context capacity shared with gpt-5.5 — no upgrade benefit at this scale. |
 | Rework plan reviews (MAX tier) | `gpt-5.5` (local OAuth) / `gpt-5.4` (container API-key) | Frontier-tier ceiling. gpt-5.5 leads on Terminal-Bench 2.0 (82.7%) and Expert-SWE long-horizon coding; 2× the per-token cost of gpt-5.4 ($5/$30 vs $2.50/$15 per 1M tokens) is justified only at low-volume frontier reviews. **Auth constraint**: gpt-5.5 is currently OAuth-only in Codex CLI. **Operator selection, not runtime auto-downgrade**: on an auth error the `ERROR_CLASS="auth"` branch in `scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with `error_class=auth` and stops — no retry, no downgrade — but it **exits 0**, so the caller must read `tmp/codex-exit.json` rather than the process exit status. Container-mode callers MUST pass `MODEL=gpt-5.4` explicitly until OpenAI ships API-key support for gpt-5.5. |
 
-The Orchestrator overrides the default via `MODEL=gpt-5.5` (or
-`gpt-5.4`) env var. The wrapper passes `MODEL` as `-m` to
-`codex exec`, which overrides the profile's `model` key.
+The Orchestrator selects the model by passing `MODEL` as a `KEY=value`
+CLI_ARG (e.g., `MODEL=gpt-5.5` or `MODEL=gpt-5.4`), never as an
+exported shell variable, per the **CLI Invocation** section above. The
+wrapper forwards the value as `-m` to `codex exec`. When `MODEL` is
+unset the wrapper passes no `-m` at all and the run takes the CLI's own
+default model — no config layer supplies one (see the TODO-0228 note
+above).
 
 **Cost reference (2026-04-24)**: gpt-5.4 at $2.50/$15 per 1M
 input/output tokens; gpt-5.5 at $5.00/$30; gpt-5.3-codex
@@ -186,7 +190,7 @@ gpt-5.5 to MAX-tier rework keeps the cost delta bounded.
 
 ## Effort Tier Mapping
 
-The `EFFORT` env var (threaded as a Taskfile CLI_ARG per Req-006) is
+The `EFFORT` value (threaded as a Taskfile CLI_ARG per Req-006) is
 composed by the wrapper into `-c "model_reasoning_effort=<value>"`
 and forwarded to `codex exec`. The standard agent is pinned to
 `effort: medium` as the baseline; variants (`codex-reviewer-high`,
@@ -201,7 +205,7 @@ internal reasoning level. This is why `EFFORT=medium` maps to
 | `EFFORT` | Codex `model_reasoning_effort` | Model | Claude Equivalent |
 |----------|-------------------------------|-------|-------------------|
 | `medium` | `high` | caller-supplied via `MODEL`; the CLI's own default when unset | Sonnet `high` |
-| `high`   | `high` | `gpt-5.4` (MODEL override) | Opus 4.7 `high` |
+| `high`   | `high` | `gpt-5.4` (caller-supplied via `MODEL`) | Opus 4.7 `high` |
 | `xhigh`  | `xhigh` | `gpt-5.4` | Opus 4.7 `xhigh` |
 | `max`    | `xhigh` (ceiling collision) | `gpt-5.5` local / `gpt-5.4` container | Opus 4.7 `max` |
 
@@ -216,7 +220,7 @@ Use the corresponding bridge variants only.
 
 ### Transient-failure HIGH-tier Fallback
 
-When the orchestrator has passed a non-default `MODEL` (e.g.,
+When the orchestrator has passed an explicit `MODEL` (e.g.,
 `gpt-5.5` or `gpt-5.4`) and the Codex CLI stderr indicates a transient
 failure — `429`, `502`, `503`, `504`, rate-limit, timeout, or
 network-class error (full token list in `_NETWORK_TOKENS` and the
@@ -236,7 +240,7 @@ non-retriable: the `ERROR_CLASS="auth"` branch in
 **exits 0**. The process exit status is therefore not a failure
 signal on this path — read `tmp/codex-exit.json` to detect it.
 
-If `MODEL` is unset the wrapper passed no `-m` at all, so there is no
+If `MODEL` is unset the wrapper passes no `-m` at all, so there is no
 caller-selected model to step down from and the fallback is a no-op —
 the transient retry path handles same-model retries instead.
 

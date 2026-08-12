@@ -1,4 +1,4 @@
-"""Tests for the agent-cli entrypoint.sh command allowlist and prompt-file validation.
+"""Tests for the agent-cli entrypoint.sh allowlist and the scripts it dispatches to.
 
 Invokes the entrypoint shell script directly via subprocess on the host.
 Allowed commands dispatch to /usr/local/bin/<cmd>.sh which does not exist
@@ -19,11 +19,9 @@ import pytest
 WORKSPACE = Path(__file__).resolve().parents[2]
 ENTRYPOINT = str(WORKSPACE / "docker" / "agent-cli" / "entrypoint.sh")
 
-# TODO-0092 Phase A moved the adversarial-rigor / experiment-delegation
-# block OUT of bridge agent bodies and INTO the canonical reviewer
-# invariants file. Template content is lint-enforced against this
-# source of truth (see scripts/lint_reviewer_templates.py +
-# tests/scripts/test_reviewer_templates.py).
+# Canonical home of the adversarial-rigor / experiment-delegation block.
+# Template content is lint-enforced against this source of truth (see
+# scripts/lint_reviewer_templates.py + tests/scripts/test_reviewer_templates.py).
 REVIEWER_INVARIANTS = WORKSPACE / ".claude" / "prompts" / "reviewer" / "_invariants.md"
 
 
@@ -76,22 +74,15 @@ class TestCommandAllowlist:
 
 
 # ---------------------------------------------------------------------------
-# 2. Prompt-file handling removed (TODO-0092 Phase A Commit 6)
+# 2. Subject handling is not the entrypoint's concern
 # ---------------------------------------------------------------------------
-# The ``--prompt-file`` parse+sandbox+export block was removed from the
-# entrypoint because the task-driven wrapper contract now carries the
-# subject via ``DIFF_FILE`` (validated by the inner wrapper against
-# tmp/ and agent-review/ containment). The entrypoint is a thin
-# command-allowlist dispatcher; argv pass-through covers remaining
-# per-wrapper flags like ``--round`` and ``--model``.
-#
-# The prior ``TestPromptFileValidation`` class was deleted with this
-# commit — each of its tests asserted a rejection path that is now the
-# downstream wrapper's responsibility (containment validation happens
-# in ``_review-common.sh::_review_validate_diff_file`` with
-# regression coverage in ``tests/scripts/test_wrapper_sanitation.py``).
-# Preserving the old tests would have required the entrypoint to keep
-# the dead surface alive, defeating the cleanup.
+# The entrypoint is a thin command-allowlist dispatcher: it carries no
+# ``--prompt-file`` parse/sandbox/export step, and per-wrapper flags such as
+# ``--round`` and ``--model`` reach the wrapper by argv pass-through. The
+# review subject travels as ``DIFF_FILE``, whose tmp/ and agent-review/
+# containment is enforced downstream by
+# ``_review-common.sh::_review_validate_diff_file`` and covered in
+# ``tests/scripts/test_wrapper_sanitation.py`` — hence no tests here.
 
 
 # ---------------------------------------------------------------------------
@@ -102,15 +93,14 @@ class TestCommandAllowlist:
 class TestPromptTemplateContent:
     """Verify the canonical reviewer invariants enforce experiment delegation.
 
-    Under TODO-0092 Phase A the experiment-delegation / adversarial-rigor
-    block is defined exactly once in ``.claude/prompts/reviewer/_invariants.md``
-    and injected into each reviewer template (``diff``, ``plan``, ``spec``,
-    ``epic``, ``spec-req-verification``) by the template-lint tooling.
-    Per-family reviewer bridge agents (``copilot-reviewer.md``,
-    ``gemini-reviewer.md``, ``codex-reviewer.md``) delegate the review
-    criteria to these templates and no longer carry the clause inline —
-    asserting on the bridge bodies would now be redundant with
-    ``tests/scripts/test_reviewer_templates.py``.
+    The experiment-delegation / adversarial-rigor block is defined exactly
+    once in ``.claude/prompts/reviewer/_invariants.md`` and injected into each
+    reviewer template (``diff``, ``plan``, ``spec``, ``epic``,
+    ``spec-req-verification``) by the template-lint tooling. Per-family
+    reviewer bridge agents (``copilot-reviewer.md``, ``gemini-reviewer.md``,
+    ``codex-reviewer.md``) delegate the review criteria to those templates and
+    carry no inline copy, so the bridge bodies are not asserted on here —
+    ``tests/scripts/test_reviewer_templates.py`` covers the injection.
     """
 
     def test_invariants_enforces_experiment_delegation(self) -> None:
@@ -151,15 +141,13 @@ class TestNoBypassVariable:
 class TestCodexConfigToml:
     """Verify docker/agent-cli/codex-config.toml is valid TOML.
 
-    TODO-0092 Phase A Commit 6 deleted the
-    ``[profiles.reviewer.instructions]`` section (role/focus with 10
-    numbered criteria) from this file. Criteria now live in
-    ``.claude/prompts/reviewer/_invariants.md`` (the canonical source
-    piped to the reviewer via the wrapper's combined-prompt stdin
-    channel). The lint rule in
-    ``scripts/lint_reviewer_templates.py::_check_codex_toml`` walks
-    this file alongside ``.codex/config.toml`` to prevent the
-    criteria block from being re-introduced.
+    The file carries no ``[profiles.reviewer.instructions]`` section: the 10
+    numbered criteria live solely in
+    ``.claude/prompts/reviewer/_invariants.md``, the canonical source piped to
+    the reviewer over the wrapper's combined-prompt stdin channel. The lint
+    rule in ``scripts/lint_reviewer_templates.py::_check_codex_toml`` walks
+    this file alongside ``.codex/config.toml`` to keep a criteria block from
+    being introduced here.
     """
 
     TOML_FILE = WORKSPACE / "docker" / "agent-cli" / "codex-config.toml"
@@ -181,10 +169,10 @@ class TestCodexConfigToml:
     def test_reviewer_profile_has_no_instructions_section(self) -> None:
         """The ``[profiles.reviewer.instructions]`` section MUST be absent.
 
-        Its re-introduction would duplicate the 10-point criteria now
-        hosted in ``.claude/prompts/reviewer/_invariants.md`` and
-        would be caught by the reviewer-template lint anyway — but an
-        explicit assertion here catches the drift closer to its source.
+        Adding it would duplicate the 10-point criteria hosted in
+        ``.claude/prompts/reviewer/_invariants.md``. The reviewer-template
+        lint would catch that too, but an explicit assertion here catches
+        the drift closer to its source.
         """
         data = tomllib.loads(self.TOML_FILE.read_bytes().decode())
         reviewer = data["profiles"]["reviewer"]
@@ -292,12 +280,10 @@ class TestSetupCodexReviewer:
 class TestCodexReviewScript:
     """Test scripts/agent-cli/codex-review.sh error classification and artifact routing.
 
-    Under the TODO-0092 Phase A contract the wrapper requires
-    ``REVIEW_TYPE=<enum>`` + ``DIFF_FILE=<path under tmp/ or agent-review/>``
-    before it will reach the token guard or codex invocation. The tests
-    that previously got as far as the token / error-classification paths
-    supply both via a shared ``tmp/qa-diff.txt`` fixture created in
-    ``setup_method``.
+    The wrapper requires ``REVIEW_TYPE=<enum>`` + ``DIFF_FILE=<path under
+    tmp/ or agent-review/>`` before it will reach the token guard or the codex
+    invocation, so every test here supplies both via the shared
+    ``tmp/qa-diff.txt`` subject that ``setup_method`` creates.
     """
 
     REVIEW_SCRIPT = str(WORKSPACE / "scripts" / "agent-cli" / "codex-review.sh")
@@ -333,6 +319,12 @@ class TestCodexReviewScript:
             "HOME": str(WORKSPACE / "tmp" / "codex-test-home"),
             "REVIEW_TYPE": "diff",
             "DIFF_FILE": str(self.QA_DIFF),
+            # The wrapper's auth branch deletes this path outright, and the
+            # wrapper's default resolves inside the real workspace tmp/ — the
+            # developer's own preflight cache. Naming a test-owned file keeps
+            # it out of harm's way; the overlay below still lets a
+            # cache-invalidation test point it somewhere it can observe.
+            "PREFLIGHT_CACHE_FILE": str(WORKSPACE / "tmp" / "codex-test-preflight-cache.json"),
         }
         if env_overrides:
             env.update(env_overrides)
