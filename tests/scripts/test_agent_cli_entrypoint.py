@@ -302,6 +302,10 @@ class TestCodexReviewScript:
 
     REVIEW_SCRIPT = str(WORKSPACE / "scripts" / "agent-cli" / "codex-review.sh")
     QA_DIFF = WORKSPACE / "tmp" / "qa-diff.txt"
+    # Host-mode runs `rm -f tmp/codex-review-output-${ROUND}.md` against the real
+    # checkout, so host-context tests must claim a round no live review occupies —
+    # round 1 is the recovery artifact for a stranded bridge dispatch (CLAUDE.md §18).
+    SACRIFICIAL_ROUND = "999"
 
     def setup_method(self) -> None:
         """Clean shared artifacts and (re)create the standard diff subject."""
@@ -355,6 +359,7 @@ class TestCodexReviewScript:
         # With host context but no codex binary, the script will fail at
         # the codex exec call — but it should NOT emit CODEX_UNAVAILABLE
         self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={"CODEX_EXECUTION_CONTEXT": "host"},
         )
         # It should proceed past the token guard (non-zero exit is expected
@@ -381,6 +386,7 @@ class TestCodexReviewScript:
         # Since codex binary doesn't exist, it will fail at invocation,
         # but we can verify the path setup by checking error output.
         self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={
                 "CODEX_EXECUTION_CONTEXT": "host",
                 "OPENAI_API_KEY": "test-key",
@@ -398,6 +404,7 @@ class TestCodexReviewScript:
         mock_codex.write_text('#!/usr/bin/env bash\necho "Error: 401 Unauthorized - invalid api key" >&2\nexit 1\n')
         mock_codex.chmod(0o755)
         result = self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={
                 "CODEX_EXECUTION_CONTEXT": "host",
                 "OPENAI_API_KEY": "test-key",
@@ -417,6 +424,7 @@ class TestCodexReviewScript:
         mock_codex.write_text('#!/usr/bin/env bash\necho "Error: connection timeout" >&2\nexit 1\n')
         mock_codex.chmod(0o755)
         result = self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={
                 "CODEX_EXECUTION_CONTEXT": "host",
                 "OPENAI_API_KEY": "test-key",

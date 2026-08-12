@@ -96,7 +96,9 @@ REVIEW_SESSION_ID=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
 Do NOT `export` it. Pass it as a `KEY=value` CLI_ARG on the task
 invocation, per the **CLI Invocation** section below; the shim injects
 the validated value into the wrapper's environment, where it is used
-for output file naming.
+for output file naming in container mode. The host path names artifacts
+by `ROUND` and ignores `REVIEW_SESSION_ID`; run-scoping of host artifacts
+is tracked separately.
 
 ## Caller Contract
 
@@ -136,6 +138,9 @@ task agent:review:codex -- ROUND=$ROUND EFFORT=medium REVIEW_SESSION_ID=$REVIEW_
 ```bash
 task agent:review:codex:local -- ROUND=$ROUND EFFORT=medium REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
+
+`REVIEW_SESSION_ID` is absent here because the host path names its
+artifacts by `ROUND`, not by session.
 
 The wrapper script handles CLI flags, output routing, error
 classification, retry logic, and exit signal JSON.
