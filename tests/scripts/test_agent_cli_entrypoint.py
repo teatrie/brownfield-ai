@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import glob
 import subprocess
+import sys
 import tomllib
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
@@ -276,32 +277,99 @@ class TestSetupCodexReviewer:
 # ---------------------------------------------------------------------------
 # 7. Codex review script (Req-C03)
 # ---------------------------------------------------------------------------
-# The wrapper runs against the real checkout, so these tests share three live
-# tmp/ artifacts with the workspace: it deletes codex-exit.json, truncates
-# codex-review-err.txt (a bridge diagnostic that can hold hundreds of KB), and
-# the standard subject overwrites qa-diff.txt — the file the diff-review skill
-# hands its reviewers as DIFF_FILE. Each is snapshotted and restored per test.
+# The wrapper runs against the real checkout, so a run here writes six paths in
+# the live tmp/: the codex-exit.json signal the bridge agent reads, the
+# codex-review-err.txt diagnostic (which can hold hundreds of KB), the
+# test-owned review subject, and the round-scoped output / combined-prompt /
+# sanitized-subject trio. Every one is snapshotted and restored per test.
 
-SHARED_TMP_ARTIFACTS = ("codex-exit.json", "codex-review-err.txt", "qa-diff.txt")
+SUBJECT_ARTIFACT = "agent-cli-test-subject.txt"
+
+
+class UnmanageableArtifactError(RuntimeError):
+    """A managed path exists in a form the snapshot/restore cycle cannot reproduce."""
+
+
+def _managed_artifacts(tmp_dir: Path, round_id: str) -> tuple[Path, ...]:
+    """Return the tmp/ paths a codex-review run at ``round_id`` creates or overwrites.
+
+    Names are those written by ``scripts/agent-cli/codex-review.sh`` and
+    ``scripts/agent-cli/_review-common.sh``. Ordered by restore priority: the
+    unsuffixed artifacts a live review shares with these tests come first.
+    """
+    return (
+        tmp_dir / "codex-exit.json",
+        tmp_dir / "codex-review-err.txt",
+        tmp_dir / SUBJECT_ARTIFACT,
+        tmp_dir / f"codex-review-output-{round_id}.md",
+        tmp_dir / f"codex-combined-prompt-{round_id}.txt",
+        tmp_dir / f"codex-subject-sanitized-{round_id}.txt",
+    )
 
 
 def _snapshot_artifacts(paths: Iterable[Path]) -> dict[Path, bytes | None]:
-    """Capture each path's bytes, recording ``None`` for a path that is absent."""
-    return {path: path.read_bytes() if path.is_file() else None for path in paths}
+    """Capture each path's bytes, recording ``None`` for a path that is absent.
+
+    Raises:
+        UnmanageableArtifactError: a path is a symlink, or exists as something
+            other than a regular file. Recording either as absent would have
+            the restore unlink a directory or a developer's symlink.
+    """
+    snapshot: dict[Path, bytes | None] = {}
+    for path in paths:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise UnmanageableArtifactError(f"not a regular file, refusing to manage: {path}")
+        snapshot[path] = path.read_bytes() if path.is_file() else None
+    return snapshot
 
 
 def _restore_artifacts(snapshot: Mapping[Path, bytes | None]) -> None:
-    """Return each path to its snapshotted state.
+    """Rewrite each path's snapshotted content, removing paths recorded absent.
+
+    Contents only — mode and timestamps are not reproduced. Every path is
+    attempted even after an earlier one fails, so one unwritable artifact
+    cannot cost the rest.
 
     A path recorded as ``None`` was absent and is removed again — recreating it
     empty would itself corrupt a consumer that reads it as a review subject.
+
+    Raises:
+        ExceptionGroup: one or more paths could not be restored.
     """
+    failures: list[OSError] = []
     for path, content in snapshot.items():
-        if content is None:
-            path.unlink(missing_ok=True)
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
+        try:
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        except OSError as exc:
+            failures.append(exc)
+    if failures:
+        raise ExceptionGroup("failed to restore tmp/ artifacts", failures)
+
+
+def _prepare_subject(tmp_dir: Path) -> None:
+    """Clear the stale exit signal and write the subject the wrapper reviews."""
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_dir / "codex-exit.json").unlink(missing_ok=True)
+    (tmp_dir / SUBJECT_ARTIFACT).write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
+
+
+def _isolate_artifacts(tmp_dir: Path, round_id: str) -> Iterator[None]:
+    """Set the subject up under ``tmp_dir``, then restore every managed artifact.
+
+    The snapshot is the only step outside the protected region, and it mutates
+    nothing. Every write, the setup's included, runs under the ``finally``, so
+    a setup that fails mid-write is still restored.
+    """
+    snapshot = _snapshot_artifacts(_managed_artifacts(tmp_dir, round_id))
+    try:
+        _prepare_subject(tmp_dir)
+        yield
+    finally:
+        _restore_artifacts(snapshot)
 
 
 class TestCodexReviewScript:
@@ -309,12 +377,14 @@ class TestCodexReviewScript:
 
     The wrapper requires ``REVIEW_TYPE=<enum>`` + ``DIFF_FILE=<path under
     tmp/ or agent-review/>`` before it will reach the token guard or the codex
-    invocation, so every test here supplies both via the shared
-    ``tmp/qa-diff.txt`` subject that ``_isolate_shared_artifacts`` creates.
+    invocation, so every test here supplies both via the test-owned subject
+    that ``_isolate_shared_artifacts`` creates. ``_review_validate_diff_file``
+    constrains DIFF_FILE by containment, not by basename, so the subject needs
+    no name a live review also uses.
     """
 
     REVIEW_SCRIPT = str(WORKSPACE / "scripts" / "agent-cli" / "codex-review.sh")
-    QA_DIFF = WORKSPACE / "tmp" / "qa-diff.txt"
+    SUBJECT_FILE = WORKSPACE / "tmp" / SUBJECT_ARTIFACT
     # Host-mode runs `rm -f tmp/codex-review-output-${ROUND}.md` against the real
     # checkout, so host-context tests must claim a round no live review occupies —
     # round 1 is the recovery artifact for a stranded bridge dispatch (CLAUDE.md §18).
@@ -322,23 +392,14 @@ class TestCodexReviewScript:
 
     @pytest.fixture(autouse=True)
     def _isolate_shared_artifacts(self) -> Iterator[None]:
-        """Snapshot the shared tmp/ artifacts, then set up and restore them.
+        """Snapshot the tmp/ artifacts these tests write, then restore them.
 
-        The snapshot is taken before this fixture's own setup writes, and the
-        setup lives here rather than in a ``setup_method`` so no fixture
-        ordering can place a clobbering write ahead of the capture.
+        Autouse covers every test in this class. An autouse fixture declared in
+        an outer conftest is still ordered ahead of this one, so the capture
+        leads this class's own writes and the wrapper runs it guards — not
+        every write the session can make.
         """
-        tmp_dir = WORKSPACE / "tmp"
-        snapshot = _snapshot_artifacts(tmp_dir / name for name in SHARED_TMP_ARTIFACTS)
-        exit_json = tmp_dir / "codex-exit.json"
-        if exit_json.exists():
-            exit_json.unlink()
-        self.QA_DIFF.parent.mkdir(exist_ok=True)
-        self.QA_DIFF.write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
-        try:
-            yield
-        finally:
-            _restore_artifacts(snapshot)
+        yield from _isolate_artifacts(WORKSPACE / "tmp", self.SACRIFICIAL_ROUND)
 
     def _run_review(
         self,
@@ -349,15 +410,15 @@ class TestCodexReviewScript:
     ) -> subprocess.CompletedProcess[str]:
         """Run the review script with controlled environment.
 
-        Defaults ``REVIEW_TYPE=diff`` + ``DIFF_FILE=tmp/qa-diff.txt`` so the
-        wrapper clears its arg_validation gate and reaches the behavior
-        under test. Callers can override either via ``env_overrides``.
+        Defaults ``REVIEW_TYPE=diff`` + ``DIFF_FILE`` pointed at the fixture's
+        subject so the wrapper clears its arg_validation gate and reaches the
+        behavior under test. Callers can override either via ``env_overrides``.
         """
         env = {
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "HOME": str(WORKSPACE / "tmp" / "codex-test-home"),
             "REVIEW_TYPE": "diff",
-            "DIFF_FILE": str(self.QA_DIFF),
+            "DIFF_FILE": str(self.SUBJECT_FILE),
             # The wrapper's auth branch deletes this path outright, and the
             # wrapper's default resolves inside the real workspace tmp/ — the
             # developer's own preflight cache. Naming a test-owned file keeps
@@ -468,3 +529,120 @@ class TestCodexReviewScript:
         assert "CODEX_ERROR" in exit_json
         assert '"error_class":"transient"' in exit_json or '"error_class": "transient"' in exit_json
         assert '"retried":true' in exit_json or '"retried": true' in exit_json
+
+
+# ---------------------------------------------------------------------------
+# 8. Shared-artifact isolation
+# ---------------------------------------------------------------------------
+# The isolation above is the only thing keeping the wrapper runs in section 7
+# off the live tmp/ artifacts, and none of those tests observes it — so it can
+# be removed with the suite still green. These tests are its lock. Every one
+# works under tmp_path; none reads or writes the real checkout's tmp/.
+
+
+class TestSharedArtifactIsolation:
+    """Cover the snapshot/restore mechanism ``TestCodexReviewScript`` depends on."""
+
+    def test_managed_set_matches_the_wrapper_artifacts(self, tmp_path: Path) -> None:
+        assert _managed_artifacts(tmp_path, "7") == (
+            tmp_path / "codex-exit.json",
+            tmp_path / "codex-review-err.txt",
+            tmp_path / "agent-cli-test-subject.txt",
+            tmp_path / "codex-review-output-7.md",
+            tmp_path / "codex-combined-prompt-7.txt",
+            tmp_path / "codex-subject-sanitized-7.txt",
+        )
+
+    def test_snapshot_records_none_for_an_absent_path(self, tmp_path: Path) -> None:
+        present = tmp_path / "codex-exit.json"
+        present.write_bytes(b"live signal")
+        absent = tmp_path / "codex-review-err.txt"
+        snapshot = _snapshot_artifacts([present, absent])
+        assert snapshot[present] == b"live signal"
+        assert snapshot[absent] is None
+
+    def test_restore_removes_a_path_the_run_created(self, tmp_path: Path) -> None:
+        absent = tmp_path / "codex-exit.json"
+        snapshot = _snapshot_artifacts([absent])
+        absent.write_bytes(b"written by the run")
+        _restore_artifacts(snapshot)
+        assert not absent.exists()
+
+    def test_restore_attempts_every_path_and_surfaces_the_failure(self, tmp_path: Path) -> None:
+        blocked = tmp_path / "codex-exit.json"
+        blocked.write_bytes(b"live signal")
+        trailing = tmp_path / "codex-review-err.txt"
+        trailing.write_bytes(b"live diagnostic")
+        snapshot = _snapshot_artifacts([blocked, trailing])
+        # A directory at the first path fails its write and leaves the second
+        # one still clobbered unless every entry is attempted.
+        blocked.unlink()
+        blocked.mkdir()
+        trailing.write_bytes(b"clobbered by the run")
+        with pytest.raises(ExceptionGroup) as excinfo:
+            _restore_artifacts(snapshot)
+        assert len(excinfo.value.exceptions) == 1
+        assert isinstance(excinfo.value.exceptions[0], OSError)
+        assert trailing.read_bytes() == b"live diagnostic"
+
+    def test_snapshot_refuses_a_directory(self, tmp_path: Path) -> None:
+        # Docker creates a directory at any bind-mount target that is missing.
+        occupied = tmp_path / "codex-exit.json"
+        occupied.mkdir()
+        with pytest.raises(UnmanageableArtifactError, match="codex-exit.json"):
+            _snapshot_artifacts([occupied])
+
+    def test_snapshot_refuses_a_dangling_symlink(self, tmp_path: Path) -> None:
+        link = tmp_path / "codex-review-err.txt"
+        link.symlink_to(tmp_path / "no-such-target.txt")
+        with pytest.raises(UnmanageableArtifactError, match="codex-review-err.txt"):
+            _snapshot_artifacts([link])
+
+    def test_setup_failure_still_restores(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        signal = tmp_path / "codex-exit.json"
+        signal.write_bytes(b"live signal")
+
+        def _failing_setup(tmp_dir: Path) -> None:
+            (tmp_dir / "codex-exit.json").unlink()
+            raise RuntimeError("setup failed after its first write")
+
+        monkeypatch.setattr(sys.modules[__name__], "_prepare_subject", _failing_setup)
+        isolation = _isolate_artifacts(tmp_path, "7")
+        with pytest.raises(RuntimeError, match="setup failed after its first write"):
+            next(isolation)
+        assert signal.read_bytes() == b"live signal"
+
+    def test_class_fixture_restores_the_workspace_tmp_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "WORKSPACE", tmp_path)
+        tmp_dir = tmp_path / "tmp"
+        tmp_dir.mkdir()
+        signal = tmp_dir / "codex-exit.json"
+        signal.write_bytes(b"live signal")
+        subject = tmp_dir / SUBJECT_ARTIFACT
+        output = tmp_dir / f"codex-review-output-{TestCodexReviewScript.SACRIFICIAL_ROUND}.md"
+
+        # pytest wraps a fixture in an object that refuses direct calls;
+        # functools.update_wrapper leaves the generator at __wrapped__.
+        fixture_body = TestCodexReviewScript.__dict__["_isolate_shared_artifacts"].__wrapped__
+        isolation = fixture_body(TestCodexReviewScript())
+        next(isolation)
+        assert not signal.exists()
+        assert subject.is_file()
+
+        signal.write_bytes(b"written by the run")
+        output.write_bytes(b"written by the run")
+        with pytest.raises(StopIteration):
+            next(isolation)
+
+        assert signal.read_bytes() == b"live signal"
+        assert not output.exists()
+        assert not subject.exists()
+
+    def test_isolation_fixture_is_autouse_with_no_setup_method(self) -> None:
+        fixture = TestCodexReviewScript.__dict__["_isolate_shared_artifacts"]
+        marker = getattr(fixture, "_fixture_function_marker", None)
+        assert marker is not None, "pytest no longer exposes the fixture marker here — update this assertion"
+        assert marker.autouse
+        # A setup_method runs ahead of a class fixture, so any write it made
+        # would land before the capture.
+        assert "setup_method" not in vars(TestCodexReviewScript)
