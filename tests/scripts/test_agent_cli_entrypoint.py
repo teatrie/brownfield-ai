@@ -12,6 +12,7 @@ from __future__ import annotations
 import glob
 import subprocess
 import tomllib
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -275,6 +276,32 @@ class TestSetupCodexReviewer:
 # ---------------------------------------------------------------------------
 # 7. Codex review script (Req-C03)
 # ---------------------------------------------------------------------------
+# The wrapper runs against the real checkout, so these tests share three live
+# tmp/ artifacts with the workspace: it deletes codex-exit.json, truncates
+# codex-review-err.txt (a bridge diagnostic that can hold hundreds of KB), and
+# the standard subject overwrites qa-diff.txt — the file the diff-review skill
+# hands its reviewers as DIFF_FILE. Each is snapshotted and restored per test.
+
+SHARED_TMP_ARTIFACTS = ("codex-exit.json", "codex-review-err.txt", "qa-diff.txt")
+
+
+def _snapshot_artifacts(paths: Iterable[Path]) -> dict[Path, bytes | None]:
+    """Capture each path's bytes, recording ``None`` for a path that is absent."""
+    return {path: path.read_bytes() if path.is_file() else None for path in paths}
+
+
+def _restore_artifacts(snapshot: Mapping[Path, bytes | None]) -> None:
+    """Return each path to its snapshotted state.
+
+    A path recorded as ``None`` was absent and is removed again — recreating it
+    empty would itself corrupt a consumer that reads it as a review subject.
+    """
+    for path, content in snapshot.items():
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
 
 
 class TestCodexReviewScript:
@@ -283,7 +310,7 @@ class TestCodexReviewScript:
     The wrapper requires ``REVIEW_TYPE=<enum>`` + ``DIFF_FILE=<path under
     tmp/ or agent-review/>`` before it will reach the token guard or the codex
     invocation, so every test here supplies both via the shared
-    ``tmp/qa-diff.txt`` subject that ``setup_method`` creates.
+    ``tmp/qa-diff.txt`` subject that ``_isolate_shared_artifacts`` creates.
     """
 
     REVIEW_SCRIPT = str(WORKSPACE / "scripts" / "agent-cli" / "codex-review.sh")
@@ -293,13 +320,25 @@ class TestCodexReviewScript:
     # round 1 is the recovery artifact for a stranded bridge dispatch (CLAUDE.md §18).
     SACRIFICIAL_ROUND = "999"
 
-    def setup_method(self) -> None:
-        """Clean shared artifacts and (re)create the standard diff subject."""
-        exit_json = WORKSPACE / "tmp" / "codex-exit.json"
+    @pytest.fixture(autouse=True)
+    def _isolate_shared_artifacts(self) -> Iterator[None]:
+        """Snapshot the shared tmp/ artifacts, then set up and restore them.
+
+        The snapshot is taken before this fixture's own setup writes, and the
+        setup lives here rather than in a ``setup_method`` so no fixture
+        ordering can place a clobbering write ahead of the capture.
+        """
+        tmp_dir = WORKSPACE / "tmp"
+        snapshot = _snapshot_artifacts(tmp_dir / name for name in SHARED_TMP_ARTIFACTS)
+        exit_json = tmp_dir / "codex-exit.json"
         if exit_json.exists():
             exit_json.unlink()
         self.QA_DIFF.parent.mkdir(exist_ok=True)
         self.QA_DIFF.write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
+        try:
+            yield
+        finally:
+            _restore_artifacts(snapshot)
 
     def _run_review(
         self,
