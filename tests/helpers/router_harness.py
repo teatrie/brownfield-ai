@@ -70,9 +70,12 @@ HELPER_MODULES: tuple[str, ...] = (
     "tests/helpers/aws_env.py",
 )
 
-#: The two directory targets a changed helper module produces. tests/ci/ is in
-#: the pair because its router contracts import helpers.router_harness.
-HELPER_SUITES = ("tests/ci/", "tests/helpers/")
+#: The directory targets a changed helper module produces. tests/ci/ and
+#: tests/scripts/ are fanned in because their suites import
+#: helpers.router_harness and helpers.artifact_isolation respectively; each
+#: whole directory is named rather than the importing files so a further
+#: consumer cannot be silently missed.
+HELPER_SUITES: tuple[str, ...] = ("tests/ci/", "tests/helpers/", "tests/scripts/")
 
 #: The only test under tests/lint/, and the entire enforcement body of
 #: ``task lint:reviewer-envelope``. Both routers guard it with ``[ -f ]``, so a
@@ -247,11 +250,9 @@ def assert_reviewer_template_suite_pinned() -> None:
     prevent.
 
     ``tests/scripts/test_reviewer_templates.py`` inlines the same assertion
-    rather than importing it, for routing reasons: the helper fan-out in both
-    routers sends a changed module under ``tests/helpers/`` to
-    ``tests/helpers/`` and ``tests/ci/`` only, so an import from
-    ``tests/scripts/`` would be a dependency no router covers. Do not merge the
-    two copies.
+    rather than importing it, so that renaming that file carries its copy
+    along; this copy is reached whenever either router is edited. Do not merge
+    the two copies.
     """
     suite = REPO_ROOT / REVIEWER_TEMPLATE_SUITE
     assert suite.is_file(), (
@@ -468,8 +469,8 @@ class RouterContract:
         assert "No testable scripts found." not in result.stdout, diagnose(result)
 
     @pytest.mark.parametrize("module", HELPER_MODULES)
-    def test_helper_module_routes_to_helpers_and_ci(self, route: RouteFn, module: str) -> None:
-        """A changed helper module routes to its own suite and to tests/ci/."""
+    def test_helper_module_routes_to_helpers_ci_and_scripts(self, route: RouteFn, module: str) -> None:
+        """A changed helper module routes to its own suite and to both importing suites."""
         result = route(self.SCRIPT, [module])
         assert sorted(routed_targets(result)) == sorted(HELPER_SUITES), f"{module}\n{diagnose(result)}"
 
@@ -485,8 +486,8 @@ class RouterContract:
         result = route(self.SCRIPT, [module])
         assert derived not in routed_targets(result), diagnose(result)
 
-    def test_many_helper_modules_collapse_to_one_pair(self, route: RouteFn) -> None:
-        """Several changed helper modules deduplicate to the same two targets."""
+    def test_many_helper_modules_collapse_to_one_fan_out(self, route: RouteFn) -> None:
+        """Several changed helper modules deduplicate to the same three directory targets."""
         result = route(self.SCRIPT, list(HELPER_MODULES))
         assert sorted(routed_targets(result)) == sorted(HELPER_SUITES), diagnose(result)
 

@@ -133,11 +133,17 @@ if [ "$TARGET" == "scripts" ]; then
                 # skills suite also imports helpers.eval_utils and
                 # helpers.runners, but it is routed by the `skills` target and
                 # each of its cases spends a live agent call, so helper edits
-                # are deliberately not fanned into it.
+                # are deliberately not fanned into it. tests/scripts/ is
+                # fanned in for the same reason as tests/ci/: its bridge-wrapper
+                # suites import helpers.artifact_isolation, and a semantic change
+                # there that keeps the helper's own tests green can still break a
+                # consumer's isolation of live tmp/ artifacts. The directory is
+                # named rather than the importing files so a third consumer
+                # cannot be silently missed.
                 if [ -f "$file" ] && [[ "$(basename "$file")" == test_*.py ]]; then
                     TEST_TARGETS_ARRAY+=("$file")
                 else
-                    TEST_TARGETS_ARRAY+=("tests/helpers/" "tests/ci/")
+                    TEST_TARGETS_ARRAY+=("tests/helpers/" "tests/ci/" "tests/scripts/")
                 fi
             elif [[ "$file" == scripts/agent-cli/* ]] || [[ "$file" == docker/agent-cli/* ]]; then
                 # Agent-cli files route to flat tests/scripts/ via one of two
