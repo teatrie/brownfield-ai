@@ -25,12 +25,14 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
-from helpers.artifact_isolation import isolate_artifacts
+from helpers.artifact_isolation import isolate_artifacts, wrapper_tmp_paths
 
 WORKSPACE: Path = Path(__file__).resolve().parents[2]
 REVIEW_SCRIPT: str = str(WORKSPACE / "scripts" / "agent-cli" / "gemini-review.sh")
+REVIEW_COMMON: Path = WORKSPACE / "scripts" / "agent-cli" / "_review-common.sh"
 
 # Standard diff-subject filename used across tests. The wrapper's
 # _review_validate_diff_file helper only accepts files realpath-contained
@@ -43,10 +45,17 @@ EMPTY_SUBJECT_ARTIFACT: str = "empty-subject-for-gemini-test.txt"
 _SUBJECT_PATH: Path = WORKSPACE / "tmp" / SUBJECT_ARTIFACT
 _EMPTY_SUBJECT_PATH: Path = WORKSPACE / "tmp" / EMPTY_SUBJECT_ARTIFACT
 
-# The wrapper defaults ROUND to 1 and no test overrides it with a value that
-# reaches artifact naming, so the round-scoped artifacts a run here writes are
-# the same ones a live round-1 review writes.
-_ROUND: str = "1"
+# Host-mode runs truncate tmp/gemini-review-output-${ROUND}.md in the real
+# checkout, so these tests must claim a round no live review occupies — round 1
+# is the recovery artifact for a stranded bridge dispatch (CLAUDE.md §18).
+# Every env this module builds passes ROUND through, so this constant is the
+# round the wrapper runs at rather than a copy of the wrapper's own default.
+_ROUND: str = "999"
+
+# Value the class-level isolation shadow in TestSharedArtifactIsolation yields.
+# The module fixture yields None, so a test that requests the name by hand can
+# tell which definition is in effect.
+_CLASS_SHADOW_TAG: str = "class-level isolation shadow"
 
 
 _SHIM_HELPER: str = """import json
@@ -140,9 +149,9 @@ def _isolate_shared_artifacts() -> Iterator[None]:
     """Snapshot the tmp/ artifacts these tests write, then restore them.
 
     Autouse at module scope covers every test here, including any added later.
-    An autouse fixture declared in an outer conftest is still ordered ahead of
-    this one, so the capture leads this module's own writes and the wrapper runs
-    it guards — not every write the session can make.
+    An autouse fixture declared in an outer conftest is ordered ahead of this
+    one, so the capture leads this module's own writes and the wrapper runs it
+    guards — not every write the session can make.
     """
     tmp_dir = WORKSPACE / "tmp"
     yield from isolate_artifacts(
@@ -155,12 +164,15 @@ def _default_env(bin_dir: Path, *, review_type: str = "diff") -> dict[str, str]:
     """Build the minimal env the wrapper needs to reach the shim.
 
     Supplies ``REVIEW_TYPE``/``DIFF_FILE`` for the new contract, the host
-    execution context (so the token guard + OAuth path is exercised), and
-    a token so the token-missing guard does not short-circuit.
+    execution context (so the token guard + OAuth path is exercised), a token
+    so the token-missing guard does not short-circuit, and the round the
+    managed set covers. ``--round`` on argv still wins: the wrapper's parse
+    loop assigns after the ``ROUND`` default is read.
     """
     return {
         "REVIEW_TYPE": review_type,
         "DIFF_FILE": str(_SUBJECT_PATH),
+        "ROUND": _ROUND,
         "GEMINI_EXECUTION_CONTEXT": "host",
         "GEMINI_API_KEY": "test",
         "PATH": f"{bin_dir}:/usr/bin:/bin",
@@ -500,7 +512,7 @@ class TestOutputRouting:
         (fake_ws / "tmp").mkdir(parents=True)
         (fake_ws / "agent-review").mkdir()
         # Subject path must be inside fake_ws/tmp/ for DIFF_FILE containment.
-        subject = fake_ws / "tmp" / "qa-diff.txt"
+        subject = fake_ws / "tmp" / SUBJECT_ARTIFACT
         subject.write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
         # Template path — the wrapper resolves it relative to CWD, so the
         # template must be accessible from fake_ws. Symlink the real
@@ -513,6 +525,7 @@ class TestOutputRouting:
         env: dict[str, str] = {
             "REVIEW_TYPE": "diff",
             "DIFF_FILE": str(subject),
+            "ROUND": _ROUND,
             "GEMINI_API_KEY": "test",
             "PATH": f"{bin_dir}:/usr/bin:/bin",
         }
@@ -529,7 +542,7 @@ class TestOutputRouting:
         """``GEMINI_EXECUTION_CONTEXT=host`` -> output under ``tmp/``."""
         result, fake_ws = self._run_in_fake_ws(tmp_path)
         assert result.returncode == 0, result.stderr
-        assert (fake_ws / "tmp" / "gemini-review-output-1.md").exists()
+        assert (fake_ws / "tmp" / f"gemini-review-output-{_ROUND}.md").exists()
 
     def test_container_context_writes_to_agent_review(self, tmp_path: Path) -> None:
         """Container context -> output under ``agent-review/`` with workspace/session id."""
@@ -713,15 +726,26 @@ class TestProTier429_503Fallback:
 class TestSharedArtifactIsolation:
     """Cover the gemini managed set and the module fixture that applies it."""
 
+    # Every tmp/ path gemini-review.sh and _review-common.sh name is managed,
+    # so nothing is exempt here. The wrapper's default preflight cache is in
+    # the managed set rather than exempt because the auth-failure tests that
+    # reach the wrapper's `rm -f` do not all override PREFLIGHT_CACHE_FILE.
+    _UNMANAGED_WRAPPER_TMP_PATHS: frozenset[str] = frozenset()
+
     @pytest.fixture(autouse=True)
-    def _isolate_shared_artifacts(self) -> Iterator[None]:
+    def _isolate_shared_artifacts(self) -> Iterator[str]:
         """Shadow the module fixture, which would otherwise write the real tmp/.
 
-        These tests drive the mechanism themselves, under ``tmp_path``.
+        These tests drive the mechanism themselves, under ``tmp_path``. The tag
+        is what ``test_class_fixture_shadows_the_module_fixture`` reads to
+        observe which definition of the name is in effect.
         """
-        yield
+        yield _CLASS_SHADOW_TAG
 
-    def test_managed_set_matches_the_wrapper_artifacts(self, tmp_path: Path) -> None:
+    def test_class_fixture_shadows_the_module_fixture(self, _isolate_shared_artifacts: str) -> None:
+        assert _isolate_shared_artifacts == _CLASS_SHADOW_TAG
+
+    def test_managed_set_lists_the_expected_paths_in_order(self, tmp_path: Path) -> None:
         assert _managed_artifacts(tmp_path, "7") == (
             tmp_path / "gemini-exit.json",
             tmp_path / "gemini-review-err.txt",
@@ -732,9 +756,34 @@ class TestSharedArtifactIsolation:
             tmp_path / "gemini-subject-sanitized-7.txt",
         )
 
+    def test_managed_set_covers_every_tmp_path_the_wrapper_names(self, tmp_path: Path) -> None:
+        named = wrapper_tmp_paths(
+            [Path(REVIEW_SCRIPT), REVIEW_COMMON],
+            {"ROUND": "7", "suffix": "7", "reviewer": "gemini"},
+        )
+        managed = {path.relative_to(tmp_path).as_posix() for path in _managed_artifacts(tmp_path, "7")}
+        assert named - managed == self._UNMANAGED_WRAPPER_TMP_PATHS
+
+    def test_default_env_binds_the_round_and_subject_constants(self, tmp_path: Path) -> None:
+        env = _default_env(tmp_path / "bin")
+        assert env["ROUND"] == _ROUND
+        assert env["DIFF_FILE"] == str(_SUBJECT_PATH)
+
+    def test_run_review_forwards_the_bound_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, str] = {}
+
+        def _capture(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.update(kwargs["env"])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        _run_review(tmp_path, env_overrides=_default_env(tmp_path / "bin"))
+        assert captured["ROUND"] == _ROUND
+        assert captured["DIFF_FILE"] == str(_SUBJECT_PATH)
+
     def test_subject_is_not_the_live_review_subject(self) -> None:
-        # tmp/qa-diff.txt is the subject the diff-review gate hands its
-        # reviewers; a test that names it destroys the review in flight.
+        # The diff-review gate hands its reviewers a subject file under tmp/;
+        # a test that claims that name destroys the review in flight.
         assert _SUBJECT_PATH == WORKSPACE / "tmp" / "gemini-test-subject.txt"
         assert _EMPTY_SUBJECT_PATH == WORKSPACE / "tmp" / "empty-subject-for-gemini-test.txt"
 
@@ -747,10 +796,10 @@ class TestSharedArtifactIsolation:
         subject = tmp_dir / SUBJECT_ARTIFACT
         output = tmp_dir / f"gemini-review-output-{_ROUND}.md"
 
-        # pytest wraps a fixture in an object that refuses direct calls;
-        # functools.update_wrapper leaves the generator at __wrapped__. The
-        # module fixture is addressed through globals() because this class
-        # shadows its name.
+        # pytest wraps a fixture in an object that refuses direct calls and
+        # leaves the undecorated generator reachable at __wrapped__. The module
+        # fixture is addressed through globals() because this class shadows its
+        # name.
         isolation = globals()["_isolate_shared_artifacts"].__wrapped__()
         next(isolation)
         assert not signal.exists()

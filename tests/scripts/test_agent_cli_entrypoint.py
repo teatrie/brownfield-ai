@@ -15,12 +15,14 @@ import sys
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
-from helpers.artifact_isolation import isolate_artifacts
+from helpers.artifact_isolation import isolate_artifacts, wrapper_tmp_paths
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 ENTRYPOINT = str(WORKSPACE / "docker" / "agent-cli" / "entrypoint.sh")
+REVIEW_COMMON = WORKSPACE / "scripts" / "agent-cli" / "_review-common.sh"
 
 # Canonical home of the adversarial-rigor / experiment-delegation block.
 # Template content is lint-enforced against this source of truth (see
@@ -305,7 +307,13 @@ def _managed_artifacts(tmp_dir: Path, round_id: str) -> tuple[Path, ...]:
 
 
 def _prepare_subject(tmp_dir: Path) -> None:
-    """Clear the stale exit signal and write the subject the wrapper reviews."""
+    """Clear the stale exit signal and write the subject the wrapper reviews.
+
+    ``codex-review.sh`` removes the signal itself, under a hard-fail check,
+    ahead of every path that writes one — so clearing it here is defensive
+    rather than required, and covers a run that aborts before reaching the
+    wrapper at all.
+    """
     tmp_dir.mkdir(parents=True, exist_ok=True)
     (tmp_dir / "codex-exit.json").unlink(missing_ok=True)
     (tmp_dir / SUBJECT_ARTIFACT).write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
@@ -334,9 +342,9 @@ class TestCodexReviewScript:
         """Snapshot the tmp/ artifacts these tests write, then restore them.
 
         Autouse covers every test in this class. An autouse fixture declared in
-        an outer conftest is still ordered ahead of this one, so the capture
-        leads this class's own writes and the wrapper runs it guards — not
-        every write the session can make.
+        an outer conftest is ordered ahead of this one, so the capture leads
+        this class's own writes and the wrapper runs it guards — not every
+        write the session can make.
         """
         tmp_dir = WORKSPACE / "tmp"
         yield from isolate_artifacts(
@@ -488,7 +496,15 @@ class TestCodexReviewScript:
 class TestSharedArtifactIsolation:
     """Cover the codex managed set and the fixture ``TestCodexReviewScript`` depends on."""
 
-    def test_managed_set_matches_the_wrapper_artifacts(self, tmp_path: Path) -> None:
+    # tmp/ paths codex-review.sh names that the managed set deliberately omits.
+    # The write probe carries the PID and is removed under a hard-fail check
+    # before the wrapper reaches anything else. The preflight cache is the
+    # wrapper's default, which every run from ``_run_review`` displaces with a
+    # test-owned PREFLIGHT_CACHE_FILE — pinned by
+    # ``test_run_review_binds_the_subject_and_the_cache_override``.
+    _UNMANAGED_WRAPPER_TMP_PATHS: frozenset[str] = frozenset({".codex-write-probe.$$", ".codex-preflight-cache.json"})
+
+    def test_managed_set_lists_the_expected_paths_in_order(self, tmp_path: Path) -> None:
         assert _managed_artifacts(tmp_path, "7") == (
             tmp_path / "codex-exit.json",
             tmp_path / "codex-review-err.txt",
@@ -497,6 +513,31 @@ class TestSharedArtifactIsolation:
             tmp_path / "codex-combined-prompt-7.txt",
             tmp_path / "codex-subject-sanitized-7.txt",
         )
+
+    def test_managed_set_covers_every_tmp_path_the_wrapper_names(self, tmp_path: Path) -> None:
+        named = wrapper_tmp_paths(
+            [Path(TestCodexReviewScript.REVIEW_SCRIPT), REVIEW_COMMON],
+            {"ROUND": "7", "suffix": "7", "reviewer": "codex"},
+        )
+        managed = {path.relative_to(tmp_path).as_posix() for path in _managed_artifacts(tmp_path, "7")}
+        assert named - managed == self._UNMANAGED_WRAPPER_TMP_PATHS
+
+    def test_subject_is_not_the_live_review_subject(self) -> None:
+        # The diff-review gate hands its reviewers a subject file under tmp/;
+        # a test that claims that name destroys the review in flight.
+        assert TestCodexReviewScript.SUBJECT_FILE == WORKSPACE / "tmp" / "agent-cli-test-subject.txt"
+
+    def test_run_review_binds_the_subject_and_the_cache_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, str] = {}
+
+        def _capture(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.update(kwargs["env"])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        TestCodexReviewScript()._run_review()
+        assert captured["DIFF_FILE"] == str(TestCodexReviewScript.SUBJECT_FILE)
+        assert captured["PREFLIGHT_CACHE_FILE"] == str(WORKSPACE / "tmp" / "codex-test-preflight-cache.json")
 
     def test_class_fixture_restores_the_workspace_tmp_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys.modules[__name__], "WORKSPACE", tmp_path)
@@ -507,8 +548,8 @@ class TestSharedArtifactIsolation:
         subject = tmp_dir / SUBJECT_ARTIFACT
         output = tmp_dir / f"codex-review-output-{TestCodexReviewScript.SACRIFICIAL_ROUND}.md"
 
-        # pytest wraps a fixture in an object that refuses direct calls;
-        # functools.update_wrapper leaves the generator at __wrapped__.
+        # pytest wraps a fixture in an object that refuses direct calls and
+        # leaves the undecorated generator reachable at __wrapped__.
         fixture_body = TestCodexReviewScript.__dict__["_isolate_shared_artifacts"].__wrapped__
         isolation = fixture_body(TestCodexReviewScript())
         next(isolation)
