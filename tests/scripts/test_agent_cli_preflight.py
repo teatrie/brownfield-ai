@@ -21,9 +21,38 @@ WORKSPACE: Path = Path(__file__).resolve().parents[2]
 _AGENT_CLI_DIR: Path = WORKSPACE / "scripts" / "agent-cli"
 PREFLIGHT_SCRIPT_PATH: Path = _AGENT_CLI_DIR / "preflight.sh"
 
+
+def _host_path() -> str:
+    """Return the host ``PATH`` with every checkout-derived entry dropped.
+
+    Returns:
+        A ``PATH`` value carrying the system tool directories the wrappers
+        need and no entry that resolves inside the repository root.
+
+    Entries are compared after symlink resolution and non-absolute entries
+    are dropped outright. A lexical comparison keeps both a link pointing
+    into the checkout and a relative entry such as ``.venv/bin``; either one
+    lets a spawned script execute a checkout-managed binary, and a relative
+    entry additionally resolves against the scratch CWD.
+    """
+    kept: list[str] = []
+    for entry in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry)
+        if not candidate.is_absolute():
+            continue
+        if candidate.resolve().is_relative_to(WORKSPACE):
+            continue
+        kept.append(entry)
+    return os.pathsep.join(kept) or "/usr/bin:/bin"
+
+
 # Absolute interpreter so callers can wipe PATH down to a controlled
-# directory without losing the shell.
-_BASH: str = shutil.which("bash") or "/bin/bash"
+# directory without losing the shell. Resolved through the filtered PATH so
+# the interpreter itself cannot be one of the checkout-managed binaries
+# _host_path exists to exclude.
+_BASH: str = shutil.which("bash", path=_host_path()) or "/bin/bash"
 
 
 def _scratch_root(tmp_path: Path) -> Path:
@@ -90,18 +119,6 @@ def _scratch_home(tmp_path: Path) -> Path:
     return home
 
 
-def _host_path() -> str:
-    """Return the host ``PATH`` with every entry inside the real checkout dropped.
-
-    Returns:
-        A ``PATH`` value carrying the system tool directories the wrappers need
-        and no directory derived from the repository root.
-    """
-    entries = os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep)
-    kept = [e for e in entries if e and not Path(e).is_relative_to(WORKSPACE)]
-    return os.pathsep.join(kept) or "/usr/bin:/bin"
-
-
 def _create_mock_cli(tmp_path: Path, name: str) -> None:
     """Create a mock CLI binary that prints a version."""
     mock_bin = tmp_path / name
@@ -122,11 +139,12 @@ def _preflight_env(tmp_path: Path, *, path: str, tokens: dict[str, str]) -> dict
         Environment mapping for ``subprocess.run``.
 
     The mapping is closed — every key is enumerated here, none is inherited
-    from ``os.environ``. That keeps ``GIT_DIR``, ``GIT_WORK_TREE`` and
-    ``GIT_COMMON_DIR`` out of the child: they override git's ancestry-based
-    worktree discovery, so a spawned script holding one would write into the
-    real checkout despite the scratch CWD. ``PATH`` and the token vars read by
-    indirect expansion are the script's whole read-set, so nothing is lost.
+    from ``os.environ``. That is what makes the ``token`` assertions
+    deterministic: a token var the host happens to export cannot reach the
+    child unless ``tokens`` names it, and ``preflight.sh`` reads those vars by
+    indirect expansion. ``HOME`` points at the scratch home so any ``~``
+    expansion by the interpreter lands outside the operator's home;
+    ``preflight.sh`` itself never reads it.
     """
     env: dict[str, str] = {
         "PATH": path,
@@ -147,7 +165,7 @@ def test_all_available(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        [str(PREFLIGHT_SCRIPT_PATH)],
+        [_BASH, str(PREFLIGHT_SCRIPT_PATH)],
         env=env,
         capture_output=True,
         text=True,
@@ -180,7 +198,7 @@ def test_missing_copilot_cli(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        [str(PREFLIGHT_SCRIPT_PATH)],
+        [_BASH, str(PREFLIGHT_SCRIPT_PATH)],
         env=env,
         capture_output=True,
         text=True,
@@ -200,7 +218,7 @@ def test_missing_token(tmp_path: Path) -> None:
     env = _preflight_env(tmp_path, path=f"{tmp_path}:{_host_path()}", tokens={})
 
     result = subprocess.run(
-        [str(PREFLIGHT_SCRIPT_PATH)],
+        [_BASH, str(PREFLIGHT_SCRIPT_PATH)],
         env=env,
         capture_output=True,
         text=True,
@@ -215,10 +233,14 @@ def test_missing_token(tmp_path: Path) -> None:
 
 
 def test_no_clis_available(tmp_path: Path) -> None:
-    env = _preflight_env(tmp_path, path=f"{tmp_path}:{_host_path()}", tokens={})
+    # PATH is the isolated bin alone: the host PATH carries /usr/bin, where the
+    # pytest-cli image installs a real `gemini`, so a host-derived PATH cannot
+    # establish the no-CLI condition this test asserts.
+    bin_dir = _isolated_bin_without_cli(tmp_path, cli_names=("copilot", "gemini", "codex"))
+    env = _preflight_env(tmp_path, path=str(bin_dir), tokens={})
 
     result = subprocess.run(
-        [str(PREFLIGHT_SCRIPT_PATH)],
+        [_BASH, str(PREFLIGHT_SCRIPT_PATH)],
         env=env,
         capture_output=True,
         text=True,
@@ -227,6 +249,10 @@ def test_no_clis_available(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 1
+    data = json.loads(result.stdout)
+    for agent in ("copilot", "gemini", "codex"):
+        assert data[agent]["cli"] is False, f"{agent} CLI must not be resolvable"
+        assert data[agent]["token"] is False
 
 
 def test_partial_availability(tmp_path: Path) -> None:
@@ -245,7 +271,7 @@ def test_partial_availability(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        [str(PREFLIGHT_SCRIPT_PATH)],
+        [_BASH, str(PREFLIGHT_SCRIPT_PATH)],
         env=env,
         capture_output=True,
         text=True,
@@ -367,8 +393,9 @@ def _isolated_bin_without_cli(tmp_path: Path, *, cli_names: tuple[str, ...]) -> 
     """
     bin_dir = tmp_path / "isolated_bin"
     bin_dir.mkdir()
+    host_path = _host_path()
     for tool in _PREFLIGHT_RUNTIME_TOOLS:
-        src = shutil.which(tool)
+        src = shutil.which(tool, path=host_path)
         if src is None or Path(src).name in cli_names:
             continue
         (bin_dir / tool).symlink_to(src)
@@ -449,19 +476,26 @@ class TestJsonSchema:
 class TestCacheBehavior:
     """Successful preflight results are cached for 24h; `none` is not cached."""
 
-    def test_cache_written_for_local_mode(self, tmp_path: Path) -> None:
+    def test_cache_written_for_local_mode_at_default_cwd_path(self, tmp_path: Path) -> None:
+        """The cache lands at the default path, which resolves under the CWD.
+
+        ``PREFLIGHT_CACHE_FILE`` is deliberately NOT overridden: the script
+        defaults it to the CWD-relative ``tmp/.gemini-preflight-cache.json``,
+        so asserting the file appears under the scratch root is what pins the
+        spawn CWD. A run inheriting the pytest CWD would write the cache into
+        the real checkout instead, and this assertion is the only thing that
+        observes the difference.
+        """
         bin_dir = _create_mock_gemini_preflight(tmp_path)
-        cache_file = tmp_path / "preflight-cache.json"
+        root = _scratch_root(tmp_path)
         result = _run_preflight(
             tmp_path,
             mock_gemini_bin=bin_dir,
-            env_override={
-                "PREFLIGHT_CACHE_FILE": str(cache_file),
-                "PREFLIGHT_FORCE": "0",
-            },
+            env_override={"PREFLIGHT_FORCE": "0"},
         )
         assert result.returncode == 0
-        assert cache_file.exists()
+        cache_file = root / "tmp" / ".gemini-preflight-cache.json"
+        assert cache_file.exists(), f"default cache file not written under {root}"
         cached: dict[str, Any] = json.loads(cache_file.read_text())
         assert cached["mode"] == "local"
 
@@ -593,6 +627,13 @@ def _run_review_script(
     Returns:
         Completed process with captured stdout/stderr.
     """
+    # The mapping is closed — nothing is inherited from os.environ, and
+    # GIT_DIR, GIT_WORK_TREE and GIT_COMMON_DIR must stay out of it in
+    # particular. They override git's ancestry-based worktree discovery, so
+    # _review-common.sh would anchor its subject and template paths to the
+    # real checkout and write there despite the scratch CWD — a leak
+    # _reject_git_ancestor cannot detect, because no ancestor of the scratch
+    # root carries the `.git` that git would then be using.
     env: dict[str, str] = {
         "PATH": _host_path(),
         "HOME": str(_scratch_home(tmp_path)),
@@ -612,18 +653,36 @@ def _run_review_script(
 class TestTokenGuardHostContext:
     """Token guard is bypassed when GEMINI_EXECUTION_CONTEXT=host."""
 
-    def test_host_context_no_api_key_does_not_emit_unavailable(self, tmp_path: Path) -> None:
-        """With GEMINI_EXECUTION_CONTEXT=host and no GEMINI_API_KEY,
-        the script should NOT emit GEMINI_UNAVAILABLE — it proceeds
-        past the token guard regardless of what happens later."""
+    def test_host_context_no_api_key_reaches_cli_invocation(self, tmp_path: Path) -> None:
+        """With GEMINI_EXECUTION_CONTEXT=host and no GEMINI_API_KEY the run
+        reaches the CLI instead of signalling unavailability.
+
+        The wrapper writes every signal to ``tmp/gemini-exit.json`` and never
+        to stdout, so the guard is observed there. A mock CLI that fails
+        instantly supplies a deterministic post-guard outcome
+        (``GEMINI_FALLBACK``, exit 3) that the run can only produce by getting
+        far enough to invoke it, which the token guard would prevent.
+        """
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        _create_mock_gemini_instant_failure(bin_dir)
+        root = _setup_review_workspace(tmp_path)
+
         result = _run_review_script(
             tmp_path,
             env_override={
+                "PATH": f"{bin_dir}:{_host_path()}",
                 "GEMINI_EXECUTION_CONTEXT": "host",
+                "REVIEW_TYPE": "diff",
+                "DIFF_FILE": "tmp/qa-diff.txt",
             },
+            timeout=15,
         )
-        # The token guard must NOT fire — no GEMINI_UNAVAILABLE in stdout
-        assert "GEMINI_UNAVAILABLE" not in result.stdout
+        assert result.returncode == 3, f"Expected exit 3 (fallback), got {result.returncode}. stderr: {result.stderr}"
+        exit_json = root / "tmp" / "gemini-exit.json"
+        assert exit_json.exists(), "tmp/gemini-exit.json was not created"
+        data: dict[str, Any] = json.loads(exit_json.read_text())
+        assert data["signal"] == "GEMINI_FALLBACK"
 
     def test_no_context_no_api_key_emits_unavailable(self, tmp_path: Path) -> None:
         """Without GEMINI_EXECUTION_CONTEXT and no GEMINI_API_KEY,
@@ -633,10 +692,7 @@ class TestTokenGuardHostContext:
         guard, so the fake workspace must provide both (plus the reviewer
         templates).
         """
-        root = _scratch_root(tmp_path)
-        (root / "tmp").mkdir(exist_ok=True)
-        (root / "tmp" / "qa-diff.txt").write_text("diff --git a/x b/x\n+a\n")
-        _link_reviewer_templates(root)
+        root = _setup_review_workspace(tmp_path)
         _run_review_script(
             tmp_path,
             env_override={
