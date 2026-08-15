@@ -17,6 +17,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 WORKSPACE: Path = Path(__file__).resolve().parents[2]
 _AGENT_CLI_DIR: Path = WORKSPACE / "scripts" / "agent-cli"
 PREFLIGHT_SCRIPT_PATH: Path = _AGENT_CLI_DIR / "preflight.sh"
@@ -499,6 +501,32 @@ class TestCacheBehavior:
         cached: dict[str, Any] = json.loads(cache_file.read_text())
         assert cached["mode"] == "local"
 
+    def test_cache_written_to_overridden_path_not_default(self, tmp_path: Path) -> None:
+        """``PREFLIGHT_CACHE_FILE`` redirects the cache WRITE, not just the read.
+
+        Both halves are asserted because the two destinations are mutually
+        exclusive within one run: a write that ignored the override would still
+        satisfy the positive assertion if the read then found nothing, so the
+        absence of the CWD-relative default is what pins the redirect.
+        """
+        bin_dir = _create_mock_gemini_preflight(tmp_path)
+        root = _scratch_root(tmp_path)
+        cache_file = tmp_path / "override-cache.json"
+        result = _run_preflight(
+            tmp_path,
+            mock_gemini_bin=bin_dir,
+            env_override={
+                "PREFLIGHT_CACHE_FILE": str(cache_file),
+                "PREFLIGHT_FORCE": "0",
+            },
+        )
+        assert result.returncode == 0
+        assert cache_file.exists(), f"cache not written to the overridden path {cache_file}"
+        cached: dict[str, Any] = json.loads(cache_file.read_text())
+        assert cached["mode"] == "local"
+        default_cache = root / "tmp" / ".gemini-preflight-cache.json"
+        assert not default_cache.exists(), f"cache also written to the default path {default_cache}; the override was not honoured on write"
+
     def test_cache_hit_returns_cached_value_without_recheck(self, tmp_path: Path) -> None:
         """If the cache is fresh, the script returns it verbatim — even if
         the live state would differ. Proves the cache short-circuits the
@@ -658,10 +686,12 @@ class TestTokenGuardHostContext:
         reaches the CLI instead of signalling unavailability.
 
         The wrapper writes every signal to ``tmp/gemini-exit.json`` and never
-        to stdout, so the guard is observed there. A mock CLI that fails
-        instantly supplies a deterministic post-guard outcome
-        (``GEMINI_FALLBACK``, exit 3) that the run can only produce by getting
-        far enough to invoke it, which the token guard would prevent.
+        to stdout, so the guard is observed there. Passing the guard yields
+        ``GEMINI_FALLBACK``/exit 3, but an unresolvable ``gemini`` produces the
+        same pair via the pipeline's 127 and the wrapper's ``command not
+        found`` branch. The recorded ``exit_code`` and ``stderr_excerpt`` are
+        what separate the two, so the mock is only load-bearing when they are
+        asserted.
         """
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -683,6 +713,8 @@ class TestTokenGuardHostContext:
         assert exit_json.exists(), "tmp/gemini-exit.json was not created"
         data: dict[str, Any] = json.loads(exit_json.read_text())
         assert data["signal"] == "GEMINI_FALLBACK"
+        assert data["exit_code"] == 1, f"expected the mock's exit 1, got {data['exit_code']} (127 means it never resolved on PATH)"
+        assert "401 Unauthorized" in data["stderr_excerpt"], "stderr did not come from the mock"
 
     def test_no_context_no_api_key_emits_unavailable(self, tmp_path: Path) -> None:
         """Without GEMINI_EXECUTION_CONTEXT and no GEMINI_API_KEY,
@@ -690,16 +722,18 @@ class TestTokenGuardHostContext:
 
         The wrapper validates ``REVIEW_TYPE``/``DIFF_FILE`` before the token
         guard, so the fake workspace must provide both (plus the reviewer
-        templates).
+        templates). The guard exits 0: unavailability is a routing signal for
+        the calling agent, not a wrapper error.
         """
         root = _setup_review_workspace(tmp_path)
-        _run_review_script(
+        result = _run_review_script(
             tmp_path,
             env_override={
                 "REVIEW_TYPE": "diff",
                 "DIFF_FILE": "tmp/qa-diff.txt",
             },
         )
+        assert result.returncode == 0, f"token guard must exit 0, got {result.returncode}. stderr: {result.stderr}"
         exit_json = root / "tmp" / "gemini-exit.json"
         assert exit_json.exists(), "tmp/gemini-exit.json was not created"
         data: dict[str, Any] = json.loads(exit_json.read_text())
@@ -885,3 +919,45 @@ class TestFallbackSignal:
         assert result.returncode == 0
         exit_json = root / "tmp" / "gemini-exit.json"
         assert not exit_json.exists(), "No exit signal expected on success"
+
+
+# ── _host_path() harness helper ───────────────────────────────────────
+
+
+class TestHostPath:
+    """PATH filtering that keeps spawned scripts off checkout-managed binaries.
+
+    Exercised in-process: the sanctioned runner's image PATH carries no entry
+    that resolves inside the checkout and none that is relative, so a spawned
+    run reaches neither drop branch.
+    """
+
+    def test_keeps_only_absolute_entries_resolving_outside_the_checkout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        outside = tmp_path / "system_bin"
+        outside.mkdir()
+        link_into_checkout = tmp_path / "linked_bin"
+        link_into_checkout.symlink_to(WORKSPACE / "scripts")
+        entries = [
+            str(outside),
+            str(WORKSPACE / "scripts"),
+            str(link_into_checkout),
+            ".venv/bin",
+            "",
+        ]
+        monkeypatch.setenv("PATH", os.pathsep.join(entries))
+
+        assert _host_path().split(os.pathsep) == [str(outside)]
+
+    def test_falls_back_when_every_entry_is_dropped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", os.pathsep.join([str(WORKSPACE / "scripts"), ".venv/bin"]))
+
+        assert _host_path() == "/usr/bin:/bin"
+
+    def test_unset_path_uses_the_system_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("PATH", raising=False)
+
+        assert _host_path() == "/usr/bin:/bin"
