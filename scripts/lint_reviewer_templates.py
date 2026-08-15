@@ -6,9 +6,10 @@ copies in each reviewer template
 (``.claude/prompts/reviewer/<type>.md`` for
 ``type in {diff, plan, spec, epic, spec-req-verification}``).
 
-Also verifies the ``.codex/config.toml`` ``[profiles.reviewer.instructions]``
-section contains zero numbered criteria — the 10-point criteria now
-live only in the committed templates.
+Also verifies that the ``[profiles.reviewer.instructions]`` section of
+both reviewer TOMLs — ``.codex/config.toml`` and
+``docker/agent-cli/codex-config.toml`` — contains zero numbered
+criteria; the 10-point criteria live only in the committed templates.
 
 Finally, asserts the ``SHARED:`` blocks carrying the diff-only review
 dimensions are identical between ``.claude/skills/diff-review/SKILL.md``
@@ -54,13 +55,12 @@ import defopt
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 INVARIANTS_PATH: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer" / "_invariants.md"
 TEMPLATES_DIR: Path = REPO_ROOT / ".claude" / "prompts" / "reviewer"
-# Both the canonical dev-host config AND the container-bundled source are
-# checked — `docker/agent-cli/codex-config.toml` is COPYed into
-# `/home/agent/.codex/config.toml` during the agent-cli image build and is
-# also consumed by `scripts/setup_codex_reviewer.sh` when provisioning a
-# developer's host `~/.codex/config.toml`. If either drifts back to
-# numbered criteria, container reviews and newly-provisioned host reviews
-# would silently run stale duplicated instructions.
+# Both TOMLs are checked, but they differ in reach. `.codex/config.toml` is
+# project-local, which codex loads nothing from: criteria drifting back in
+# there reach no run, so it is a drift surface only. The agent-cli TOML is the
+# user-level config that IS loaded, so drift there would silently run stale
+# duplicated instructions on container and newly-provisioned host reviews.
+# See docs/effort_tiers.md §"Where the Codex Effort Value Comes From".
 TOML_PATHS: tuple[Path, ...] = (
     REPO_ROOT / ".codex" / "config.toml",
     REPO_ROOT / "docker" / "agent-cli" / "codex-config.toml",

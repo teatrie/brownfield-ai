@@ -22,16 +22,40 @@ from __future__ import annotations
 import json
 import stat
 import subprocess
+import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
+
+import pytest
+from helpers.artifact_isolation import isolate_artifacts, wrapper_tmp_paths
 
 WORKSPACE: Path = Path(__file__).resolve().parents[2]
 REVIEW_SCRIPT: str = str(WORKSPACE / "scripts" / "agent-cli" / "gemini-review.sh")
+REVIEW_COMMON: Path = WORKSPACE / "scripts" / "agent-cli" / "_review-common.sh"
 
 # Standard diff-subject filename used across tests. The wrapper's
 # _review_validate_diff_file helper only accepts files realpath-contained
 # under the workspace's ``tmp/`` or ``agent-review/`` directories, so the
-# per-test pytest ``tmp_path`` cannot host the subject file.
-_QA_DIFF_PATH: Path = WORKSPACE / "tmp" / "qa-diff.txt"
+# per-test pytest ``tmp_path`` cannot host the subject file. It imposes no
+# basename constraint, so these names are test-owned and share nothing with
+# the live diff-review subject.
+SUBJECT_ARTIFACT: str = "gemini-test-subject.txt"
+EMPTY_SUBJECT_ARTIFACT: str = "empty-subject-for-gemini-test.txt"
+_SUBJECT_PATH: Path = WORKSPACE / "tmp" / SUBJECT_ARTIFACT
+_EMPTY_SUBJECT_PATH: Path = WORKSPACE / "tmp" / EMPTY_SUBJECT_ARTIFACT
+
+# Host-mode runs truncate tmp/gemini-review-output-${ROUND}.md in the real
+# checkout, so these tests must claim a round no live review occupies — round 1
+# is the recovery artifact for a stranded bridge dispatch (CLAUDE.md §18).
+# Every env this module builds passes ROUND through, so this constant is the
+# round the wrapper runs at rather than a copy of the wrapper's own default.
+_ROUND: str = "999"
+
+# Value the class-level isolation shadow in TestSharedArtifactIsolation yields.
+# The module fixture yields None, so a test that requests the name by hand can
+# tell which definition is in effect.
+_CLASS_SHADOW_TAG: str = "class-level isolation shadow"
 
 
 _SHIM_HELPER: str = """import json
@@ -94,28 +118,61 @@ def _read_shim_log(log_path: Path) -> list[dict]:
     return records
 
 
-def _write_qa_diff() -> Path:
-    """Create the standard diff subject file under the workspace ``tmp/``.
+def _managed_artifacts(tmp_dir: Path, round_id: str) -> tuple[Path, ...]:
+    """Return the tmp/ paths a gemini-review run at ``round_id`` creates or overwrites.
 
-    The wrapper's ``_review_validate_diff_file`` helper realpath-contains
-    the subject under ``$PWD/tmp/`` or ``$PWD/agent-review/``, so a
-    pytest-managed ``tmp_path`` cannot host it.
+    Names are those written by ``scripts/agent-cli/gemini-review.sh`` and
+    ``scripts/agent-cli/_review-common.sh`` on the host path these tests take,
+    plus the two test-owned subjects. Ordered by restore priority: the
+    unsuffixed artifacts a live review shares with these tests come first.
     """
-    _QA_DIFF_PATH.parent.mkdir(exist_ok=True)
-    _QA_DIFF_PATH.write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
-    return _QA_DIFF_PATH
+    return (
+        tmp_dir / "gemini-exit.json",
+        tmp_dir / "gemini-review-err.txt",
+        tmp_dir / ".gemini-preflight-cache.json",
+        tmp_dir / SUBJECT_ARTIFACT,
+        tmp_dir / EMPTY_SUBJECT_ARTIFACT,
+        tmp_dir / f"gemini-review-output-{round_id}.md",
+        tmp_dir / f"gemini-subject-sanitized-{round_id}.txt",
+    )
+
+
+def _prepare_subject(tmp_dir: Path) -> None:
+    """Clear the stale exit signal and write the subject the wrapper reviews."""
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_dir / "gemini-exit.json").unlink(missing_ok=True)
+    (tmp_dir / SUBJECT_ARTIFACT).write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_artifacts() -> Iterator[None]:
+    """Snapshot the tmp/ artifacts these tests write, then restore them.
+
+    Autouse at module scope covers every test here, including any added later.
+    An autouse fixture declared in an outer conftest is ordered ahead of this
+    one, so the capture leads this module's own writes and the wrapper runs it
+    guards — not every write the session can make.
+    """
+    tmp_dir = WORKSPACE / "tmp"
+    yield from isolate_artifacts(
+        _managed_artifacts(tmp_dir, _ROUND),
+        lambda: _prepare_subject(tmp_dir),
+    )
 
 
 def _default_env(bin_dir: Path, *, review_type: str = "diff") -> dict[str, str]:
     """Build the minimal env the wrapper needs to reach the shim.
 
     Supplies ``REVIEW_TYPE``/``DIFF_FILE`` for the new contract, the host
-    execution context (so the token guard + OAuth path is exercised), and
-    a token so the token-missing guard does not short-circuit.
+    execution context (so the token guard + OAuth path is exercised), a token
+    so the token-missing guard does not short-circuit, and the round the
+    managed set covers. ``--round`` on argv still wins: the wrapper's parse
+    loop assigns after the ``ROUND`` default is read.
     """
     return {
         "REVIEW_TYPE": review_type,
-        "DIFF_FILE": str(_QA_DIFF_PATH),
+        "DIFF_FILE": str(_SUBJECT_PATH),
+        "ROUND": _ROUND,
         "GEMINI_EXECUTION_CONTEXT": "host",
         "GEMINI_API_KEY": "test",
         "PATH": f"{bin_dir}:/usr/bin:/bin",
@@ -172,17 +229,13 @@ class TestEffortAliasComposition:
         model: str,
     ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
         """Invoke the wrapper with the given EFFORT/model under the new contract."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir)
-            env["EFFORT"] = effort
-            env["GEMINI_MODEL"] = model
-            result = _run_review(tmp_path, env_overrides=env)
-            return result, _read_shim_log(log)
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        env = _default_env(bin_dir)
+        env["EFFORT"] = effort
+        env["GEMINI_MODEL"] = model
+        result = _run_review(tmp_path, env_overrides=env)
+        return result, _read_shim_log(log)
 
     def test_pro_plus_high_composes_pro_alias(self, tmp_path: Path) -> None:
         """Pro tier + EFFORT=high -> -m gemini-3.1-pro-high."""
@@ -275,35 +328,27 @@ class TestReviewTypeValidation:
 
     def test_missing_review_type_rejected(self, tmp_path: Path) -> None:
         """Unset REVIEW_TYPE -> arg_validation JSON, non-zero exit, no shim call."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir)
-            env.pop("REVIEW_TYPE")
-            result = _run_review(tmp_path, env_overrides=env)
-            assert result.returncode != 0
-            assert _read_shim_log(log) == []
-            exit_json = _read_exit_json()
-            assert exit_json.get("signal") == "GEMINI_ERROR"
-            assert exit_json.get("error_class") == "arg_validation"
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        env = _default_env(bin_dir)
+        env.pop("REVIEW_TYPE")
+        result = _run_review(tmp_path, env_overrides=env)
+        assert result.returncode != 0
+        assert _read_shim_log(log) == []
+        exit_json = _read_exit_json()
+        assert exit_json.get("signal") == "GEMINI_ERROR"
+        assert exit_json.get("error_class") == "arg_validation"
 
     def test_invalid_review_type_enum_rejected(self, tmp_path: Path) -> None:
         """REVIEW_TYPE=foo (not in enum) -> arg_validation rejection."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir, review_type="foo")
-            result = _run_review(tmp_path, env_overrides=env)
-            assert result.returncode != 0
-            assert _read_shim_log(log) == []
-            exit_json = _read_exit_json()
-            assert exit_json.get("error_class") == "arg_validation"
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        env = _default_env(bin_dir, review_type="foo")
+        result = _run_review(tmp_path, env_overrides=env)
+        assert result.returncode != 0
+        assert _read_shim_log(log) == []
+        exit_json = _read_exit_json()
+        assert exit_json.get("error_class") == "arg_validation"
 
 
 class TestDiffFileValidation:
@@ -335,21 +380,17 @@ class TestDiffFileValidation:
 
     def test_zero_byte_diff_file_rejected(self, tmp_path: Path) -> None:
         """Zero-byte DIFF_FILE -> arg_validation rejection."""
-        empty = WORKSPACE / "tmp" / "empty-subject-for-gemini-test.txt"
-        empty.parent.mkdir(exist_ok=True)
-        empty.touch()
+        _EMPTY_SUBJECT_PATH.parent.mkdir(exist_ok=True)
+        _EMPTY_SUBJECT_PATH.touch()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir)
-            env["DIFF_FILE"] = str(empty)
-            result = _run_review(tmp_path, env_overrides=env)
-            assert result.returncode != 0
-            assert _read_shim_log(log) == []
-            exit_json = _read_exit_json()
-            assert exit_json.get("error_class") == "arg_validation"
-        finally:
-            empty.unlink(missing_ok=True)
+        env = _default_env(bin_dir)
+        env["DIFF_FILE"] = str(_EMPTY_SUBJECT_PATH)
+        result = _run_review(tmp_path, env_overrides=env)
+        assert result.returncode != 0
+        assert _read_shim_log(log) == []
+        exit_json = _read_exit_json()
+        assert exit_json.get("error_class") == "arg_validation"
 
     def test_diff_file_outside_tmp_rejected(self, tmp_path: Path) -> None:
         """DIFF_FILE outside tmp/ or agent-review/ -> arg_validation rejection.
@@ -383,24 +424,20 @@ class TestTemplateIsHardcoded:
 
     def test_stdin_contains_template_preamble(self, tmp_path: Path) -> None:
         """Shim stdin must include the hardcoded ``diff.md`` preamble text."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir)
-            env["EFFORT"] = "high"
-            env["GEMINI_MODEL"] = "gemini-3.1-pro-preview"
-            result = _run_review(tmp_path, env_overrides=env)
-            assert result.returncode == 0, result.stderr
-            records = _read_shim_log(log)
-            assert records, "shim was never invoked"
-            # Template loaded from .claude/prompts/reviewer/diff.md and
-            # concatenated with the sanitized subject.
-            assert self._TEMPLATE_MARKER in records[0]["stdin"]
-            # Subject data also present (joined from the qa-diff fixture).
-            assert "diff --git" in records[0]["stdin"]
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        env = _default_env(bin_dir)
+        env["EFFORT"] = "high"
+        env["GEMINI_MODEL"] = "gemini-3.1-pro-preview"
+        result = _run_review(tmp_path, env_overrides=env)
+        assert result.returncode == 0, result.stderr
+        records = _read_shim_log(log)
+        assert records, "shim was never invoked"
+        # Template loaded from .claude/prompts/reviewer/diff.md and
+        # concatenated with the sanitized subject.
+        assert self._TEMPLATE_MARKER in records[0]["stdin"]
+        # Subject data also present (joined from the isolation fixture's subject).
+        assert "diff --git" in records[0]["stdin"]
 
 
 class TestRoundValidation:
@@ -408,33 +445,25 @@ class TestRoundValidation:
 
     def test_round_zero_rejected(self, tmp_path: Path) -> None:
         """``--round 0`` -> arg_validation JSON, non-zero exit."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir)
-            result = _run_review(tmp_path, env_overrides=env, args=["--round", "0"])
-            assert result.returncode != 0
-            assert _read_shim_log(log) == []
-            exit_json = _read_exit_json()
-            assert exit_json.get("error_class") == "arg_validation"
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        env = _default_env(bin_dir)
+        result = _run_review(tmp_path, env_overrides=env, args=["--round", "0"])
+        assert result.returncode != 0
+        assert _read_shim_log(log) == []
+        exit_json = _read_exit_json()
+        assert exit_json.get("error_class") == "arg_validation"
 
     def test_round_negative_rejected(self, tmp_path: Path) -> None:
         """``--round -1`` -> arg_validation JSON, non-zero exit."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir)
-            # ``--round -1`` is parsed by the while loop but the numeric
-            # regex gate rejects negative/zero.
-            result = _run_review(tmp_path, env_overrides=env, args=["--round", "abc"])
-            assert result.returncode != 0
-            assert _read_shim_log(log) == []
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        env = _default_env(bin_dir)
+        # ``--round -1`` is parsed by the while loop but the numeric
+        # regex gate rejects negative/zero.
+        result = _run_review(tmp_path, env_overrides=env, args=["--round", "abc"])
+        assert result.returncode != 0
+        assert _read_shim_log(log) == []
 
 
 class TestTokenAndSecretGuards:
@@ -448,21 +477,17 @@ class TestTokenAndSecretGuards:
 
     def test_token_missing_emits_unavailable_signal(self, tmp_path: Path) -> None:
         """Non-host context without GEMINI_API_KEY -> GEMINI_UNAVAILABLE, exit 0."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        try:
-            env = _default_env(bin_dir)
-            env.pop("GEMINI_API_KEY")
-            env.pop("GEMINI_EXECUTION_CONTEXT")
-            result = _run_review(tmp_path, env_overrides=env)
-            assert result.returncode == 0, result.stderr
-            assert _read_shim_log(log) == []
-            exit_json = _read_exit_json()
-            assert exit_json.get("signal") == "GEMINI_UNAVAILABLE"
-            assert exit_json.get("reason") == "token_missing"
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        env = _default_env(bin_dir)
+        env.pop("GEMINI_API_KEY")
+        env.pop("GEMINI_EXECUTION_CONTEXT")
+        result = _run_review(tmp_path, env_overrides=env)
+        assert result.returncode == 0, result.stderr
+        assert _read_shim_log(log) == []
+        exit_json = _read_exit_json()
+        assert exit_json.get("signal") == "GEMINI_UNAVAILABLE"
+        assert exit_json.get("reason") == "token_missing"
 
 
 class TestOutputRouting:
@@ -487,7 +512,7 @@ class TestOutputRouting:
         (fake_ws / "tmp").mkdir(parents=True)
         (fake_ws / "agent-review").mkdir()
         # Subject path must be inside fake_ws/tmp/ for DIFF_FILE containment.
-        subject = fake_ws / "tmp" / "qa-diff.txt"
+        subject = fake_ws / "tmp" / SUBJECT_ARTIFACT
         subject.write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
         # Template path — the wrapper resolves it relative to CWD, so the
         # template must be accessible from fake_ws. Symlink the real
@@ -500,6 +525,7 @@ class TestOutputRouting:
         env: dict[str, str] = {
             "REVIEW_TYPE": "diff",
             "DIFF_FILE": str(subject),
+            "ROUND": _ROUND,
             "GEMINI_API_KEY": "test",
             "PATH": f"{bin_dir}:/usr/bin:/bin",
         }
@@ -516,7 +542,7 @@ class TestOutputRouting:
         """``GEMINI_EXECUTION_CONTEXT=host`` -> output under ``tmp/``."""
         result, fake_ws = self._run_in_fake_ws(tmp_path)
         assert result.returncode == 0, result.stderr
-        assert (fake_ws / "tmp" / "gemini-review-output-1.md").exists()
+        assert (fake_ws / "tmp" / f"gemini-review-output-{_ROUND}.md").exists()
 
     def test_container_context_writes_to_agent_review(self, tmp_path: Path) -> None:
         """Container context -> output under ``agent-review/`` with workspace/session id."""
@@ -596,7 +622,6 @@ class TestProTier429_503Fallback:
         timeout: int = 30,
     ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
         """Install a sequence-shim and invoke the wrapper under the new contract."""
-        _write_qa_diff()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim_with_sequence(
             tmp_path,
@@ -609,11 +634,8 @@ class TestProTier429_503Fallback:
         env["GEMINI_MODEL"] = "gemini-3.1-pro-preview"
         if extra_env:
             env.update(extra_env)
-        try:
-            result = _run_review(tmp_path, env_overrides=env, timeout=timeout)
-            return result, _read_shim_log(log)
-        finally:
-            _QA_DIFF_PATH.unlink(missing_ok=True)
+        result = _run_review(tmp_path, env_overrides=env, timeout=timeout)
+        return result, _read_shim_log(log)
 
     def test_pro_429_retries_with_flash_high(self, tmp_path: Path) -> None:
         """429 on Pro tier -> second call with -m gemini-3-flash-high, success."""
@@ -689,3 +711,110 @@ class TestProTier429_503Fallback:
             extra_env={"PREFLIGHT_CACHE_FILE": str(cache_file)},
         )
         assert not cache_file.exists(), "preflight cache should be invalidated after missing-binary failure"
+
+
+# ---------------------------------------------------------------------------
+# Shared-artifact isolation
+# ---------------------------------------------------------------------------
+# The module fixture is the only thing keeping the wrapper runs above off the
+# live tmp/ artifacts, and none of those tests observes it. These tests are its
+# lock. Every one works under tmp_path; none reads or writes the real
+# checkout's tmp/. The generic snapshot/restore mechanism is locked separately,
+# in tests/helpers/test_artifact_isolation.py.
+
+
+class TestSharedArtifactIsolation:
+    """Cover the gemini managed set and the module fixture that applies it."""
+
+    # Every tmp/ path gemini-review.sh and _review-common.sh name is managed,
+    # so nothing is exempt here. The wrapper's default preflight cache is in
+    # the managed set rather than exempt because the auth-failure tests that
+    # reach the wrapper's `rm -f` do not all override PREFLIGHT_CACHE_FILE.
+    _UNMANAGED_WRAPPER_TMP_PATHS: frozenset[str] = frozenset()
+
+    @pytest.fixture(autouse=True)
+    def _isolate_shared_artifacts(self) -> Iterator[str]:
+        """Shadow the module fixture, which would otherwise write the real tmp/.
+
+        These tests drive the mechanism themselves, under ``tmp_path``. The tag
+        is what ``test_class_fixture_shadows_the_module_fixture`` reads to
+        observe which definition of the name is in effect.
+        """
+        yield _CLASS_SHADOW_TAG
+
+    def test_class_fixture_shadows_the_module_fixture(self, _isolate_shared_artifacts: str) -> None:
+        assert _isolate_shared_artifacts == _CLASS_SHADOW_TAG
+
+    def test_managed_set_lists_the_expected_paths_in_order(self, tmp_path: Path) -> None:
+        assert _managed_artifacts(tmp_path, "7") == (
+            tmp_path / "gemini-exit.json",
+            tmp_path / "gemini-review-err.txt",
+            tmp_path / ".gemini-preflight-cache.json",
+            tmp_path / "gemini-test-subject.txt",
+            tmp_path / "empty-subject-for-gemini-test.txt",
+            tmp_path / "gemini-review-output-7.md",
+            tmp_path / "gemini-subject-sanitized-7.txt",
+        )
+
+    def test_managed_set_covers_every_tmp_path_the_wrapper_names(self, tmp_path: Path) -> None:
+        named = wrapper_tmp_paths(
+            [Path(REVIEW_SCRIPT), REVIEW_COMMON],
+            {"ROUND": "7", "suffix": "7", "reviewer": "gemini"},
+        )
+        managed = {path.relative_to(tmp_path).as_posix() for path in _managed_artifacts(tmp_path, "7")}
+        assert named - managed == self._UNMANAGED_WRAPPER_TMP_PATHS
+
+    def test_default_env_binds_the_round_and_subject_constants(self, tmp_path: Path) -> None:
+        env = _default_env(tmp_path / "bin")
+        assert env["ROUND"] == _ROUND
+        assert env["DIFF_FILE"] == str(_SUBJECT_PATH)
+
+    def test_run_review_forwards_the_bound_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, str] = {}
+
+        def _capture(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.update(kwargs["env"])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        _run_review(tmp_path, env_overrides=_default_env(tmp_path / "bin"))
+        assert captured["ROUND"] == _ROUND
+        assert captured["DIFF_FILE"] == str(_SUBJECT_PATH)
+
+    def test_subject_is_not_the_live_review_subject(self) -> None:
+        # The diff-review gate hands its reviewers a subject file under tmp/;
+        # a test that claims that name destroys the review in flight.
+        assert _SUBJECT_PATH == WORKSPACE / "tmp" / "gemini-test-subject.txt"
+        assert _EMPTY_SUBJECT_PATH == WORKSPACE / "tmp" / "empty-subject-for-gemini-test.txt"
+
+    def test_module_fixture_restores_the_workspace_tmp_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "WORKSPACE", tmp_path)
+        tmp_dir = tmp_path / "tmp"
+        tmp_dir.mkdir()
+        signal = tmp_dir / "gemini-exit.json"
+        signal.write_bytes(b"live signal")
+        subject = tmp_dir / SUBJECT_ARTIFACT
+        output = tmp_dir / f"gemini-review-output-{_ROUND}.md"
+
+        # pytest wraps a fixture in an object that refuses direct calls and
+        # leaves the undecorated generator reachable at __wrapped__. The module
+        # fixture is addressed through globals() because this class shadows its
+        # name.
+        isolation = globals()["_isolate_shared_artifacts"].__wrapped__()
+        next(isolation)
+        assert not signal.exists()
+        assert subject.is_file()
+
+        signal.write_bytes(b"written by the run")
+        output.write_bytes(b"written by the run")
+        with pytest.raises(StopIteration):
+            next(isolation)
+
+        assert signal.read_bytes() == b"live signal"
+        assert not output.exists()
+        assert not subject.exists()
+
+    def test_isolation_fixture_is_autouse_at_module_scope(self) -> None:
+        marker = getattr(globals()["_isolate_shared_artifacts"], "_fixture_function_marker", None)
+        assert marker is not None, "pytest no longer exposes the fixture marker here — update this assertion"
+        assert marker.autouse

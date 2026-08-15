@@ -90,7 +90,7 @@ composed by the wrapper into the `-m <tier-short>-<effort>` alias
 registered in `.gemini/settings.json` customAliases. The standard
 agent is pinned to `effort: medium`; variants (`gemini-reviewer-high`,
 `gemini-reviewer-xhigh`, `gemini-reviewer-max`) override the pin by
-setting a different `EFFORT` value before invocation.
+passing a different `EFFORT` value as a CLI_ARG.
 
 The MEDIUM effort tier runs the lower-capability model at its MAX
 internal thinking — the model upgrade happens at HIGH+, not the
@@ -109,10 +109,10 @@ internal thinking minimum — MEDIUM is the floor).
 
 **Ceiling collision**: Gemini Pro tops out at `HIGH` — `EFFORT=xhigh`,
 `EFFORT=max`, and `EFFORT=medium` all collapse to `<tier-sn>-high`
-at wrapper composition time. See Risk-001 in
-[docs/effort_tiers.md](../../docs/effort_tiers.md) for the cross-family
-asymmetry rationale and the magnitude of the gap vs Claude-native
-equivalents.
+at wrapper composition time. See
+[Cross-Family Asymmetry](../../docs/effort_tiers.md#cross-family-asymmetry)
+in `docs/effort_tiers.md` for the rationale and the magnitude of the
+gap vs Claude-native equivalents.
 
 ### 429/503 HIGH-tier Fallback
 
@@ -243,8 +243,11 @@ for output file naming):
 REVIEW_SESSION_ID=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
 ```
 
-Export `REVIEW_SESSION_ID` as an env var — the review script inherits
-it for output file naming.
+Do NOT `export` it. Pass it as a `KEY=value` CLI_ARG on the task
+invocation, per the **CLI Invocation** section below; the shim injects
+the validated value into the wrapper's environment, where it is used
+for output file naming in container mode. The host path names artifacts
+by `ROUND` and does not take `REVIEW_SESSION_ID`.
 
 ## Caller Contract
 

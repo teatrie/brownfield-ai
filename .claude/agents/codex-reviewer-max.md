@@ -17,7 +17,7 @@ loop.
 
 **Role**: Cross-Family Model Review Bridge (`effort: max`).
 
-This variant uses the `max` reasoning-effort pin. See [codex-reviewer.md](codex-reviewer.md) for full pre-flight, invocation, Caller Contract, and output contract. The caller MUST set `EFFORT=max` in the environment before invoking `task agent:review:codex` / `task agent:review:codex:local`. **Ceiling collision**: Codex tops out at `xhigh`, so the wrapper collapses `EFFORT=max` down to `model_reasoning_effort=xhigh` — see Risk-001 in [docs/effort_tiers.md](../../docs/effort_tiers.md).
+This variant uses the `max` reasoning-effort pin. See [codex-reviewer.md](codex-reviewer.md) for full pre-flight, invocation, Caller Contract, and output contract. The caller MUST pass `EFFORT=max` as a CLI_ARG to `task agent:review:codex` / `task agent:review:codex:local` — never as an exported shell variable, per the **CLI Invocation** section of the base file. **Ceiling collision**: Codex tops out at `xhigh`, so the wrapper collapses `EFFORT=max` down to the top-level `-c "model_reasoning_effort=xhigh"` — see [Cross-Family Asymmetry](../../docs/effort_tiers.md#cross-family-asymmetry) in `docs/effort_tiers.md`.
 
 Refer to the **Effort Tier Mapping** table in [codex-reviewer.md](codex-reviewer.md) for the full `EFFORT` → Codex `model_reasoning_effort` → Claude-equivalent mapping.
 
@@ -27,7 +27,7 @@ Reserved for exceptional cases where `codex-reviewer-xhigh` has demonstrably fai
 
 ## Caller Contract
 
-Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-reviewer.md#caller-contract). Callers pass `REVIEW_TYPE` + `DIFF_FILE` CLI_ARGS; the wrapper loads the template from `.claude/prompts/reviewer/<REVIEW_TYPE>.md` and pipes it concatenated with the sanitized subject onto `codex exec review`'s stdin. The bridge agent does not author prompts. Note: `-max` shares the effective Codex internal setting with `-xhigh`; this variant is a signaling choice, not a capability upgrade.
+Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-reviewer.md#caller-contract). Callers pass `REVIEW_TYPE` + `DIFF_FILE` CLI_ARGS; the wrapper loads the template from `.claude/prompts/reviewer/<REVIEW_TYPE>.md` and pipes it concatenated with the sanitized subject onto `codex exec -p reviewer`'s stdin, which is the sole subject channel for every `REVIEW_TYPE`. The bridge agent does not author prompts. Note: `-max` shares the effective Codex internal setting with `-xhigh`; this variant is a signaling choice, not a capability upgrade.
 
 **Plan-review example at `max` effort (frontier reservation)**:
 
@@ -37,9 +37,11 @@ task agent:review:codex:local -- ROUND=1 EFFORT=max MODEL=gpt-5.5 \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 
 # Container (API-key) — gpt-5.5 is OAuth-only in Codex CLI as of
-# 2026-04-24. The wrapper does NOT auto-downgrade on auth failure
-# (codex-review.sh:314-327 fail-closes), so the operator MUST pass
-# MODEL=gpt-5.4 explicitly in container mode.
+# 2026-04-24. The wrapper does NOT auto-downgrade on auth failure: the
+# ERROR_CLASS="auth" branch in codex-review.sh emits CODEX_ERROR with
+# error_class=auth and exits 0, so the outcome is only visible in
+# tmp/codex-exit.json. The operator MUST pass MODEL=gpt-5.4 explicitly
+# in container mode.
 task agent:review:codex -- ROUND=1 EFFORT=max MODEL=gpt-5.4 \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 ```

@@ -6,12 +6,10 @@ and validates each remaining ``KEY=value`` token supplied via Taskfile
 
 - ``ALLOWED_KEYS_REGEX`` — a finite allowlist of keys a review task may
   receive from the caller (ROUND, EFFORT, REVIEW_SESSION_ID, WORKSPACE,
-  REVIEW_TYPE, GEMINI_MODEL, GEMINI_TIMEOUT, MODEL, DIFF_FILE,
-  REVIEW_MODE). The
-  legacy keys ``REVIEW_PROMPT_FILE``, ``PROMPT_FILE``, and
-  ``REVIEW_DIFF_FILE`` were removed in TODO-0092 Phase A — callers now
-  pass ``REVIEW_TYPE`` (template enum) + ``DIFF_FILE`` (subject path)
-  and the wrapper loads the committed template from a hardcoded path.
+  REVIEW_TYPE, GEMINI_MODEL, GEMINI_TIMEOUT, MODEL, DIFF_FILE). No key
+  names a prompt file: callers pass ``REVIEW_TYPE`` (template enum) plus
+  ``DIFF_FILE`` (subject path), and the wrapper loads the committed
+  template from a hardcoded path, so the template is not caller-supplied.
 - ``VALUE_REGEX`` — ``[A-Za-z0-9._/:@+=-]*``. Rejects any value
   containing whitespace, shell metacharacters, or expansion tokens.
 
@@ -53,14 +51,15 @@ ALLOWED_KEYS: tuple[str, ...] = (
     "GEMINI_TIMEOUT",
     "MODEL",
     "DIFF_FILE",
-    "REVIEW_MODE",
 )
 
-# Keys removed by TODO-0092 Phase A — explicitly asserted rejected below.
+# Keys a caller might still plausibly pass that the shim must reject. Asserted
+# below so a silent re-admission to the allowlist cannot pass unnoticed.
 REMOVED_KEYS: tuple[str, ...] = (
     "REVIEW_PROMPT_FILE",
     "PROMPT_FILE",
     "REVIEW_DIFF_FILE",
+    "REVIEW_MODE",
 )
 
 
@@ -135,7 +134,7 @@ class TestValidInjection:
 
     @pytest.mark.parametrize("removed_key", REMOVED_KEYS)
     def test_removed_legacy_keys_rejected(self, removed_key: str) -> None:
-        """Keys deprecated in TODO-0092 Phase A are rejected by the allowlist."""
+        """Keys outside the allowlist are rejected, never silently ignored."""
         result = _run_shim("env", f"{removed_key}=tmp/any.txt")
         assert result.returncode == 2, f"Legacy key {removed_key!r} should be rejected, got {result.returncode}"
         assert "not allowlisted" in result.stderr

@@ -17,5 +17,4 @@ exec docker compose run --rm --user agent \
   -e MODEL \
   -e REVIEW_TYPE \
   -e DIFF_FILE \
-  -e REVIEW_MODE \
   agent-cli codex-review

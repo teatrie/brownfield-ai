@@ -32,7 +32,7 @@ agent. Review criteria live in the committed reviewer templates under
 `.claude/prompts/reviewer/*.md` (single source of truth enforced by
 `scripts/lint_reviewer_templates.py`); the task wrapper concatenates
 the appropriate template with the sanitized subject and pipes it to
-`codex exec review --base` on stdin. See the Cross-Family Review
+`codex exec -p reviewer` on stdin. See the Cross-Family Review
 Extension in [docs/verification_protocol.md](../../docs/verification_protocol.md)
 for the activation protocol governing when this agent is invoked.
 
@@ -93,20 +93,23 @@ review. The invocation path depends on the pre-flight `mode`.
 REVIEW_SESSION_ID=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
 ```
 
-Export `REVIEW_SESSION_ID` as an env var — the review script inherits
-it for output file naming.
+Do NOT `export` it. Pass it as a `KEY=value` CLI_ARG on the task
+invocation, per the **CLI Invocation** section below; the shim injects
+the validated value into the wrapper's environment, where it is used
+for output file naming in container mode. The host path names artifacts
+by `ROUND` and ignores `REVIEW_SESSION_ID`; run-scoping of host artifacts
+is tracked separately.
 
 ## Caller Contract
 
 The calling agent prepares a subject artifact under `tmp/` (or `agent-review/` in container mode) and passes two CLI_ARGS:
 
 - `REVIEW_TYPE`: one of `plan | spec | diff | epic | spec-req-verification`. Selects the template at `.claude/prompts/reviewer/<REVIEW_TYPE>.md` that the task wrapper concatenates onto the CLI's input.
-- `DIFF_FILE`: workspace-relative path to the subject artifact. The wrapper realpath-validates containment under `tmp/` or `agent-review/`; paths outside are rejected. Artifacts prepared outside `tmp/` must be copied or symlinked into `tmp/` first.
-- `REVIEW_MODE` (optional, default `branch`): `branch` | `fixture`. Only meaningful for `REVIEW_TYPE=diff`. In `branch` mode the wrapper runs `codex exec review --base` so Codex's native 10-point rubric critiques the live `git diff main..HEAD`; the combined prompt rides along as instructions supplement. In `fixture` mode the wrapper runs plain `codex exec -p reviewer` — the combined template+DIFF_FILE prompt on stdin is the sole subject channel. Pass `REVIEW_MODE=fixture` whenever DIFF_FILE is a synthetic/fixture diff that does NOT match the working-tree git diff; otherwise `--base` silently overrides it (TODO-0114).
+- `DIFF_FILE`: workspace-relative path to the subject artifact. The wrapper realpath-validates containment under `tmp/` or `agent-review/`; paths outside are rejected. Artifacts prepared outside `tmp/` must be copied or symlinked into `tmp/` first. This is the sole subject channel for every `REVIEW_TYPE`, `diff` included — the reviewed subject is exactly the supplied `DIFF_FILE` whether or not it matches the working-tree git diff, so a synthetic or fixture diff is reviewed as given. The model still runs under `--sandbox danger-full-access` and retains filesystem access, so it may read the tree on its own initiative; what it is *given* to review never comes from there.
 
 The wrapper owns template loading, subject sanitization (ANSI/null/control-char stripping), and CLI construction. The bridge agent does NOT author prompt text, does NOT sanitize the subject, and does NOT construct a combined prompt file — those responsibilities moved to the wrapper in TODO-0092 Phase A.
 
-Codex CLI semantics: in the default `REVIEW_MODE=branch` path, `codex exec review --base <branch>` reads the git diff against the base branch and the combined template+subject prompt is piped on stdin as the **instructions channel** — the `--base` git read and the stdin prompt are complementary. In the `REVIEW_MODE=fixture` path the wrapper suppresses `--base`; stdin is the **subject channel** (matching the Gemini/Copilot contract). Raw `codex exec -p reviewer` invocations that bypass the task wrapper are NOT a supported path — the task wrapper is the single source of review criteria.
+Codex CLI semantics: every `REVIEW_TYPE` routes through plain `codex exec -p reviewer` with the combined template+subject prompt piped on stdin as the **subject channel** (matching the Gemini/Copilot contract). The `codex exec review` subcommand is not used: it takes review instructions only from an explicit `[PROMPT]` argument, so a prompt piped to it is read by nothing and discarded, and its `--base` flag would substitute the live `git diff` for the caller's `DIFF_FILE`. Raw `codex exec -p reviewer` invocations that bypass the task wrapper are NOT a supported path — the task wrapper is the single source of review criteria.
 
 ### CLI Invocation
 
@@ -115,7 +118,7 @@ mode. Extract the round number from the calling agent's delegation
 prompt and assign it to `ROUND` (default `ROUND=1`).
 
 All non-secret variables (`ROUND`, `EFFORT`, `REVIEW_SESSION_ID`,
-`WORKSPACE`, `MODEL`, `REVIEW_TYPE`, `DIFF_FILE`, `REVIEW_MODE`) are threaded through
+`WORKSPACE`, `MODEL`, `REVIEW_TYPE`, `DIFF_FILE`) are threaded through
 Taskfile CLI_ARGS per Req-006 — pass them as positional `KEY=value`
 arguments AFTER the task name. Do NOT `export` them in the shell; the
 shim (`cli-args-to-env.sh`) validates each token against the allowlist
@@ -136,19 +139,27 @@ task agent:review:codex -- ROUND=$ROUND EFFORT=medium REVIEW_SESSION_ID=$REVIEW_
 task agent:review:codex:local -- ROUND=$ROUND EFFORT=medium REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
 
+`REVIEW_SESSION_ID` is absent here because the host path names its
+artifacts by `ROUND`, not by session.
+
 The wrapper script handles CLI flags, output routing, error
 classification, retry logic, and exit signal JSON.
 
 The agent does NOT invoke `codex` directly — all CLI construction is
 encapsulated in the wrapper script.
 
-**Optional per-round model override**: The Orchestrator may pass a
-`MODEL` arg (e.g., `MODEL=gpt-5.4`) to override the profile's default
-model for the current round:
+**Optional per-round model selection**: The Orchestrator may pass a
+`MODEL` CLI_ARG (e.g., `MODEL=gpt-5.4`) to select the model for the
+current round:
 
 ```bash
 task agent:review:codex:local -- ROUND=$ROUND EFFORT=high MODEL=gpt-5.4 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
+
+The profile itself pins nothing today — its `[profiles.reviewer]`
+table aborts `codex exec -p reviewer` (**TODO-0228**); see
+[docs/effort_tiers.md](../../docs/effort_tiers.md) §"Where the Codex
+Effort Value Comes From".
 
 ---
 
@@ -156,14 +167,18 @@ task agent:review:codex:local -- ROUND=$ROUND EFFORT=high MODEL=gpt-5.4 REVIEW_T
 
 | Context | Model | Rationale |
 |---|---|---|
-| Default code review | `gpt-5.3-codex` | Review-optimized, cheapest. No `gpt-5.5-codex` SKU exists yet (as of 2026-04-24). |
+| Default code review | caller-supplied via `MODEL`; the CLI's own default when unset | Pass `MODEL=gpt-5.3-codex` for the review-optimized, cheapest option. No `gpt-5.5-codex` SKU exists yet (as of 2026-04-24). |
 | Plan reviews (architecture/design) | `gpt-5.4` | Strongest reasoning for structural analysis at sustainable cost. |
 | Large diffs (>1000 lines) | `gpt-5.4` | 1M-context capacity shared with gpt-5.5 — no upgrade benefit at this scale. |
-| Rework plan reviews (MAX tier) | `gpt-5.5` (local OAuth) / `gpt-5.4` (container API-key) | Frontier-tier ceiling. gpt-5.5 leads on Terminal-Bench 2.0 (82.7%) and Expert-SWE long-horizon coding; 2× the per-token cost of gpt-5.4 ($5/$30 vs $2.50/$15 per 1M tokens) is justified only at low-volume frontier reviews. **Auth constraint**: gpt-5.5 is currently OAuth-only in Codex CLI. **Operator selection, not runtime auto-downgrade**: the wrapper hard-fails on auth errors (`scripts/agent-cli/codex-review.sh:314-327`); container-mode callers MUST pass `MODEL=gpt-5.4` explicitly until OpenAI ships API-key support for gpt-5.5. |
+| Rework plan reviews (MAX tier) | `gpt-5.5` (local OAuth) / `gpt-5.4` (container API-key) | Frontier-tier ceiling. gpt-5.5 leads on Terminal-Bench 2.0 (82.7%) and Expert-SWE long-horizon coding; 2× the per-token cost of gpt-5.4 ($5/$30 vs $2.50/$15 per 1M tokens) is justified only at low-volume frontier reviews. **Auth constraint**: gpt-5.5 is currently OAuth-only in Codex CLI. **Operator selection, not runtime auto-downgrade**: on an auth error the `ERROR_CLASS="auth"` branch in `scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with `error_class=auth` and stops — no retry, no downgrade — but it **exits 0**, so the caller must read `tmp/codex-exit.json` rather than the process exit status. Container-mode callers MUST pass `MODEL=gpt-5.4` explicitly until OpenAI ships API-key support for gpt-5.5. |
 
-The Orchestrator overrides the default via `MODEL=gpt-5.5` (or
-`gpt-5.4`) env var. The wrapper passes `MODEL` as `-m` to
-`codex exec`, which overrides the profile's `model` key.
+The Orchestrator selects the model by passing `MODEL` as a `KEY=value`
+CLI_ARG (e.g., `MODEL=gpt-5.5` or `MODEL=gpt-5.4`), never as an
+exported shell variable, per the **CLI Invocation** section above. The
+wrapper forwards the value as `-m` to `codex exec`. When `MODEL` is
+unset the wrapper passes no `-m` at all and the run takes the CLI's own
+default model — no config layer supplies one (see the TODO-0228 note
+above).
 
 **Cost reference (2026-04-24)**: gpt-5.4 at $2.50/$15 per 1M
 input/output tokens; gpt-5.5 at $5.00/$30; gpt-5.3-codex
@@ -175,12 +190,12 @@ gpt-5.5 to MAX-tier rework keeps the cost delta bounded.
 
 ## Effort Tier Mapping
 
-The `EFFORT` env var (threaded as a Taskfile CLI_ARG per Req-006) is
-composed by the wrapper into `-c "profiles.reviewer.model_reasoning_effort=<value>"`
+The `EFFORT` value (threaded as a Taskfile CLI_ARG per Req-006) is
+composed by the wrapper into `-c "model_reasoning_effort=<value>"`
 and forwarded to `codex exec`. The standard agent is pinned to
 `effort: medium` as the baseline; variants (`codex-reviewer-high`,
 `codex-reviewer-xhigh`, `codex-reviewer-max`) override the pin by
-setting a different `EFFORT` value before invocation.
+passing a different `EFFORT` value as a CLI_ARG.
 
 The MEDIUM effort tier runs the lower-capability model at its MAX
 internal reasoning — the model upgrade happens at HIGH+, not the
@@ -189,25 +204,27 @@ internal reasoning level. This is why `EFFORT=medium` maps to
 
 | `EFFORT` | Codex `model_reasoning_effort` | Model | Claude Equivalent |
 |----------|-------------------------------|-------|-------------------|
-| `medium` | `high` | `gpt-5.3-codex` | Sonnet `high` |
-| `high`   | `high` | `gpt-5.4` (MODEL override) | Opus 4.7 `high` |
+| `medium` | `high` | caller-supplied via `MODEL`; the CLI's own default when unset | Sonnet `high` |
+| `high`   | `high` | `gpt-5.4` (caller-supplied via `MODEL`) | Opus 4.7 `high` |
 | `xhigh`  | `xhigh` | `gpt-5.4` | Opus 4.7 `xhigh` |
 | `max`    | `xhigh` (ceiling collision) | `gpt-5.5` local / `gpt-5.4` container | Opus 4.7 `max` |
 
 **Ceiling collision**: Codex tops out at `xhigh` — `EFFORT=max`
-collapses to `xhigh` at wrapper composition time. See Risk-001 in
-[docs/effort_tiers.md](../../docs/effort_tiers.md) for the cross-family
-asymmetry rationale and the magnitude of the gap vs Claude-native
-equivalents. The `minimal` and `low` tiers are NOT wired into any
-automated review path — MEDIUM is the reviewer floor. Use the corresponding bridge
-variants only.
+collapses to `xhigh` at wrapper composition time. See
+[Cross-Family Asymmetry](../../docs/effort_tiers.md#cross-family-asymmetry)
+in `docs/effort_tiers.md` for the rationale and for the orchestrator
+guidance on how much weight a bridge verdict carries at these tiers
+against a Claude-native one. The `minimal` and `low` tiers are NOT
+wired into any automated review path — MEDIUM is the reviewer floor.
+Use the corresponding bridge variants only.
 
 ### Transient-failure HIGH-tier Fallback
 
-When the orchestrator has passed a non-default `MODEL` (e.g.,
+When the orchestrator has passed an explicit `MODEL` (e.g.,
 `gpt-5.5` or `gpt-5.4`) and the Codex CLI stderr indicates a transient
 failure — `429`, `502`, `503`, `504`, rate-limit, timeout, or
-network-class error (full token list at `scripts/agent-cli/codex-review.sh:349,352`)
+network-class error (full token list in `_NETWORK_TOKENS` and the
+`IS_4XX_5XX_RETRY` gate in `scripts/agent-cli/codex-review.sh`)
 — the wrapper automatically retries once with
 `MODEL=gpt-5.3-codex` + `model_reasoning_effort=high` (MEDIUM tier at
 HIGH reasoning). A prominent stderr notice is emitted:
@@ -217,12 +234,15 @@ NOTICE: <model> <effort> returned <status>; falling back to gpt-5.3-codex high (
 ```
 
 Auth-class failures (`401`, `403`, "invalid api key", etc.) are
-non-retriable and exit fail-closed with `CODEX_ERROR` — no model
-downgrade. See `scripts/agent-cli/codex-review.sh:314-327`.
+non-retriable: the `ERROR_CLASS="auth"` branch in
+`scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with
+`error_class=auth`, neither retries nor downgrades the model, and
+**exits 0**. The process exit status is therefore not a failure
+signal on this path — read `tmp/codex-exit.json` to detect it.
 
-If `MODEL` is unset (default `gpt-5.3-codex` from the TOML pin is
-already in effect), the fallback is a no-op — the transient retry
-path handles same-model retries instead.
+If `MODEL` is unset the wrapper passes no `-m` at all, so there is no
+caller-selected model to step down from and the fallback is a no-op —
+the transient retry path handles same-model retries instead.
 
 **Known gap (follow-up)**: the wrapper's fallback is single-step —
 a transient failure on `gpt-5.5` (MAX tier) tier-jumps directly to
@@ -253,7 +273,8 @@ standard Dual-Model Review Gate, excluding the Codex verdict.
 Triggers:
 
 - Auth failure: HTTP 401/403 or stderr contains auth errors
-  — fail-closed immediately, no retry
+  — no retry and no downgrade; the wrapper exits 0, so
+  `tmp/codex-exit.json` is the only outcome signal
 - Transient failure: timeout, non-zero exit without auth message
   — retry once, then emit `CODEX_ERROR`
 - CLI crash: non-zero exit with unrecognized error — classify as

@@ -127,6 +127,24 @@ established in Phase A: `REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt` plus
 `task agent:review:{copilot,gemini,codex}` — or the `:local` variants —
 with these KEY=value args after `--`).
 
+**For the Codex and Gemini bridges only**, add `EFFORT=<tier>` naming the
+effort tier the Reviewer Model Selection step above settled on for that
+bridge variant. `EFFORT` is mandatory for those two, not optional: their
+wrappers compose the reasoning/thinking pin from the value the caller
+passes — Codex into `-c model_reasoning_effort=<value>`, Gemini into the
+effort-suffixed `-m` alias — so an invocation that omits it runs at
+whatever tier the wrapper falls back to instead of the one this gate
+selected, and the tier the reviewer reports then misdescribes the run it
+made. Do **not** pass `EFFORT` to `task agent:review:copilot`: the
+copilot wrapper has no effort forwarder, so nothing downstream consumes
+the value. Note there is no per-target key filter to stop you — the
+CLI_ARGS shim validates against a single global allowlist shared by all
+three bridge targets, and `EFFORT` is on it. The token therefore passes
+validation and is then dropped without a diagnostic, leaving a caller
+believing a tier is pinned when none is. See
+[docs/effort_tiers.md](../../../docs/effort_tiers.md) for the tier ladder
+and the per-family mapping.
+
 > **CRITICAL SCOPE CONSTRAINT (read this first):**
 > The `git diff` below is the SOLE artifact under review. It has been verified
 > against the git index and is authoritative — do NOT read changed files solely

@@ -22,12 +22,23 @@ columns in the Cross-Family Mapping table below for current coverage.
 
 The ladder below is the source of truth for the `EFFORT` env var
 threaded through the Taskfile CLI_ARGS pipeline into each reviewer's
-wrapper script. The reviewer floor is HIGH internal reasoning;
-`low` and `minimal` are rejected by the wrapper.
+wrapper script. The reviewer floor is HIGH internal reasoning. No
+config layer sets it: it is held by the caller contract on both
+bridges, and on Codex additionally by the wrapper, which defaults an
+omitted `EFFORT` to `high`. Every Codex and Gemini bridge invocation is
+required to pass `EFFORT` explicitly: the `codex-reviewer*` and
+`gemini-reviewer*` variants each
+name their own tier, and the diff-review gate carries `EFFORT` in the
+bridge invocation contract in `.claude/skills/diff-review/SKILL.md`
+Step 2. Claude-native reviewers take their tier from the agent
+frontmatter instead, per Model-Tier and Effort-Tier Binding below.
+The wrapper then validates the value it received against the enum
+`{medium,high,xhigh,max}`, so `low` and `minimal` are rejected — see
+[Where the Codex Effort Value Comes From](#where-the-codex-effort-value-comes-from).
 
 | Level | `EFFORT` value | Scope | Model Tier |
 |---|---|---|---|
-| medium (standard) | `medium` | default for all reviewers | Sonnet 4.6 / Flash / gpt-5.3-codex |
+| medium (standard) | `medium` | default for all reviewers | Sonnet 4.6 / Flash / caller-supplied `MODEL` (the CLI's own default when unset) |
 | high | `high` | plan reviews, architecture audits | Opus 4.7 / Pro / gpt-5.4 |
 | xhigh | `xhigh` | very deep diff/plan reviews — Opus 4.7 only | Opus 4.7 @ xhigh |
 | max | `max` | frontier reservation, exceptional cases | Opus 4.7 @ max |
@@ -54,13 +65,16 @@ translation without inspecting the wrapper.
 
 | `EFFORT` | Claude `code-review` | Codex (model + reasoning) | Gemini (`-m <alias>`) |
 |---|---|---|---|
-| medium | Sonnet `high` | `gpt-5.3-codex` + `high` | `<tier-sn>-high` |
+| medium | Sonnet `high` | caller-supplied `MODEL` (the CLI's own default when unset) + `high` | `<tier-sn>-high` |
 | high | Opus `high` | `gpt-5.4` + `high` (MODEL override) | `gemini-3.1-pro-high` |
-| xhigh | Opus `xhigh` | `gpt-5.4` + `xhigh` | `gemini-3.1-pro-high` (ceiling collision) |
-| max | Opus `max` | `gpt-5.4` + `xhigh` (ceiling collision) | `gemini-3.1-pro-high` (ceiling collision) |
+| xhigh | Opus `xhigh` | `gpt-5.4` + `xhigh` (MODEL override) | `gemini-3.1-pro-high` (ceiling collision) |
+| max | Opus `max` | `gpt-5.4` + `xhigh` (MODEL override, ceiling collision) | `gemini-3.1-pro-high` (ceiling collision) |
 
-> **Reviewers run at HIGH internal reasoning minimum.** `EFFORT=low` is
-> rejected by both bridge wrappers and has no Claude-native variant —
+> **Reviewers run at HIGH internal reasoning minimum.** The Codex
+> wrapper defaults an omitted `EFFORT` to `high`, and the caller
+> contract requires every bridge invocation to name its tier anyway.
+> `EFFORT=low` is rejected by both bridge wrappers and has no
+> Claude-native variant —
 > LOW is a false economy for review quality. MEDIUM is the floor for
 > reviewers; if a caller wants cheaper execution, they should pick a
 > lower model tier (Flash / gpt-5.3-codex / Sonnet) at HIGH internal
@@ -70,21 +84,26 @@ translation without inspecting the wrapper.
 
 The MEDIUM effort tier runs the lower-capability model at its MAX
 internal reasoning/thinking setting — it is not a "medium-everything"
-tier. This economizes on model cost (Sonnet/Flash/gpt-5.3-codex are
+tier. This economizes on model cost (Sonnet and Flash are
 substantially cheaper per token than Opus/Pro/gpt-5.4) while keeping
-reviews thorough. HIGH+ tiers elevate the model itself, not the
-internal reasoning level — from HIGH onwards, the internal setting
-stays at its maximum (collapsing at the family's ceiling for xhigh
-and max).
+reviews thorough. On Codex the `medium` model is not pinned to a
+lower tier by anything in this repo — it is caller-supplied via
+`MODEL`; the CLI's own default when unset — so the economy there
+depends on what the caller passes. HIGH+ tiers elevate the model
+itself, not the internal reasoning level — from HIGH onwards, the
+internal setting stays at its maximum (collapsing at the family's
+ceiling for xhigh and max).
 
 ## Model-Tier and Effort-Tier Binding
 
-`medium` effort pins to the standard reviewer model per family at its
-MAX internal setting — Sonnet 4.6 at `high` reasoning on Claude,
-`gemini-3-flash-high` on Gemini (Flash tier at HIGH thinking), and
-`gpt-5.3-codex` at `high` reasoning on Codex. This is the baseline
-gate posture for routine code review (see the **Design Rationale**
-note above the Cross-Family Mapping table).
+`medium` effort runs the standard reviewer model per family at its
+MAX internal setting — Sonnet 4.6 at `high` reasoning on Claude and
+`gemini-3-flash-high` on Gemini (Flash tier at HIGH thinking); those
+two are pinned. Codex is not: the wrapper passes no `-m` at
+`medium`, so the model is caller-supplied via `MODEL`; the CLI's own
+default when unset — at `high` reasoning either way. This is the
+baseline gate posture for routine code review (see the **Design
+Rationale** note above the Cross-Family Mapping table).
 
 `high`, `xhigh`, and `max` all require the deep-reasoning model per
 family: Opus 4.7 on Claude, `gemini-3.1-pro-preview` on Gemini, and
@@ -132,10 +151,10 @@ HIGH-tier invocation (EFFORT in {high,xhigh,max} or MODEL override = HIGH)
 
 - **Codex** (`scripts/agent-cli/codex-review.sh`): only triggers when
   the orchestrator passed a non-default `MODEL` (e.g., `gpt-5.4`). If
-  `MODEL` is unset (default `gpt-5.3-codex` from the TOML pin is
-  already in effect), the fallback is a no-op — retrying with the
-  same model is pointless. The transient-retry path still handles
-  same-model retries where appropriate.
+  `MODEL` is unset the wrapper passed no `-m` at all, so there is no
+  caller-selected model to step down from and the fallback is a
+  no-op. The transient-retry path still handles same-model retries
+  where appropriate.
 - **Gemini** (`scripts/agent-cli/gemini-review.sh`): triggers whenever
   the resolved `-m` alias is a Pro-tier alias (`gemini-3.1-pro-*`)
   and stderr indicates 429 or 503. The wrapper retries once with
@@ -170,34 +189,52 @@ default to `-xhigh` and only escalate to `-max` on explicit
 re-invocation. Treating `max` as the default erases the signal that
 `xhigh` provides and wastes frontier capacity on ordinary reviews.
 
-## TOML-Pin vs. CLI-Override Precedence
+## Where the Codex Effort Value Comes From
 
-`.codex/config.toml` pins `model_reasoning_effort = "high"` under
-`[profiles.reviewer]` as the baseline (Req-001). This value applies
-when the wrapper is invoked without an `EFFORT` arg, so even the bare
-invocation gets HIGH internal reasoning — consistent with the rule
-that the MEDIUM tier is "lower model at HIGH internal reasoning", not
-"medium-everything".
+No config file pins a reviewer reasoning effort. `.codex/config.toml`
+declares no `[profiles.*]` table and none may be added: on codex-cli
+0.146.0 that project-local path is not a config layer codex loads at
+all, so anything written there — a profile table included — is inert
+and reaches no run, while still reading like a live pin. Where a
+`config.toml` *is* loaded, a declared profile is worse than inert:
+`codex exec -p reviewer` aborts with a fatal config-load error,
+directing the settings into a separate
+`$CODEX_HOME/<name>.config.toml` instead. The user-level reviewer
+profile that ships in the agent-cli image
+(`docker/agent-cli/codex-config.toml`) pins the reviewer *model* only
+— and it is installed as a loaded `/home/agent/.codex/config.toml`, so
+its `[profiles.reviewer]` table currently trips that abort instead of
+pinning anything; relocating it to `$CODEX_HOME/reviewer.config.toml`
+is tracked as TODO-0228.
 
-When the wrapper is invoked with `EFFORT=<value>`, it constructs a
-CLI override:
+Effort is therefore carried entirely on the invocation. When the
+wrapper is invoked with `EFFORT=<value>` it applies the ceiling
+collapse (`medium`/`high` → `high`, `xhigh`/`max` → `xhigh`) and
+passes the result as a **top-level** `-c` override:
 
 ```text
--c profiles.reviewer.model_reasoning_effort=<EFFORT>
+-c model_reasoning_effort=<mapped-value>
 ```
 
-Codex's `-c` semantics dictate that CLI overrides take precedence
-over TOML pins (Req-003). A sample invocation threading a `high`
-override:
+The key must be top-level. The same key sent in a
+`profiles.reviewer.`-prefixed form does not reach the run — the CLI
+accepts the override and still reports its own default effort in the
+startup banner. The command the wrapper composes for a `high` override,
+with the combined template+subject prompt on stdin, is shown below as an
+illustration only — raw `codex exec` invocations that bypass the task
+wrapper are not a supported path:
 
 ```bash
 codex exec -p reviewer \
-  -c profiles.reviewer.model_reasoning_effort=high \
-  review --base main
+  -c model_reasoning_effort=high \
+  < tmp/codex-combined-prompt-1.txt
 ```
 
-The TOML pin remains the baseline for callers that do not set
-`EFFORT`; the pin is not removed when a CLI override is in effect.
+When `EFFORT` is unset the wrapper substitutes `high`, so the run
+still carries a `-c` override and never falls through to the CLI's own
+default reasoning effort — that substitution is what makes the HIGH
+floor above hold mechanically. Callers still pass `EFFORT` explicitly
+so the tier the reviewer reports is the tier the gate selected.
 
 ## Cross-Family Asymmetry
 
@@ -248,25 +285,13 @@ signal to investigate, not an automatic veto. Re-evaluate this
 posture on every Codex or Gemini release that changes the tier
 enums; update this section when the asymmetry narrows.
 
-## Known limitations (Epic 1 fixes)
-
-- **codex-reviewer cannot review plans without `PROMPT_FILE`**
-  (Risk-004). Codex's `exec review --base main` short-circuits on an
-  empty diff, which is the state for plan or spec reviews (a plan
-  lives in the working tree but is typically gitignored, and
-  `--base` inspects the git diff, not the file itself). Epic 1
-  Wave 1 ships Req-004 — the `PROMPT_FILE` env var on
-  `scripts/agent-cli/codex-review.sh` — which accepts a
-  `tmp/`-scoped prompt file (with path sanitization per Req-016)
-  and pipes it onto `codex exec`'s stdin. This re-enables
-  codex-reviewer for plan and spec review starting Epic 2.
-
 ## Invocation Quick Reference
 
 Three canonical invocations, one per family, at `-xhigh`:
 
 ```text
-task agent:code-review-xhigh     # Claude native
+Agent(subagent_type="code-review-xhigh")   # Claude native — subagent
+                                          # dispatch; no task alias exists
 task agent:review:codex:local -- ROUND=1 EFFORT=xhigh REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 task agent:review:gemini:local -- ROUND=1 EFFORT=xhigh GEMINI_MODEL=gemini-3.1-pro-preview REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```

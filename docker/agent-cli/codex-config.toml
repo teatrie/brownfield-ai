@@ -1,14 +1,34 @@
 [profiles.reviewer]
 model = "gpt-5.3-codex"
 
+# This file is installed at /home/agent/.codex/config.toml in the
+# agent-cli image (Dockerfile) and into a developer's
+# ~/.codex/config.toml by scripts/setup_codex_reviewer.sh.
+#
+# That install shape is known-broken on codex-cli 0.146.0 and needs
+# relocating. What decides whether a profile is honored is the file
+# NAME, not the config layer: any loaded `config.toml` that declares
+# `[profiles.<name>]` makes `codex exec -p <name>` abort with a fatal
+# config-load error (exit 1, no model call, no soft warning) —
+# "--profile `reviewer` cannot be used while <path>/config.toml
+# contains legacy `profile = "reviewer"` or `[profiles.reviewer]`
+# config; move those settings into <path>/reviewer.config.toml". The
+# honored shape is a separate `$CODEX_HOME/<name>.config.toml` holding
+# top-level keys and no `[profiles.*]` header. Relocating this table
+# there also touches the Dockerfile, setup_codex_reviewer.sh, and the
+# template-lint's TOML_PATHS, so it is tracked separately as TODO-0228.
+#
 # Criteria live in .claude/prompts/reviewer/_invariants.md
-# (INVARIANT:criteria + INVARIANT:adversarial-rigor blocks).
-# For default `codex review --base` usage, the codex-reviewer
-# wrapper passes the `diff.md` template via stdin. For non-diff
-# REVIEW_TYPE values, the wrapper pipes the corresponding template
-# on stdin to `codex exec -p reviewer` (no `review` subcommand).
-# Raw `codex exec -p reviewer` invocations (bypassing the task
-# wrapper) are NOT a supported path — the task wrapper is the
-# single source of criteria since criteria live in the templates.
-# Do not duplicate criteria here — the template-lint fails if
-# this block is re-introduced.
+# (INVARIANT:criteria + INVARIANT:adversarial-rigor blocks) and the
+# per-type templates beside it. For every REVIEW_TYPE the codex-reviewer
+# wrapper concatenates the selected template with the sanitized subject
+# and pipes the result to `codex exec -p reviewer` on stdin, which is the
+# sole subject channel. Raw `codex exec -p reviewer` invocations
+# (bypassing the task wrapper) are NOT a supported path — the task
+# wrapper is the single source of criteria since criteria live in the
+# templates.
+# Do not duplicate criteria here. The template-lint
+# (`_check_codex_toml_file` in scripts/lint_reviewer_templates.py)
+# inspects only `[profiles.reviewer.instructions]`, so criteria placed
+# anywhere else in this file are unchecked — this instruction is the
+# only control on that path.

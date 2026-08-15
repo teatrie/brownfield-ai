@@ -1,4 +1,4 @@
-"""Tests for the agent-cli entrypoint.sh command allowlist and prompt-file validation.
+"""Tests for the agent-cli entrypoint.sh allowlist and the scripts it dispatches to.
 
 Invokes the entrypoint shell script directly via subprocess on the host.
 Allowed commands dispatch to /usr/local/bin/<cmd>.sh which does not exist
@@ -11,19 +11,22 @@ from __future__ import annotations
 
 import glob
 import subprocess
+import sys
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+from helpers.artifact_isolation import isolate_artifacts, wrapper_tmp_paths
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 ENTRYPOINT = str(WORKSPACE / "docker" / "agent-cli" / "entrypoint.sh")
+REVIEW_COMMON = WORKSPACE / "scripts" / "agent-cli" / "_review-common.sh"
 
-# TODO-0092 Phase A moved the adversarial-rigor / experiment-delegation
-# block OUT of bridge agent bodies and INTO the canonical reviewer
-# invariants file. Template content is lint-enforced against this
-# source of truth (see scripts/lint_reviewer_templates.py +
-# tests/scripts/test_reviewer_templates.py).
+# Canonical home of the adversarial-rigor / experiment-delegation block.
+# Template content is lint-enforced against this source of truth (see
+# scripts/lint_reviewer_templates.py + tests/scripts/test_reviewer_templates.py).
 REVIEWER_INVARIANTS = WORKSPACE / ".claude" / "prompts" / "reviewer" / "_invariants.md"
 
 
@@ -76,22 +79,15 @@ class TestCommandAllowlist:
 
 
 # ---------------------------------------------------------------------------
-# 2. Prompt-file handling removed (TODO-0092 Phase A Commit 6)
+# 2. Subject handling is not the entrypoint's concern
 # ---------------------------------------------------------------------------
-# The ``--prompt-file`` parse+sandbox+export block was removed from the
-# entrypoint because the task-driven wrapper contract now carries the
-# subject via ``DIFF_FILE`` (validated by the inner wrapper against
-# tmp/ and agent-review/ containment). The entrypoint is a thin
-# command-allowlist dispatcher; argv pass-through covers remaining
-# per-wrapper flags like ``--round`` and ``--model``.
-#
-# The prior ``TestPromptFileValidation`` class was deleted with this
-# commit — each of its tests asserted a rejection path that is now the
-# downstream wrapper's responsibility (containment validation happens
-# in ``_review-common.sh::_review_validate_diff_file`` with
-# regression coverage in ``tests/scripts/test_wrapper_sanitation.py``).
-# Preserving the old tests would have required the entrypoint to keep
-# the dead surface alive, defeating the cleanup.
+# The entrypoint is a thin command-allowlist dispatcher: it carries no
+# ``--prompt-file`` parse/sandbox/export step, and per-wrapper flags such as
+# ``--round`` and ``--model`` reach the wrapper by argv pass-through. The
+# review subject travels as ``DIFF_FILE``, whose tmp/ and agent-review/
+# containment is enforced downstream by
+# ``_review-common.sh::_review_validate_diff_file`` and covered in
+# ``tests/scripts/test_wrapper_sanitation.py`` — hence no tests here.
 
 
 # ---------------------------------------------------------------------------
@@ -102,15 +98,14 @@ class TestCommandAllowlist:
 class TestPromptTemplateContent:
     """Verify the canonical reviewer invariants enforce experiment delegation.
 
-    Under TODO-0092 Phase A the experiment-delegation / adversarial-rigor
-    block is defined exactly once in ``.claude/prompts/reviewer/_invariants.md``
-    and injected into each reviewer template (``diff``, ``plan``, ``spec``,
-    ``epic``, ``spec-req-verification``) by the template-lint tooling.
-    Per-family reviewer bridge agents (``copilot-reviewer.md``,
-    ``gemini-reviewer.md``, ``codex-reviewer.md``) delegate the review
-    criteria to these templates and no longer carry the clause inline —
-    asserting on the bridge bodies would now be redundant with
-    ``tests/scripts/test_reviewer_templates.py``.
+    The experiment-delegation / adversarial-rigor block is defined exactly
+    once in ``.claude/prompts/reviewer/_invariants.md`` and injected into each
+    reviewer template (``diff``, ``plan``, ``spec``, ``epic``,
+    ``spec-req-verification``) by the template-lint tooling. Per-family
+    reviewer bridge agents (``copilot-reviewer.md``, ``gemini-reviewer.md``,
+    ``codex-reviewer.md``) delegate the review criteria to those templates and
+    carry no inline copy, so the bridge bodies are not asserted on here —
+    ``tests/scripts/test_reviewer_templates.py`` covers the injection.
     """
 
     def test_invariants_enforces_experiment_delegation(self) -> None:
@@ -151,15 +146,13 @@ class TestNoBypassVariable:
 class TestCodexConfigToml:
     """Verify docker/agent-cli/codex-config.toml is valid TOML.
 
-    TODO-0092 Phase A Commit 6 deleted the
-    ``[profiles.reviewer.instructions]`` section (role/focus with 10
-    numbered criteria) from this file. Criteria now live in
-    ``.claude/prompts/reviewer/_invariants.md`` (the canonical source
-    piped to the reviewer via the wrapper's combined-prompt stdin
-    channel). The lint rule in
-    ``scripts/lint_reviewer_templates.py::_check_codex_toml`` walks
-    this file alongside ``.codex/config.toml`` to prevent the
-    criteria block from being re-introduced.
+    The file carries no ``[profiles.reviewer.instructions]`` section: the 10
+    numbered criteria live solely in
+    ``.claude/prompts/reviewer/_invariants.md``, the canonical source piped to
+    the reviewer over the wrapper's combined-prompt stdin channel. The lint
+    rule in ``scripts/lint_reviewer_templates.py::_check_codex_toml`` walks
+    this file alongside ``.codex/config.toml`` to keep a criteria block from
+    being introduced here.
     """
 
     TOML_FILE = WORKSPACE / "docker" / "agent-cli" / "codex-config.toml"
@@ -181,10 +174,10 @@ class TestCodexConfigToml:
     def test_reviewer_profile_has_no_instructions_section(self) -> None:
         """The ``[profiles.reviewer.instructions]`` section MUST be absent.
 
-        Its re-introduction would duplicate the 10-point criteria now
-        hosted in ``.claude/prompts/reviewer/_invariants.md`` and
-        would be caught by the reviewer-template lint anyway — but an
-        explicit assertion here catches the drift closer to its source.
+        Adding it would duplicate the 10-point criteria hosted in
+        ``.claude/prompts/reviewer/_invariants.md``. The reviewer-template
+        lint would catch that too, but an explicit assertion here catches
+        the drift closer to its source.
         """
         data = tomllib.loads(self.TOML_FILE.read_bytes().decode())
         reviewer = data["profiles"]["reviewer"]
@@ -287,29 +280,77 @@ class TestSetupCodexReviewer:
 # ---------------------------------------------------------------------------
 # 7. Codex review script (Req-C03)
 # ---------------------------------------------------------------------------
+# The wrapper runs against the real checkout, so a run here writes six paths in
+# the live tmp/: the codex-exit.json signal the bridge agent reads, the
+# codex-review-err.txt diagnostic (which can hold hundreds of KB), the
+# test-owned review subject, and the round-scoped output / combined-prompt /
+# sanitized-subject trio. Every one is snapshotted and restored per test.
+
+SUBJECT_ARTIFACT = "agent-cli-test-subject.txt"
+
+
+def _managed_artifacts(tmp_dir: Path, round_id: str) -> tuple[Path, ...]:
+    """Return the tmp/ paths a codex-review run at ``round_id`` creates or overwrites.
+
+    Names are those written by ``scripts/agent-cli/codex-review.sh`` and
+    ``scripts/agent-cli/_review-common.sh``. Ordered by restore priority: the
+    unsuffixed artifacts a live review shares with these tests come first.
+    """
+    return (
+        tmp_dir / "codex-exit.json",
+        tmp_dir / "codex-review-err.txt",
+        tmp_dir / SUBJECT_ARTIFACT,
+        tmp_dir / f"codex-review-output-{round_id}.md",
+        tmp_dir / f"codex-combined-prompt-{round_id}.txt",
+        tmp_dir / f"codex-subject-sanitized-{round_id}.txt",
+    )
+
+
+def _prepare_subject(tmp_dir: Path) -> None:
+    """Clear the stale exit signal and write the subject the wrapper reviews.
+
+    ``codex-review.sh`` removes the signal itself, under a hard-fail check,
+    ahead of every path that writes one — so clearing it here is defensive
+    rather than required, and covers a run that aborts before reaching the
+    wrapper at all.
+    """
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_dir / "codex-exit.json").unlink(missing_ok=True)
+    (tmp_dir / SUBJECT_ARTIFACT).write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
 
 
 class TestCodexReviewScript:
     """Test scripts/agent-cli/codex-review.sh error classification and artifact routing.
 
-    Under the TODO-0092 Phase A contract the wrapper requires
-    ``REVIEW_TYPE=<enum>`` + ``DIFF_FILE=<path under tmp/ or agent-review/>``
-    before it will reach the token guard or codex invocation. The tests
-    that previously got as far as the token / error-classification paths
-    supply both via a shared ``tmp/qa-diff.txt`` fixture created in
-    ``setup_method``.
+    The wrapper requires ``REVIEW_TYPE=<enum>`` + ``DIFF_FILE=<path under
+    tmp/ or agent-review/>`` before it will reach the token guard or the codex
+    invocation, so every test here supplies both via the test-owned subject
+    that ``_isolate_shared_artifacts`` creates. ``_review_validate_diff_file``
+    constrains DIFF_FILE by containment, not by basename, so the subject needs
+    no name a live review also uses.
     """
 
     REVIEW_SCRIPT = str(WORKSPACE / "scripts" / "agent-cli" / "codex-review.sh")
-    QA_DIFF = WORKSPACE / "tmp" / "qa-diff.txt"
+    SUBJECT_FILE = WORKSPACE / "tmp" / SUBJECT_ARTIFACT
+    # Host-mode runs `rm -f tmp/codex-review-output-${ROUND}.md` against the real
+    # checkout, so host-context tests must claim a round no live review occupies —
+    # round 1 is the recovery artifact for a stranded bridge dispatch (CLAUDE.md §18).
+    SACRIFICIAL_ROUND = "999"
 
-    def setup_method(self) -> None:
-        """Clean shared artifacts and (re)create the standard diff subject."""
-        exit_json = WORKSPACE / "tmp" / "codex-exit.json"
-        if exit_json.exists():
-            exit_json.unlink()
-        self.QA_DIFF.parent.mkdir(exist_ok=True)
-        self.QA_DIFF.write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
+    @pytest.fixture(autouse=True)
+    def _isolate_shared_artifacts(self) -> Iterator[None]:
+        """Snapshot the tmp/ artifacts these tests write, then restore them.
+
+        Autouse covers every test in this class. An autouse fixture declared in
+        an outer conftest is ordered ahead of this one, so the capture leads
+        this class's own writes and the wrapper runs it guards — not every
+        write the session can make.
+        """
+        tmp_dir = WORKSPACE / "tmp"
+        yield from isolate_artifacts(
+            _managed_artifacts(tmp_dir, self.SACRIFICIAL_ROUND),
+            lambda: _prepare_subject(tmp_dir),
+        )
 
     def _run_review(
         self,
@@ -320,15 +361,21 @@ class TestCodexReviewScript:
     ) -> subprocess.CompletedProcess[str]:
         """Run the review script with controlled environment.
 
-        Defaults ``REVIEW_TYPE=diff`` + ``DIFF_FILE=tmp/qa-diff.txt`` so the
-        wrapper clears its arg_validation gate and reaches the behavior
-        under test. Callers can override either via ``env_overrides``.
+        Defaults ``REVIEW_TYPE=diff`` + ``DIFF_FILE`` pointed at the fixture's
+        subject so the wrapper clears its arg_validation gate and reaches the
+        behavior under test. Callers can override either via ``env_overrides``.
         """
         env = {
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "HOME": str(WORKSPACE / "tmp" / "codex-test-home"),
             "REVIEW_TYPE": "diff",
-            "DIFF_FILE": str(self.QA_DIFF),
+            "DIFF_FILE": str(self.SUBJECT_FILE),
+            # The wrapper's auth branch deletes this path outright, and the
+            # wrapper's default resolves inside the real workspace tmp/ — the
+            # developer's own preflight cache. Naming a test-owned file keeps
+            # it out of harm's way; the overlay below still lets a
+            # cache-invalidation test point it somewhere it can observe.
+            "PREFLIGHT_CACHE_FILE": str(WORKSPACE / "tmp" / "codex-test-preflight-cache.json"),
         }
         if env_overrides:
             env.update(env_overrides)
@@ -355,6 +402,7 @@ class TestCodexReviewScript:
         # With host context but no codex binary, the script will fail at
         # the codex exec call — but it should NOT emit CODEX_UNAVAILABLE
         self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={"CODEX_EXECUTION_CONTEXT": "host"},
         )
         # It should proceed past the token guard (non-zero exit is expected
@@ -381,6 +429,7 @@ class TestCodexReviewScript:
         # Since codex binary doesn't exist, it will fail at invocation,
         # but we can verify the path setup by checking error output.
         self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={
                 "CODEX_EXECUTION_CONTEXT": "host",
                 "OPENAI_API_KEY": "test-key",
@@ -398,6 +447,7 @@ class TestCodexReviewScript:
         mock_codex.write_text('#!/usr/bin/env bash\necho "Error: 401 Unauthorized - invalid api key" >&2\nexit 1\n')
         mock_codex.chmod(0o755)
         result = self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={
                 "CODEX_EXECUTION_CONTEXT": "host",
                 "OPENAI_API_KEY": "test-key",
@@ -417,6 +467,7 @@ class TestCodexReviewScript:
         mock_codex.write_text('#!/usr/bin/env bash\necho "Error: connection timeout" >&2\nexit 1\n')
         mock_codex.chmod(0o755)
         result = self._run_review(
+            args=["--round", self.SACRIFICIAL_ROUND],
             env_overrides={
                 "CODEX_EXECUTION_CONTEXT": "host",
                 "OPENAI_API_KEY": "test-key",
@@ -429,3 +480,96 @@ class TestCodexReviewScript:
         assert "CODEX_ERROR" in exit_json
         assert '"error_class":"transient"' in exit_json or '"error_class": "transient"' in exit_json
         assert '"retried":true' in exit_json or '"retried": true' in exit_json
+
+
+# ---------------------------------------------------------------------------
+# 8. Shared-artifact isolation
+# ---------------------------------------------------------------------------
+# The isolation above is the only thing keeping the wrapper runs in section 7
+# off the live tmp/ artifacts, and none of those tests observes it — so it can
+# be removed with the suite still green. These tests are its lock. Every one
+# works under tmp_path; none reads or writes the real checkout's tmp/. The
+# generic snapshot/restore mechanism is locked separately, in
+# tests/helpers/test_artifact_isolation.py.
+
+
+class TestSharedArtifactIsolation:
+    """Cover the codex managed set and the fixture ``TestCodexReviewScript`` depends on."""
+
+    # tmp/ paths codex-review.sh names that the managed set deliberately omits.
+    # The write probe carries the PID and is removed under a hard-fail check
+    # before the wrapper reaches anything else. The preflight cache is the
+    # wrapper's default, which every run from ``_run_review`` displaces with a
+    # test-owned PREFLIGHT_CACHE_FILE — pinned by
+    # ``test_run_review_binds_the_subject_and_the_cache_override``.
+    _UNMANAGED_WRAPPER_TMP_PATHS: frozenset[str] = frozenset({".codex-write-probe.$$", ".codex-preflight-cache.json"})
+
+    def test_managed_set_lists_the_expected_paths_in_order(self, tmp_path: Path) -> None:
+        assert _managed_artifacts(tmp_path, "7") == (
+            tmp_path / "codex-exit.json",
+            tmp_path / "codex-review-err.txt",
+            tmp_path / "agent-cli-test-subject.txt",
+            tmp_path / "codex-review-output-7.md",
+            tmp_path / "codex-combined-prompt-7.txt",
+            tmp_path / "codex-subject-sanitized-7.txt",
+        )
+
+    def test_managed_set_covers_every_tmp_path_the_wrapper_names(self, tmp_path: Path) -> None:
+        named = wrapper_tmp_paths(
+            [Path(TestCodexReviewScript.REVIEW_SCRIPT), REVIEW_COMMON],
+            {"ROUND": "7", "suffix": "7", "reviewer": "codex"},
+        )
+        managed = {path.relative_to(tmp_path).as_posix() for path in _managed_artifacts(tmp_path, "7")}
+        assert named - managed == self._UNMANAGED_WRAPPER_TMP_PATHS
+
+    def test_subject_is_not_the_live_review_subject(self) -> None:
+        # The diff-review gate hands its reviewers a subject file under tmp/;
+        # a test that claims that name destroys the review in flight.
+        assert TestCodexReviewScript.SUBJECT_FILE == WORKSPACE / "tmp" / "agent-cli-test-subject.txt"
+
+    def test_run_review_binds_the_subject_and_the_cache_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, str] = {}
+
+        def _capture(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.update(kwargs["env"])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        TestCodexReviewScript()._run_review()
+        assert captured["DIFF_FILE"] == str(TestCodexReviewScript.SUBJECT_FILE)
+        assert captured["PREFLIGHT_CACHE_FILE"] == str(WORKSPACE / "tmp" / "codex-test-preflight-cache.json")
+
+    def test_class_fixture_restores_the_workspace_tmp_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "WORKSPACE", tmp_path)
+        tmp_dir = tmp_path / "tmp"
+        tmp_dir.mkdir()
+        signal = tmp_dir / "codex-exit.json"
+        signal.write_bytes(b"live signal")
+        subject = tmp_dir / SUBJECT_ARTIFACT
+        output = tmp_dir / f"codex-review-output-{TestCodexReviewScript.SACRIFICIAL_ROUND}.md"
+
+        # pytest wraps a fixture in an object that refuses direct calls and
+        # leaves the undecorated generator reachable at __wrapped__.
+        fixture_body = TestCodexReviewScript.__dict__["_isolate_shared_artifacts"].__wrapped__
+        isolation = fixture_body(TestCodexReviewScript())
+        next(isolation)
+        assert not signal.exists()
+        assert subject.is_file()
+
+        signal.write_bytes(b"written by the run")
+        output.write_bytes(b"written by the run")
+        with pytest.raises(StopIteration):
+            next(isolation)
+
+        assert signal.read_bytes() == b"live signal"
+        assert not output.exists()
+        assert not subject.exists()
+
+    def test_isolation_fixture_is_autouse_with_no_setup_method(self) -> None:
+        fixture = TestCodexReviewScript.__dict__["_isolate_shared_artifacts"]
+        marker = getattr(fixture, "_fixture_function_marker", None)
+        assert marker is not None, "pytest no longer exposes the fixture marker here — update this assertion"
+        assert marker.autouse
+        # A setup_method runs ahead of a class fixture, so any write it made
+        # would land before the capture.
+        assert "setup_method" not in vars(TestCodexReviewScript)
