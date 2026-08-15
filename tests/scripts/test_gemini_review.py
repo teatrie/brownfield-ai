@@ -11,6 +11,23 @@ after the wrapper contract migrated from caller-supplied prompt files to
 - New contract: REVIEW_TYPE / DIFF_FILE argument validation.
 - Auth-failure cache invalidation and missing-binary handling.
 
+Every wrapper run is spawned from a throwaway root under the test's
+``tmp_path``. The wrapper and ``_review-common.sh`` resolve their exit signal,
+sanitized subject, review output and preflight cache against the CWD, so a
+spawn inheriting the pytest process CWD writes the artifacts a live review uses.
+
+Two kinds of root exist because ``_review-common.sh`` branches on ``git
+rev-parse --show-toplevel``: ``_anchored_root`` IS its own git toplevel and
+drives the absolute-path branch, ``_unanchored_root`` has no ``.git`` ancestor
+and drives the CWD-relative branch. ``_run_review`` puts every root through
+``_verify_partition`` before spawning anything.
+
+Both kinds therefore require a ``git`` binary on the closed ``PATH`` these
+tests build — ``docker/pytest-cli/Dockerfile`` apt-installs one at
+``/usr/bin/git``. ``_verify_partition`` settles both branches by running
+``git rev-parse`` under that same ``PATH``, and raises rather than letting a
+run drop onto the branch it did not declare.
+
 Tests install a PATH-prepended fake ``gemini`` shim that logs argv and
 stdin for each invocation. ``DIFF_FILE``-level path-containment tests live
 in ``tests/scripts/test_wrapper_sanitation.py`` and are not duplicated
@@ -23,39 +40,32 @@ import json
 import stat
 import subprocess
 import sys
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import NamedTuple, TypedDict
 
 import pytest
-from helpers.artifact_isolation import isolate_artifacts, wrapper_tmp_paths
 
 WORKSPACE: Path = Path(__file__).resolve().parents[2]
 REVIEW_SCRIPT: str = str(WORKSPACE / "scripts" / "agent-cli" / "gemini-review.sh")
-REVIEW_COMMON: Path = WORKSPACE / "scripts" / "agent-cli" / "_review-common.sh"
+# Canonical reviewer templates. Read-only: each scratch root symlinks this
+# directory into place so ``_review_template_path`` resolves, and the wrapper
+# only concatenates the template it finds there.
+REAL_TEMPLATES_DIR: Path = WORKSPACE / ".claude" / "prompts" / "reviewer"
 
-# Standard diff-subject filename used across tests. The wrapper's
+# Standard diff-subject filenames used across tests. The wrapper's
 # _review_validate_diff_file helper only accepts files realpath-contained
-# under the workspace's ``tmp/`` or ``agent-review/`` directories, so the
-# per-test pytest ``tmp_path`` cannot host the subject file. It imposes no
-# basename constraint, so these names are test-owned and share nothing with
-# the live diff-review subject.
+# under the run's own ``tmp/`` or ``agent-review/`` directories, so each
+# subject lives in the scratch root the run works from. It imposes no
+# basename constraint, so these names are test-owned.
 SUBJECT_ARTIFACT: str = "gemini-test-subject.txt"
 EMPTY_SUBJECT_ARTIFACT: str = "empty-subject-for-gemini-test.txt"
-_SUBJECT_PATH: Path = WORKSPACE / "tmp" / SUBJECT_ARTIFACT
-_EMPTY_SUBJECT_PATH: Path = WORKSPACE / "tmp" / EMPTY_SUBJECT_ARTIFACT
+_SUBJECT_TEXT: str = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n"
 
-# Host-mode runs truncate tmp/gemini-review-output-${ROUND}.md in the real
-# checkout, so these tests must claim a round no live review occupies — round 1
-# is the recovery artifact for a stranded bridge dispatch (CLAUDE.md §18).
-# Every env this module builds passes ROUND through, so this constant is the
-# round the wrapper runs at rather than a copy of the wrapper's own default.
+# The round every run here executes at. Every env this module builds passes it
+# through, so assertions can name tmp/gemini-review-output-<ROUND>.md and
+# observe the resolved round end to end. The value itself carries no meaning —
+# it is pinned only to be distinct from the wrapper's own default.
 _ROUND: str = "999"
-
-# Value the class-level isolation shadow in TestSharedArtifactIsolation yields.
-# The module fixture yields None, so a test that requests the name by hand can
-# tell which definition is in effect.
-_CLASS_SHADOW_TAG: str = "class-level isolation shadow"
 
 
 _SHIM_HELPER: str = """import json
@@ -105,11 +115,18 @@ def _install_shim(
     return bin_dir
 
 
-def _read_shim_log(log_path: Path) -> list[dict]:
+class ShimRecord(TypedDict):
+    """One fake-``gemini`` invocation as ``_SHIM_HELPER`` records it."""
+
+    argv: list[str]
+    stdin: str
+
+
+def _read_shim_log(log_path: Path) -> list[ShimRecord]:
     """Parse the shim's JSON-lines log."""
     if not log_path.exists():
         return []
-    records: list[dict] = []
+    records: list[ShimRecord] = []
     for line in log_path.read_text().splitlines():
         stripped = line.strip()
         if not stripped:
@@ -118,60 +135,271 @@ def _read_shim_log(log_path: Path) -> list[dict]:
     return records
 
 
-def _managed_artifacts(tmp_dir: Path, round_id: str) -> tuple[Path, ...]:
-    """Return the tmp/ paths a gemini-review run at ``round_id`` creates or overwrites.
+class ScratchRoot(NamedTuple):
+    """A throwaway workspace root plus the ``_review-common.sh`` branch it selects.
 
-    Names are those written by ``scripts/agent-cli/gemini-review.sh`` and
-    ``scripts/agent-cli/_review-common.sh`` on the host path these tests take,
-    plus the two test-owned subjects. Ordered by restore priority: the
-    unsuffixed artifacts a live review shares with these tests come first.
+    ``_review_sanitize_subject`` and ``_review_template_path`` both branch on
+    ``git rev-parse --show-toplevel``: inside a worktree they emit ABSOLUTE
+    paths under the toplevel, and the former additionally cds there to write;
+    outside one they emit CWD-RELATIVE paths. A root declares which branch it
+    selects and ``_verify_partition`` holds it to that declaration — silently
+    landing on the other branch would leave every assertion passing while the
+    branch went uncovered.
     """
-    return (
-        tmp_dir / "gemini-exit.json",
-        tmp_dir / "gemini-review-err.txt",
-        tmp_dir / ".gemini-preflight-cache.json",
-        tmp_dir / SUBJECT_ARTIFACT,
-        tmp_dir / EMPTY_SUBJECT_ARTIFACT,
-        tmp_dir / f"gemini-review-output-{round_id}.md",
-        tmp_dir / f"gemini-subject-sanitized-{round_id}.txt",
-    )
+
+    path: Path
+    anchored: bool
 
 
-def _prepare_subject(tmp_dir: Path) -> None:
-    """Clear the stale exit signal and write the subject the wrapper reviews."""
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    (tmp_dir / "gemini-exit.json").unlink(missing_ok=True)
-    (tmp_dir / SUBJECT_ARTIFACT).write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
+def _anchored_root(tmp_path: Path) -> ScratchRoot:
+    """Return a scratch root that is a git toplevel in its own right.
 
+    Args:
+        tmp_path: test temp dir to place the root under.
 
-@pytest.fixture(autouse=True)
-def _isolate_shared_artifacts() -> Iterator[None]:
-    """Snapshot the tmp/ artifacts these tests write, then restore them.
-
-    Autouse at module scope covers every test here, including any added later.
-    An autouse fixture declared in an outer conftest is ordered ahead of this
-    one, so the capture leads this module's own writes and the wrapper runs it
-    guards — not every write the session can make.
+    Returns:
+        The root to spawn the wrapper from, seeded with ``tmp/<subject>`` and
+        the reviewer templates.
     """
-    tmp_dir = WORKSPACE / "tmp"
-    yield from isolate_artifacts(
-        _managed_artifacts(tmp_dir, _ROUND),
-        lambda: _prepare_subject(tmp_dir),
-    )
+    root = _provision_root(tmp_path, "anchored_ws")
+    _write_git_skeleton(root)
+    return ScratchRoot(root, anchored=True)
 
 
-def _default_env(bin_dir: Path, *, review_type: str = "diff") -> dict[str, str]:
+def _unanchored_root(tmp_path: Path, *, agent_review: bool = False) -> ScratchRoot:
+    """Return a scratch root with no ``.git`` at or above it.
+
+    Args:
+        tmp_path: test temp dir to place the root under.
+        agent_review: also create the ``agent-review/`` sibling of ``tmp/``.
+            Off by default — only the container-routing branch writes there,
+            and ``_review_validate_diff_file`` tolerates its absence.
+
+    Returns:
+        The root to spawn the wrapper from, seeded with ``tmp/<subject>`` and
+        the reviewer templates.
+    """
+    root = _provision_root(tmp_path, "unanchored_ws")
+    if agent_review:
+        (root / "agent-review").mkdir(exist_ok=True)
+    return ScratchRoot(root, anchored=False)
+
+
+def _provision_root(tmp_path: Path, name: str) -> Path:
+    """Create a scratch root carrying the file structure gemini-review.sh needs.
+
+    Args:
+        tmp_path: test temp dir to place the root under.
+        name: directory name for the root.
+
+    Returns:
+        The created root.
+
+    The root is a child of ``tmp_path`` rather than ``tmp_path`` itself so the
+    mock bin dir, the scratch ``HOME`` and the explicitly-passed cache files
+    stay outside the tree a wrapper can reach through a CWD-relative write.
+    """
+    root = tmp_path / name
+    (root / "tmp").mkdir(parents=True, exist_ok=True)
+    (root / "tmp" / SUBJECT_ARTIFACT).write_text(_SUBJECT_TEXT)
+    _link_reviewer_templates(root)
+    return root
+
+
+def _link_reviewer_templates(root: Path) -> None:
+    """Symlink the canonical reviewer templates into a scratch root.
+
+    Args:
+        root: the scratch root to mirror the templates into.
+
+    ``_review_template_path`` yields ``.claude/prompts/reviewer/<type>.md``
+    under the run's toplevel or CWD, so the root has to resolve that path.
+    Mirroring the directory by symlink keeps the templates a single read-only
+    source rather than a copy that can drift.
+    """
+    claude_dir = root / ".claude" / "prompts" / "reviewer"
+    if claude_dir.exists() or claude_dir.is_symlink():
+        return
+    claude_dir.parent.mkdir(parents=True, exist_ok=True)
+    claude_dir.symlink_to(REAL_TEMPLATES_DIR)
+
+
+def _write_git_skeleton(root: Path) -> None:
+    """Make ``root`` a repository git accepts as a worktree toplevel.
+
+    Args:
+        root: the scratch root to anchor.
+
+    An empty ``.git`` directory does NOT qualify: ``git rev-parse
+    --show-toplevel`` rejects it and walks UP, returning the enclosing real
+    checkout at exit 0 — silently re-anchoring the wrapper onto the live
+    repository. ``HEAD`` naming a ref plus the ``objects/`` and ``refs/``
+    directories is the minimum git accepts.
+    """
+    git_dir = root / ".git"
+    (git_dir / "objects").mkdir(parents=True, exist_ok=True)
+    (git_dir / "refs").mkdir(exist_ok=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
+
+
+def _verify_partition(root: ScratchRoot, env: dict[str, str]) -> None:
+    """Hold the filesystem to the anchoring branch ``root`` declares.
+
+    Args:
+        root: the scratch root a wrapper run is about to use as its CWD.
+        env: the closed environment that run will receive.
+
+    Raises:
+        RuntimeError: the declared branch is not the branch git actually
+            selects from this root under this environment, or git could not be
+            asked at all — an undetermined branch fails closed exactly as a
+            contradicted one does.
+
+    Both sides settle on git's own verdict, mirroring the two-part test
+    ``_review-common.sh`` applies — ``git rev-parse --show-toplevel`` exiting 0
+    AND naming a non-empty path — so an environment entry that re-anchors the
+    run fails the guard whichever branch was declared. The unanchored side
+    keeps the ancestor walk ahead of that probe because its message names the
+    offending directory, which git's does not.
+    """
+    if root.anchored:
+        _require_own_git_toplevel(root.path, env)
+    else:
+        _reject_git_ancestor(root.path)
+        _require_no_git_toplevel(root.path, env)
+
+
+def _require_own_git_toplevel(root: Path, env: dict[str, str]) -> None:
+    """Fail unless ``git rev-parse --show-toplevel`` from ``root`` returns ``root``.
+
+    Args:
+        root: scratch directory a script will be spawned from.
+        env: the environment the spawn will get. Git is resolved through the
+            same ``PATH``, so an environment in which the wrapper itself could
+            not reach git fails here rather than silently demoting the run to
+            the unanchored branch.
+
+    Raises:
+        RuntimeError: git reports no worktree, or reports one that is not
+            ``root`` — in which case ``_review_sanitize_subject`` would cd
+            there and write the sanitized subject into that tree instead.
+    """
+    probe = _probe_git_toplevel(root, env)
+    reported = probe.stdout.strip()
+    if probe.returncode != 0 or not reported:
+        raise RuntimeError(
+            f"scratch root {root} is not a git toplevel: git rev-parse exited {probe.returncode} reporting {reported!r}: {probe.stderr.strip()}"
+        )
+    if Path(reported).resolve() != root.resolve():
+        raise RuntimeError(f"scratch root {root} anchors to {reported}, not to itself; wrapper writes would land there")
+
+
+def _require_no_git_toplevel(root: Path, env: dict[str, str]) -> None:
+    """Fail when git, run from ``root`` under ``env``, selects any worktree at all.
+
+    Args:
+        root: scratch directory a script will be spawned from.
+        env: the environment the spawn will get.
+
+    Raises:
+        RuntimeError: git selected a worktree, so ``_review-common.sh`` would
+            take its anchored branch from a root declared unanchored.
+
+    ``_reject_git_ancestor`` answers this question off the filesystem, which is
+    a proxy for git's decision and can disagree with it: a ``GIT_DIR`` in
+    ``env`` makes a directory with no ``.git`` anywhere above it answer as a
+    worktree, and the walk cannot see that. Asking git directly, under the
+    mapping the spawn receives, is what makes this side of the partition as
+    fail-closed as the anchored one.
+    """
+    probe = _probe_git_toplevel(root, env)
+    reported = probe.stdout.strip()
+    if probe.returncode == 0 and reported:
+        raise RuntimeError(f"scratch root {root} is declared unanchored but git selects the worktree at {reported} under this environment")
+
+
+def _reject_git_ancestor(root: Path) -> None:
+    """Fail when ``root`` or any ancestor of it is a git worktree.
+
+    Args:
+        root: scratch directory a script will be spawned from.
+
+    Raises:
+        RuntimeError: a ``.git`` entry exists at or above ``root``, which would
+            route wrapper writes to that worktree instead of the scratch root.
+
+    Both the lexical chain and the symlink-resolved chain are walked because
+    git discovers a worktree along the physical path, so a ``.git`` that only
+    appears once symlinks are resolved would escape a lexical walk.
+    """
+    resolved = root.resolve()
+    seen: set[Path] = set()
+    for candidate in (root, *root.parents, resolved, *resolved.parents):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if (candidate / ".git").exists():
+            raise RuntimeError(f"scratch root {root} lies inside the git worktree at {candidate}")
+
+
+def _probe_git_toplevel(root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Ask git, from ``root`` under ``env``, which worktree toplevel it selects.
+
+    Args:
+        root: scratch directory a script will be spawned from.
+        env: the environment the spawn will get.
+
+    Returns:
+        The completed ``git rev-parse --show-toplevel`` run. Return code 0
+        means git selected a worktree and stdout names it.
+
+    Raises:
+        RuntimeError: no git was found on ``env``'s ``PATH`` (or ``root`` no
+            longer exists), or the probe did not answer within its timeout.
+            Other start failures — a non-executable git, a ``root`` that is not
+            a directory — propagate as the ``OSError`` subclass they are.
+
+    ``lang.python.md`` routes git operations through GitPython; this helper is a
+    narrow exception. The question is not "what does git say" but "what will git
+    say to the wrapper spawn this root is being vetted for", which depends on
+    the ``PATH`` and ``GIT_*`` entries of the exact mapping the spawn receives —
+    a library call would answer against this interpreter's ambient environment
+    instead. One read-only ``rev-parse``, no repository mutation.
+    """
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except FileNotFoundError as exc:
+        # Raised for a git that is not on the PATH AND for a cwd that does not
+        # exist; the cause is only in ``exc``, so carry it rather than name one.
+        raise RuntimeError(
+            f"git rev-parse could not be started from {root} on PATH {env.get('PATH', '')} ({exc}); the anchoring branch cannot be established"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git rev-parse from {root} did not answer within {exc.timeout}s; the anchoring branch cannot be established"
+        ) from exc
+
+
+def _default_env(bin_dir: Path, root: ScratchRoot, *, review_type: str = "diff") -> dict[str, str]:
     """Build the minimal env the wrapper needs to reach the shim.
 
     Supplies ``REVIEW_TYPE``/``DIFF_FILE`` for the new contract, the host
     execution context (so the token guard + OAuth path is exercised), a token
-    so the token-missing guard does not short-circuit, and the round the
-    managed set covers. ``--round`` on argv still wins: the wrapper's parse
-    loop assigns after the ``ROUND`` default is read.
+    so the token-missing guard does not short-circuit, and the pinned round.
+    ``DIFF_FILE`` names the subject inside ``root``'s own ``tmp/`` for the
+    containment reason ``SUBJECT_ARTIFACT`` records. ``--round`` on argv still
+    wins: the wrapper's parse loop assigns after the ``ROUND`` default is read.
     """
     return {
         "REVIEW_TYPE": review_type,
-        "DIFF_FILE": str(_SUBJECT_PATH),
+        "DIFF_FILE": str(root.path / "tmp" / SUBJECT_ARTIFACT),
         "ROUND": _ROUND,
         "GEMINI_EXECUTION_CONTEXT": "host",
         "GEMINI_API_KEY": "test",
@@ -183,16 +411,34 @@ def _run_review(
     tmp_path: Path,
     env_overrides: dict[str, str],
     *,
+    root: ScratchRoot,
     args: list[str] | None = None,
     timeout: int = 15,
-    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Execute the gemini review script with a controlled env.
+    """Execute the gemini review script from ``root`` with a controlled env.
 
-    Creates a fake ``HOME/.gemini`` directory because ``run_gemini`` calls
-    ``mkdir -p "$HOME/.gemini"`` unconditionally. Optional ``cwd`` lets a
-    test run the wrapper from a fake workspace root (used by the DIFF_FILE
-    containment tests that require a sibling of ``tmp/``).
+    Args:
+        tmp_path: test temp dir supplying the scratch ``HOME``.
+        env_overrides: entries merged over the closed base env.
+        root: the throwaway workspace to run from. Required, with no default:
+            the wrapper resolves every artifact it writes against its CWD.
+        args: extra argv for the wrapper.
+        timeout: seconds to wait for the wrapper.
+
+    Returns:
+        The completed process with captured stdout/stderr.
+
+    ``HOME`` is a scratch directory because ``run_gemini`` calls ``mkdir -p
+    "$HOME/.gemini"`` unconditionally; it sits beside the scratch root rather
+    than inside it. The env mapping is closed — nothing is inherited from
+    ``os.environ`` — and the ``GIT_*`` family stays out in particular, since an
+    entry like ``GIT_WORK_TREE`` or ``GIT_DIR`` moves a run onto the branch it
+    did not declare. Exclusion cannot cover everything that does that: git
+    config reaches the same outcome through ``core.worktree``, which is read
+    from the repository, global and system config files a closed env does not
+    suppress. What holds the partition is therefore the guard itself —
+    ``_verify_partition`` probes git under this exact assembled mapping, from
+    this exact root, before anything is spawned.
     """
     home = tmp_path / "home"
     (home / ".gemini").mkdir(parents=True, exist_ok=True)
@@ -202,6 +448,7 @@ def _run_review(
     }
     for key, value in env_overrides.items():
         env[key] = value
+    _verify_partition(root, env)
     return subprocess.run(
         ["bash", REVIEW_SCRIPT, *(args or [])],
         stdin=subprocess.DEVNULL,
@@ -209,7 +456,7 @@ def _run_review(
         text=True,
         timeout=timeout,
         env=env,
-        cwd=str(cwd) if cwd is not None else str(WORKSPACE),
+        cwd=str(root.path),
     )
 
 
@@ -227,14 +474,15 @@ class TestEffortAliasComposition:
         *,
         effort: str,
         model: str,
-    ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
+    ) -> tuple[subprocess.CompletedProcess[str], list[ShimRecord]]:
         """Invoke the wrapper with the given EFFORT/model under the new contract."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
         env["EFFORT"] = effort
         env["GEMINI_MODEL"] = model
-        result = _run_review(tmp_path, env_overrides=env)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         return result, _read_shim_log(log)
 
     def test_pro_plus_high_composes_pro_alias(self, tmp_path: Path) -> None:
@@ -314,13 +562,29 @@ class TestEffortAliasComposition:
 # ---------------------------------------------------------------------------
 
 
-def _read_exit_json() -> dict:
-    """Read and parse the wrapper's ``tmp/gemini-exit.json`` if it exists."""
-    path = WORKSPACE / "tmp" / "gemini-exit.json"
+def _read_exit_json(root: ScratchRoot) -> dict[str, object]:
+    """Read and parse the ``tmp/gemini-exit.json`` the wrapper wrote under ``root``."""
+    path = root.path / "tmp" / "gemini-exit.json"
     if not path.exists():
         return {}
-    parsed: dict = json.loads(path.read_text())
+    parsed: dict[str, object] = json.loads(path.read_text())
     return parsed
+
+
+def _assert_diff_file_rejection(root: ScratchRoot) -> None:
+    """Assert the exit JSON under ``root`` names the DIFF_FILE gate specifically.
+
+    Args:
+        root: the scratch root the rejected run wrote its exit signal under.
+
+    ``error_class`` is ``arg_validation`` for every argument gate, so the
+    excerpt is what distinguishes this rejection from a REVIEW_TYPE, EFFORT or
+    ``--round`` one.
+    """
+    exit_json = _read_exit_json(root)
+    assert exit_json.get("signal") == "GEMINI_ERROR"
+    assert exit_json.get("error_class") == "arg_validation"
+    assert exit_json.get("stderr_excerpt") == "DIFF_FILE invalid or missing"
 
 
 class TestReviewTypeValidation:
@@ -330,25 +594,32 @@ class TestReviewTypeValidation:
         """Unset REVIEW_TYPE -> arg_validation JSON, non-zero exit, no shim call."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
         env.pop("REVIEW_TYPE")
-        result = _run_review(tmp_path, env_overrides=env)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode != 0
         assert _read_shim_log(log) == []
-        exit_json = _read_exit_json()
+        exit_json = _read_exit_json(root)
         assert exit_json.get("signal") == "GEMINI_ERROR"
         assert exit_json.get("error_class") == "arg_validation"
+        # error_class is shared by every argument gate; the excerpt is what
+        # names REVIEW_TYPE rather than DIFF_FILE, EFFORT or --round.
+        assert exit_json.get("stderr_excerpt") == "REVIEW_TYPE invalid or missing"
 
     def test_invalid_review_type_enum_rejected(self, tmp_path: Path) -> None:
         """REVIEW_TYPE=foo (not in enum) -> arg_validation rejection."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir, review_type="foo")
-        result = _run_review(tmp_path, env_overrides=env)
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root, review_type="foo")
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode != 0
         assert _read_shim_log(log) == []
-        exit_json = _read_exit_json()
+        exit_json = _read_exit_json(root)
+        assert exit_json.get("signal") == "GEMINI_ERROR"
         assert exit_json.get("error_class") == "arg_validation"
+        assert exit_json.get("stderr_excerpt") == "REVIEW_TYPE invalid or missing"
 
 
 class TestDiffFileValidation:
@@ -358,57 +629,57 @@ class TestDiffFileValidation:
         """Unset DIFF_FILE -> arg_validation rejection, shim never called."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
         env.pop("DIFF_FILE")
-        result = _run_review(tmp_path, env_overrides=env)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode != 0
         assert _read_shim_log(log) == []
-        exit_json = _read_exit_json()
-        assert exit_json.get("error_class") == "arg_validation"
+        _assert_diff_file_rejection(root)
 
     def test_nonexistent_diff_file_rejected(self, tmp_path: Path) -> None:
         """DIFF_FILE pointing at a missing path -> arg_validation rejection."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
         env["DIFF_FILE"] = "tmp/does-not-exist.txt"
-        result = _run_review(tmp_path, env_overrides=env)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode != 0
         assert _read_shim_log(log) == []
-        exit_json = _read_exit_json()
-        assert exit_json.get("error_class") == "arg_validation"
+        _assert_diff_file_rejection(root)
 
     def test_zero_byte_diff_file_rejected(self, tmp_path: Path) -> None:
         """Zero-byte DIFF_FILE -> arg_validation rejection."""
-        _EMPTY_SUBJECT_PATH.parent.mkdir(exist_ok=True)
-        _EMPTY_SUBJECT_PATH.touch()
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
-        env["DIFF_FILE"] = str(_EMPTY_SUBJECT_PATH)
-        result = _run_review(tmp_path, env_overrides=env)
+        root = _anchored_root(tmp_path)
+        empty_subject = root.path / "tmp" / EMPTY_SUBJECT_ARTIFACT
+        empty_subject.touch()
+        env = _default_env(bin_dir, root)
+        env["DIFF_FILE"] = str(empty_subject)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode != 0
         assert _read_shim_log(log) == []
-        exit_json = _read_exit_json()
-        assert exit_json.get("error_class") == "arg_validation"
+        _assert_diff_file_rejection(root)
 
     def test_diff_file_outside_tmp_rejected(self, tmp_path: Path) -> None:
         """DIFF_FILE outside tmp/ or agent-review/ -> arg_validation rejection.
 
-        Runs the wrapper from a fake workspace so a sibling outside-root
-        file is available in writable space.
+        The subject sits at the root itself — a sibling of ``tmp/``, not a
+        child of it — which is the placement the containment guard rejects.
         """
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        fake_ws = tmp_path / "fake_ws"
-        (fake_ws / "tmp").mkdir(parents=True)
-        outside = fake_ws / "evil.txt"
+        root = _unanchored_root(tmp_path)
+        outside = root.path / "evil.txt"
         outside.write_text("evil\n")
-        env = _default_env(bin_dir)
+        env = _default_env(bin_dir, root)
         env["DIFF_FILE"] = str(outside)
-        result = _run_review(tmp_path, env_overrides=env, cwd=fake_ws)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode != 0
         assert _read_shim_log(log) == []
+        _assert_diff_file_rejection(root)
 
 
 class TestTemplateIsHardcoded:
@@ -423,21 +694,35 @@ class TestTemplateIsHardcoded:
     _TEMPLATE_MARKER: str = "The subject artifact follows immediately after this preamble"
 
     def test_stdin_contains_template_preamble(self, tmp_path: Path) -> None:
-        """Shim stdin must include the hardcoded ``diff.md`` preamble text."""
+        """Shim stdin must include the hardcoded ``diff.md`` preamble text.
+
+        Doubles as this module's check that the run executes at ``_ROUND``: the
+        wrapper names both artifacts it writes after the round it resolved, so
+        the filenames report the round end to end rather than restating the env
+        entry that set it. The two path assertions are branch-insensitive —
+        the CWD here IS the toplevel, so the absolute and CWD-relative branches
+        resolve to the same file.
+        """
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
         env["EFFORT"] = "high"
         env["GEMINI_MODEL"] = "gemini-3.1-pro-preview"
-        result = _run_review(tmp_path, env_overrides=env)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode == 0, result.stderr
         records = _read_shim_log(log)
         assert records, "shim was never invoked"
         # Template loaded from .claude/prompts/reviewer/diff.md and
         # concatenated with the sanitized subject.
         assert self._TEMPLATE_MARKER in records[0]["stdin"]
-        # Subject data also present (joined from the isolation fixture's subject).
+        # Subject data also present (the subject seeded in the scratch root).
         assert "diff --git" in records[0]["stdin"]
+        # Round-suffixed artifacts land under the scratch root's own tmp/. The
+        # wrapper defaults ROUND to 1, so a run that ignored the env entry
+        # would produce the ...-1 pair instead of these.
+        assert (root.path / "tmp" / f"gemini-review-output-{_ROUND}.md").is_file()
+        assert (root.path / "tmp" / f"gemini-subject-sanitized-{_ROUND}.txt").is_file()
 
 
 class TestRoundValidation:
@@ -447,23 +732,34 @@ class TestRoundValidation:
         """``--round 0`` -> arg_validation JSON, non-zero exit."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
-        result = _run_review(tmp_path, env_overrides=env, args=["--round", "0"])
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
+        result = _run_review(tmp_path, env_overrides=env, root=root, args=["--round", "0"])
         assert result.returncode != 0
+        assert "--round must be a positive integer >= 1, got '0'" in result.stderr
         assert _read_shim_log(log) == []
-        exit_json = _read_exit_json()
+        exit_json = _read_exit_json(root)
+        assert exit_json.get("signal") == "GEMINI_ERROR"
         assert exit_json.get("error_class") == "arg_validation"
+        assert exit_json.get("stderr_excerpt") == "--round must be a positive integer >= 1"
 
     def test_round_negative_rejected(self, tmp_path: Path) -> None:
         """``--round -1`` -> arg_validation JSON, non-zero exit."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
-        # ``--round -1`` is parsed by the while loop but the numeric
-        # regex gate rejects negative/zero.
-        result = _run_review(tmp_path, env_overrides=env, args=["--round", "abc"])
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
+        # A leading-dash value is consumed by the while loop as --round's
+        # argument rather than matching the usage branch, so the numeric regex
+        # gate is what rejects it — assert that reason, not just the exit code.
+        result = _run_review(tmp_path, env_overrides=env, root=root, args=["--round", "-1"])
         assert result.returncode != 0
+        assert "--round must be a positive integer >= 1, got '-1'" in result.stderr
         assert _read_shim_log(log) == []
+        exit_json = _read_exit_json(root)
+        assert exit_json.get("signal") == "GEMINI_ERROR"
+        assert exit_json.get("error_class") == "arg_validation"
+        assert exit_json.get("stderr_excerpt") == "--round must be a positive integer >= 1"
 
 
 class TestTokenAndSecretGuards:
@@ -479,13 +775,14 @@ class TestTokenAndSecretGuards:
         """Non-host context without GEMINI_API_KEY -> GEMINI_UNAVAILABLE, exit 0."""
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
-        env = _default_env(bin_dir)
+        root = _anchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
         env.pop("GEMINI_API_KEY")
         env.pop("GEMINI_EXECUTION_CONTEXT")
-        result = _run_review(tmp_path, env_overrides=env)
+        result = _run_review(tmp_path, env_overrides=env, root=root)
         assert result.returncode == 0, result.stderr
         assert _read_shim_log(log) == []
-        exit_json = _read_exit_json()
+        exit_json = _read_exit_json(root)
         assert exit_json.get("signal") == "GEMINI_UNAVAILABLE"
         assert exit_json.get("reason") == "token_missing"
 
@@ -493,13 +790,14 @@ class TestTokenAndSecretGuards:
 class TestOutputRouting:
     """Container vs host artifact routing (agent-review/ vs tmp/).
 
-    Both tests run the wrapper from a throwaway fake workspace so the
-    routing paths are observable via the shim's stdout-capture file
-    without touching the real repo directories (which may be read-only
-    inside the pytest container).
+    Both tests run from an unanchored root: they are this module's coverage of
+    the CWD-relative branch of ``_review-common.sh``, which is why the reviewer
+    templates have to be reachable from the root itself rather than through a
+    git toplevel. ``agent-review/`` is provisioned here and nowhere else — the
+    container branch routes its output there.
     """
 
-    def _run_in_fake_ws(
+    def _run_in_unanchored_ws(
         self,
         tmp_path: Path,
         *,
@@ -507,24 +805,13 @@ class TestOutputRouting:
         workspace: str | None = None,
         container_context: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], Path]:
-        """Run the wrapper from a fake workspace root for routing assertions."""
-        fake_ws = tmp_path / "fake_ws"
-        (fake_ws / "tmp").mkdir(parents=True)
-        (fake_ws / "agent-review").mkdir()
-        # Subject path must be inside fake_ws/tmp/ for DIFF_FILE containment.
-        subject = fake_ws / "tmp" / SUBJECT_ARTIFACT
-        subject.write_text("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n")
-        # Template path — the wrapper resolves it relative to CWD, so the
-        # template must be accessible from fake_ws. Symlink the real
-        # .claude/prompts/reviewer/ tree into fake_ws.
-        claude_dir = fake_ws / ".claude" / "prompts" / "reviewer"
-        claude_dir.parent.mkdir(parents=True)
-        claude_dir.symlink_to(WORKSPACE / ".claude" / "prompts" / "reviewer")
+        """Run the wrapper from an unanchored root for routing assertions."""
+        root = _unanchored_root(tmp_path, agent_review=True)
         log = tmp_path / "calls.log"
         bin_dir = _install_shim(tmp_path, log_path=log)
         env: dict[str, str] = {
             "REVIEW_TYPE": "diff",
-            "DIFF_FILE": str(subject),
+            "DIFF_FILE": str(root.path / "tmp" / SUBJECT_ARTIFACT),
             "ROUND": _ROUND,
             "GEMINI_API_KEY": "test",
             "PATH": f"{bin_dir}:/usr/bin:/bin",
@@ -535,25 +822,25 @@ class TestOutputRouting:
             env["REVIEW_SESSION_ID"] = review_session_id
         if workspace:
             env["WORKSPACE"] = workspace
-        result = _run_review(tmp_path, env_overrides=env, cwd=fake_ws)
-        return result, fake_ws
+        result = _run_review(tmp_path, env_overrides=env, root=root)
+        return result, root.path
 
     def test_host_context_writes_to_tmp(self, tmp_path: Path) -> None:
         """``GEMINI_EXECUTION_CONTEXT=host`` -> output under ``tmp/``."""
-        result, fake_ws = self._run_in_fake_ws(tmp_path)
+        result, unanchored_ws = self._run_in_unanchored_ws(tmp_path)
         assert result.returncode == 0, result.stderr
-        assert (fake_ws / "tmp" / f"gemini-review-output-{_ROUND}.md").exists()
+        assert (unanchored_ws / "tmp" / f"gemini-review-output-{_ROUND}.md").exists()
 
     def test_container_context_writes_to_agent_review(self, tmp_path: Path) -> None:
         """Container context -> output under ``agent-review/`` with workspace/session id."""
-        result, fake_ws = self._run_in_fake_ws(
+        result, unanchored_ws = self._run_in_unanchored_ws(
             tmp_path,
             review_session_id="test-session",
             workspace="brownfield-ai",
             container_context=True,
         )
         assert result.returncode == 0, result.stderr
-        expected = fake_ws / "agent-review" / "brownfield-ai-gemini-review-output-test-session.md"
+        expected = unanchored_ws / "agent-review" / "brownfield-ai-gemini-review-output-test-session.md"
         assert expected.exists(), "agent-review output not produced"
 
 
@@ -616,12 +903,19 @@ class TestProTier429_503Fallback:
         self,
         tmp_path: Path,
         *,
+        root: ScratchRoot,
         exit_codes: list[int],
         stderr_texts: list[str],
         extra_env: dict[str, str] | None = None,
         timeout: int = 30,
-    ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
-        """Install a sequence-shim and invoke the wrapper under the new contract."""
+    ) -> tuple[subprocess.CompletedProcess[str], list[ShimRecord]]:
+        """Install a sequence-shim and invoke the wrapper under the new contract.
+
+        ``root`` is keyword-only for the reason ``_run_review`` makes it so:
+        two adjacent positional ``Path``-flavoured parameters are a silent
+        misrouting waiting to happen, and this one decides where every artifact
+        of the run lands.
+        """
         log = tmp_path / "calls.log"
         bin_dir = _install_shim_with_sequence(
             tmp_path,
@@ -629,18 +923,19 @@ class TestProTier429_503Fallback:
             stderr_texts=stderr_texts,
             log_path=log,
         )
-        env = _default_env(bin_dir)
+        env = _default_env(bin_dir, root)
         env["EFFORT"] = "high"
         env["GEMINI_MODEL"] = "gemini-3.1-pro-preview"
         if extra_env:
             env.update(extra_env)
-        result = _run_review(tmp_path, env_overrides=env, timeout=timeout)
+        result = _run_review(tmp_path, env_overrides=env, root=root, timeout=timeout)
         return result, _read_shim_log(log)
 
     def test_pro_429_retries_with_flash_high(self, tmp_path: Path) -> None:
         """429 on Pro tier -> second call with -m gemini-3-flash-high, success."""
         result, records = self._run_sequence(
             tmp_path,
+            root=_anchored_root(tmp_path),
             exit_codes=[1, 0],
             stderr_texts=["Error: 429 Too Many Requests", ""],
         )
@@ -654,6 +949,7 @@ class TestProTier429_503Fallback:
         """503 on Pro tier -> second call with -m gemini-3-flash-high, success."""
         result, records = self._run_sequence(
             tmp_path,
+            root=_anchored_root(tmp_path),
             exit_codes=[1, 0],
             stderr_texts=["Error: 503 Service Unavailable", ""],
         )
@@ -664,8 +960,10 @@ class TestProTier429_503Fallback:
 
     def test_pro_429_flash_retry_also_fails_emits_fallback(self, tmp_path: Path) -> None:
         """429 on Pro tier + flash-high retry also 429 -> GEMINI_FALLBACK exit 3."""
+        root = _anchored_root(tmp_path)
         result, records = self._run_sequence(
             tmp_path,
+            root=root,
             exit_codes=[1, 1],
             stderr_texts=[
                 "Error: 429 Too Many Requests",
@@ -674,19 +972,31 @@ class TestProTier429_503Fallback:
         )
         assert result.returncode == 3, result.stderr
         assert len(records) == 2
-        exit_json = (WORKSPACE / "tmp" / "gemini-exit.json").read_text()
-        assert "GEMINI_FALLBACK" in exit_json
+        # Read the parsed field, not a substring of the document: the JSON also
+        # carries up to 500 bytes of CLI stderr, so a raw-text search could be
+        # satisfied by the excerpt while ``signal`` said something else.
+        exit_json = _read_exit_json(root)
+        assert exit_json.get("signal") == "GEMINI_FALLBACK"
+        # The retry rewrote GEMINI_MODEL to the Flash tier before this JSON was
+        # built, so the Pro name can only appear here because the wrapper
+        # captured the requested tier ahead of the rewrite. This is the only
+        # run in the module where reporting the rewritten value would differ.
+        assert exit_json.get("model") == "gemini-3.1-pro-preview"
 
     def test_pro_auth_error_no_fallback(self, tmp_path: Path) -> None:
         """Non-429/503 error (auth) -> terminal; no flash-high retry; exit 3."""
+        root = _anchored_root(tmp_path)
         result, records = self._run_sequence(
             tmp_path,
+            root=root,
             exit_codes=[1],
             stderr_texts=["Error: 401 Unauthorized: bad token"],
         )
         assert result.returncode == 3
         assert len(records) == 1, f"expected 1 call (no retry), got {len(records)}"
         assert "falling back" not in result.stderr
+        exit_json = _read_exit_json(root)
+        assert exit_json.get("signal") == "GEMINI_FALLBACK"
 
     def test_auth_error_invalidates_preflight_cache(self, tmp_path: Path) -> None:
         """Auth failure at execution time MUST delete the preflight cache."""
@@ -694,6 +1004,7 @@ class TestProTier429_503Fallback:
         cache_file.write_text('{"mode":"local","gemini":{"cli":true}}\n')
         self._run_sequence(
             tmp_path,
+            root=_anchored_root(tmp_path),
             exit_codes=[1],
             stderr_texts=["Error: 401 Unauthorized: bad token"],
             extra_env={"PREFLIGHT_CACHE_FILE": str(cache_file)},
@@ -706,6 +1017,7 @@ class TestProTier429_503Fallback:
         cache_file.write_text('{"mode":"local","gemini":{"cli":true}}\n')
         self._run_sequence(
             tmp_path,
+            root=_anchored_root(tmp_path),
             exit_codes=[127],
             stderr_texts=["bash: gemini: command not found"],
             extra_env={"PREFLIGHT_CACHE_FILE": str(cache_file)},
@@ -714,107 +1026,202 @@ class TestProTier429_503Fallback:
 
 
 # ---------------------------------------------------------------------------
-# Shared-artifact isolation
+# The partition guard itself.
+#
+# _verify_partition is the only thing keeping each test above on the branch it
+# claims to cover, and none of those runs observes it: replace its body with a
+# bare return and every test above still passes. Its failure mode is silent
+# laxness, so these tests are its lock. Most drive the guard directly under
+# tmp_path and lock its decision procedure only; its placement on the spawn
+# path and the mapping it is handed there are separate properties, locked by
+# the two tests here that go through _run_review.
 # ---------------------------------------------------------------------------
-# The module fixture is the only thing keeping the wrapper runs above off the
-# live tmp/ artifacts, and none of those tests observes it. These tests are its
-# lock. Every one works under tmp_path; none reads or writes the real
-# checkout's tmp/. The generic snapshot/restore mechanism is locked separately,
-# in tests/helpers/test_artifact_isolation.py.
 
 
-class TestSharedArtifactIsolation:
-    """Cover the gemini managed set and the module fixture that applies it."""
+class TestPartitionGuard:
+    """``_verify_partition`` rejects any root whose filesystem or env contradicts it."""
 
-    # Every tmp/ path gemini-review.sh and _review-common.sh name is managed,
-    # so nothing is exempt here. The wrapper's default preflight cache is in
-    # the managed set rather than exempt because the auth-failure tests that
-    # reach the wrapper's `rm -f` do not all override PREFLIGHT_CACHE_FILE.
-    _UNMANAGED_WRAPPER_TMP_PATHS: frozenset[str] = frozenset()
+    @staticmethod
+    def _guard_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+        """Closed env shaped like the one ``_run_review`` builds.
 
-    @pytest.fixture(autouse=True)
-    def _isolate_shared_artifacts(self) -> Iterator[str]:
-        """Shadow the module fixture, which would otherwise write the real tmp/.
-
-        These tests drive the mechanism themselves, under ``tmp_path``. The tag
-        is what ``test_class_fixture_shadows_the_module_fixture`` reads to
-        observe which definition of the name is in effect.
+        ``extra`` overrides any entry, ``PATH`` included — a caller that hands
+        over a ``PATH`` with no git on it is testing the unreachable-git path.
         """
-        yield _CLASS_SHADOW_TAG
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home")}
+        env.update(extra)
+        return env
 
-    def test_class_fixture_shadows_the_module_fixture(self, _isolate_shared_artifacts: str) -> None:
-        assert _isolate_shared_artifacts == _CLASS_SHADOW_TAG
+    @staticmethod
+    def _bare_root(tmp_path: Path, name: str) -> Path:
+        """Create an empty directory under ``tmp_path`` with no repository of its own."""
+        root = tmp_path / name
+        root.mkdir()
+        return root
 
-    def test_managed_set_lists_the_expected_paths_in_order(self, tmp_path: Path) -> None:
-        assert _managed_artifacts(tmp_path, "7") == (
-            tmp_path / "gemini-exit.json",
-            tmp_path / "gemini-review-err.txt",
-            tmp_path / ".gemini-preflight-cache.json",
-            tmp_path / "gemini-test-subject.txt",
-            tmp_path / "empty-subject-for-gemini-test.txt",
-            tmp_path / "gemini-review-output-7.md",
-            tmp_path / "gemini-subject-sanitized-7.txt",
+    @staticmethod
+    def _install_home_sensitive_git(bin_dir: Path, *, home: Path, toplevel: Path) -> None:
+        """Install a fake ``git`` that reports a worktree only under ``HOME=home``.
+
+        Args:
+            bin_dir: directory at the head of the probe's ``PATH``.
+            home: the ``HOME`` value that makes the fake report a worktree.
+            toplevel: the path it reports.
+
+        Real git reaches ``HOME`` through ``~/.gitconfig``'s ``core.worktree``,
+        which is the re-anchoring route a closed env cannot suppress. This fake
+        makes that dependency direct so the probe's answer changes with the one
+        entry that distinguishes the assembled env from the overrides alone.
+        """
+        shim = bin_dir / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -eu\n"
+            f'if [ "${{HOME:-}}" = "{home}" ]; then\n'
+            f"  printf '%s\\n' \"{toplevel}\"\n"
+            "  exit 0\n"
+            "fi\n"
+            "exit 128\n"
         )
+        shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
-    def test_managed_set_covers_every_tmp_path_the_wrapper_names(self, tmp_path: Path) -> None:
-        named = wrapper_tmp_paths(
-            [Path(REVIEW_SCRIPT), REVIEW_COMMON],
-            {"ROUND": "7", "suffix": "7", "reviewer": "gemini"},
-        )
-        managed = {path.relative_to(tmp_path).as_posix() for path in _managed_artifacts(tmp_path, "7")}
-        assert named - managed == self._UNMANAGED_WRAPPER_TMP_PATHS
+    @staticmethod
+    def _stub_probe(monkeypatch: pytest.MonkeyPatch, *, returncode: int, stdout: str) -> None:
+        """Pin ``_probe_git_toplevel``'s answer to a fixed exit status and stdout.
 
-    def test_default_env_binds_the_round_and_subject_constants(self, tmp_path: Path) -> None:
-        env = _default_env(tmp_path / "bin")
-        assert env["ROUND"] == _ROUND
-        assert env["DIFF_FILE"] == str(_SUBJECT_PATH)
+        Args:
+            monkeypatch: fixture used to swap the module-level helper.
+            returncode: exit status the fake probe reports.
+            stdout: raw stdout the fake probe reports, before ``.strip()``.
 
-    def test_run_review_forwards_the_bound_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        captured: dict[str, str] = {}
+        Both guards mirror ``_review-common.sh``'s two-part test, but no real
+        git produces exit 0 with blank stdout, so the stdout clause is only
+        reachable through a stubbed probe.
+        """
 
-        def _capture(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            captured.update(kwargs["env"])
-            return subprocess.CompletedProcess(argv, 0, "", "")
+        def _fake(root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(["git", "rev-parse", "--show-toplevel"], returncode, stdout, "")
 
-        monkeypatch.setattr(subprocess, "run", _capture)
-        _run_review(tmp_path, env_overrides=_default_env(tmp_path / "bin"))
-        assert captured["ROUND"] == _ROUND
-        assert captured["DIFF_FILE"] == str(_SUBJECT_PATH)
+        monkeypatch.setattr(sys.modules[__name__], "_probe_git_toplevel", _fake)
 
-    def test_subject_is_not_the_live_review_subject(self) -> None:
-        # The diff-review gate hands its reviewers a subject file under tmp/;
-        # a test that claims that name destroys the review in flight.
-        assert _SUBJECT_PATH == WORKSPACE / "tmp" / "gemini-test-subject.txt"
-        assert _EMPTY_SUBJECT_PATH == WORKSPACE / "tmp" / "empty-subject-for-gemini-test.txt"
+    def test_anchored_root_that_is_its_own_toplevel_passes(self, tmp_path: Path) -> None:
+        root = self._bare_root(tmp_path, "anchored_ws")
+        _write_git_skeleton(root)
+        _verify_partition(ScratchRoot(root, anchored=True), self._guard_env(tmp_path))
 
-    def test_module_fixture_restores_the_workspace_tmp_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sys.modules[__name__], "WORKSPACE", tmp_path)
-        tmp_dir = tmp_path / "tmp"
-        tmp_dir.mkdir()
-        signal = tmp_dir / "gemini-exit.json"
-        signal.write_bytes(b"live signal")
-        subject = tmp_dir / SUBJECT_ARTIFACT
-        output = tmp_dir / f"gemini-review-output-{_ROUND}.md"
+    def test_anchored_declaration_without_a_repository_rejected(self, tmp_path: Path) -> None:
+        root = self._bare_root(tmp_path, "anchored_ws")
+        with pytest.raises(RuntimeError, match="is not a git toplevel"):
+            _verify_partition(ScratchRoot(root, anchored=True), self._guard_env(tmp_path))
 
-        # pytest wraps a fixture in an object that refuses direct calls and
-        # leaves the undecorated generator reachable at __wrapped__. The module
-        # fixture is addressed through globals() because this class shadows its
-        # name.
-        isolation = globals()["_isolate_shared_artifacts"].__wrapped__()
-        next(isolation)
-        assert not signal.exists()
-        assert subject.is_file()
+    def test_anchored_declaration_inheriting_a_parent_toplevel_rejected(self, tmp_path: Path) -> None:
+        # rev-parse succeeds here and names the parent, so a guard that only
+        # checked the exit code would pass this root — and _review_sanitize_subject
+        # would cd to the parent and write the sanitized subject there.
+        parent = self._bare_root(tmp_path, "outer_ws")
+        _write_git_skeleton(parent)
+        root = parent / "nested_ws"
+        root.mkdir()
+        with pytest.raises(RuntimeError, match="anchors to .*outer_ws, not to itself"):
+            _verify_partition(ScratchRoot(root, anchored=True), self._guard_env(tmp_path))
 
-        signal.write_bytes(b"written by the run")
-        output.write_bytes(b"written by the run")
-        with pytest.raises(StopIteration):
-            next(isolation)
+    def test_unanchored_root_with_no_git_ancestor_passes(self, tmp_path: Path) -> None:
+        root = self._bare_root(tmp_path, "unanchored_ws")
+        _verify_partition(ScratchRoot(root, anchored=False), self._guard_env(tmp_path))
 
-        assert signal.read_bytes() == b"live signal"
-        assert not output.exists()
-        assert not subject.exists()
+    def test_unanchored_declaration_with_its_own_git_rejected(self, tmp_path: Path) -> None:
+        root = self._bare_root(tmp_path, "unanchored_ws")
+        _write_git_skeleton(root)
+        with pytest.raises(RuntimeError, match="lies inside the git worktree at .*unanchored_ws"):
+            _verify_partition(ScratchRoot(root, anchored=False), self._guard_env(tmp_path))
 
-    def test_isolation_fixture_is_autouse_at_module_scope(self) -> None:
-        marker = getattr(globals()["_isolate_shared_artifacts"], "_fixture_function_marker", None)
-        assert marker is not None, "pytest no longer exposes the fixture marker here — update this assertion"
-        assert marker.autouse
+    def test_unanchored_declaration_below_a_git_ancestor_rejected(self, tmp_path: Path) -> None:
+        parent = self._bare_root(tmp_path, "outer_ws")
+        _write_git_skeleton(parent)
+        root = parent / "unanchored_ws"
+        root.mkdir()
+        with pytest.raises(RuntimeError, match="lies inside the git worktree at .*outer_ws"):
+            _verify_partition(ScratchRoot(root, anchored=False), self._guard_env(tmp_path))
+
+    def test_unanchored_declaration_anchored_by_the_env_rejected(self, tmp_path: Path) -> None:
+        # No .git at or above the root, so the ancestor walk is satisfied — the
+        # filesystem proxy cannot see this. Git can: under GIT_DIR it answers
+        # rev-parse successfully, which is the anchored branch.
+        elsewhere = self._bare_root(tmp_path, "elsewhere")
+        _write_git_skeleton(elsewhere)
+        root = self._bare_root(tmp_path, "unanchored_ws")
+        env = self._guard_env(tmp_path, GIT_DIR=str(elsewhere / ".git"))
+        with pytest.raises(RuntimeError, match="declared unanchored but git selects the worktree"):
+            _verify_partition(ScratchRoot(root, anchored=False), env)
+
+    def test_git_unreachable_on_the_probe_path_rejected(self, tmp_path: Path) -> None:
+        # The ancestor walk is satisfied, so the probe is what has to answer —
+        # and it cannot, because PATH holds no git. Fail closed rather than
+        # treat an unanswerable question as a passing declaration.
+        root = self._bare_root(tmp_path, "unanchored_ws")
+        empty_bin = self._bare_root(tmp_path, "empty_bin")
+        env = self._guard_env(tmp_path, PATH=str(empty_bin))
+        with pytest.raises(RuntimeError, match="git rev-parse could not be started"):
+            _verify_partition(ScratchRoot(root, anchored=False), env)
+
+    def test_anchored_declaration_with_an_exit_zero_blank_toplevel_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Exit 0 alone does not name a worktree. _review-common.sh:136 takes its
+        # anchored branch only on `rev-parse` succeeding AND -n "$top", so a
+        # guard that read the status alone would admit a root the wrapper then
+        # handles on its CWD-relative branch.
+        root = self._bare_root(tmp_path, "anchored_ws")
+        _write_git_skeleton(root)
+        self._stub_probe(monkeypatch, returncode=0, stdout=" \n")
+        with pytest.raises(RuntimeError, match="is not a git toplevel"):
+            _verify_partition(ScratchRoot(root, anchored=True), self._guard_env(tmp_path))
+
+    def test_unanchored_declaration_with_an_exit_zero_blank_toplevel_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The mirror of the case above: a blank toplevel is the CWD-relative
+        # branch, which is what this root declares, so exit 0 on its own must
+        # not be read as a contradiction.
+        root = self._bare_root(tmp_path, "unanchored_ws")
+        self._stub_probe(monkeypatch, returncode=0, stdout=" \n")
+        _verify_partition(ScratchRoot(root, anchored=False), self._guard_env(tmp_path))
+
+    def test_run_review_applies_the_guard_to_the_env_it_spawns_with(self, tmp_path: Path) -> None:
+        """The guard runs on the spawn path, before anything is spawned.
+
+        The root has no ``.git`` at or above it, so nothing on disk contradicts
+        its declaration and every direct-drive test above would pass it. Only
+        the ``GIT_DIR`` merged into the spawn env re-anchors it, so raising
+        witnesses that ``_run_review`` still calls the guard and still routes
+        the caller's own overrides into it. That the mapping is the *assembled*
+        one rather than the overrides alone is a separate property — ``GIT_DIR``
+        is in both — locked by the test below.
+        """
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, log_path=log)
+        elsewhere = self._bare_root(tmp_path, "elsewhere")
+        _write_git_skeleton(elsewhere)
+        root = _unanchored_root(tmp_path)
+        env = _default_env(bin_dir, root)
+        env["GIT_DIR"] = str(elsewhere / ".git")
+        with pytest.raises(RuntimeError, match="declared unanchored but git selects the worktree"):
+            _run_review(tmp_path, env_overrides=env, root=root)
+        assert _read_shim_log(log) == [], "guard must reject before the wrapper is spawned"
+
+    def test_run_review_probes_under_the_assembled_env_not_the_overrides(self, tmp_path: Path) -> None:
+        """The guard sees the merged mapping, ``HOME`` included.
+
+        ``HOME`` is the whole delta between ``env_overrides`` and the mapping
+        ``_run_review`` assembles, and it is the entry through which
+        ``~/.gitconfig``'s ``core.worktree`` re-anchors a run — the exact route
+        a closed env cannot close off. A fake git that answers only under the
+        scratch ``HOME`` therefore reports a worktree if and only if the guard
+        was handed the assembled env; passing the overrides alone leaves the
+        probe unable to name one and the contradiction undetected.
+        """
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, log_path=log)
+        root = _unanchored_root(tmp_path)
+        self._install_home_sensitive_git(bin_dir, home=tmp_path / "home", toplevel=root.path)
+        env = _default_env(bin_dir, root)
+        assert "HOME" not in env, "the delta this test turns on has to be absent from the overrides"
+        with pytest.raises(RuntimeError, match="declared unanchored but git selects the worktree"):
+            _run_review(tmp_path, env_overrides=env, root=root)
+        assert _read_shim_log(log) == [], "guard must reject before the wrapper is spawned"
