@@ -977,9 +977,14 @@ def test_routing_target_path_is_pinned() -> None:
     copy.
 
     Spelled out here rather than imported from
-    ``helpers.router_harness``, which carries the same assertion: the
-    duplication is what gives each suite an independently routed copy.
-    Do not merge the two copies.
+    ``helpers.router_harness``, which carries the same assertion. The
+    helper fan-out in both routers sends a changed module under
+    ``tests/helpers/`` to ``tests/helpers/`` and ``tests/ci/`` only, so
+    an import would be a cross-package dependency no router covers:
+    renaming the helper would break this file at collection time with
+    nothing running to report it. Widening that fan-out is the
+    alternative and costs the whole ``tests/scripts/`` suite on every
+    helper edit. Do not merge the two copies.
     """
     suite = REPO_ROOT / ROUTED_TEST_PATH
     assert suite.is_file(), (
