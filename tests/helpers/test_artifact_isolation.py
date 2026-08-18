@@ -167,9 +167,9 @@ class TestArtifactIsolation:
 class TestWrapperTmpPaths:
     """Cover the source scan the wrapper suites hold their managed sets against."""
 
-    def _write_script(self, tmp_path: Path, body: str) -> Path:
+    def _write_script(self, tmp_path: Path, body: str, *, name: str = "fake-review.sh") -> Path:
         """Write ``body`` to a throwaway shell source and return its path."""
-        script = tmp_path / "fake-review.sh"
+        script = tmp_path / name
         script.write_text(body)
         return script
 
@@ -215,3 +215,15 @@ class TestWrapperTmpPaths:
     def test_an_unrelated_directory_suffix_is_not_named(self, tmp_path: Path) -> None:
         script = self._write_script(tmp_path, "cp mytmp/report.md other/\n")
         assert wrapper_tmp_paths([script], {}) == set()
+
+    def test_every_source_contributes_to_the_named_set(self, tmp_path: Path) -> None:
+        # The real scan pairs a wrapper with a shared _review-common.sh that
+        # names one path, so a scan stopping at the first source drops it.
+        wrapper = self._write_script(tmp_path, "rm -f tmp/codex-exit.json\n", name="fake-review.sh")
+        common = self._write_script(
+            tmp_path,
+            'out="tmp/${reviewer}-subject-sanitized-${suffix}.txt"\n',
+            name="fake-review-common.sh",
+        )
+        named = wrapper_tmp_paths([wrapper, common], {"reviewer": "codex", "suffix": "7"})
+        assert named == {"codex-exit.json", "codex-subject-sanitized-7.txt"}
