@@ -534,7 +534,7 @@ class TestRoundValidation:
         bin_dir = _install_shim(tmp_path, log_path=log)
         env = _default_env(bin_dir, tmp_path)
         result = _run_review(tmp_path, env_overrides=env, args=["--round", "abc"])
-        assert result.returncode != 0
+        assert result.returncode == 1
         assert _read_shim_log(log) == []
 
 
@@ -814,9 +814,9 @@ class TestTokenAndSecretGuards:
     developer run as ``CODEX_UNAVAILABLE`` without ever reaching the CLI,
     while still satisfying the non-host case below.
 
-    The secrets guard this class is also named for stays out of reach here:
-    it fires only on a readable ``/app/.env``, an absolute path no fixture
-    under ``tmp_path`` can create or displace.
+    The secrets guard this class is also named for fires on a readable
+    ``/app/.env``, an absolute path no fixture under ``tmp_path`` can create
+    or displace.
     """
 
     def test_token_missing_emits_unavailable_signal(self, tmp_path: Path) -> None:
@@ -1365,9 +1365,7 @@ class TestHighTier429_503Fallback:
             exit_codes=[1],
             stderr_texts=["Error: 401 Unauthorized: bad token"],
         )
-        assert result.returncode == 0, (
-            f"a classified auth failure exits 0 having written its signal; exit 1 is the unwritable-tmp/ fatal abort, which writes none — a caller cannot tell them apart by exit code alone. stderr={result.stderr!r}"
-        )
+        assert result.returncode == 0, f"a classified auth failure exits 0 having written its signal; stderr={result.stderr!r}"
         assert len(records) == 1  # auth failure is terminal, no retries
         exit_json = _read_exit_json(tmp_path)
         assert exit_json.get("signal") == "CODEX_ERROR"

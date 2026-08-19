@@ -4,8 +4,7 @@ Covered here: the ``docker/agent-cli/entrypoint.sh`` command allowlist and its
 absence of a bypass variable, the canonical reviewer invariants the templates
 inject, the ``docker/agent-cli/codex-config.toml`` reviewer profile,
 ``scripts/setup_codex_reviewer.sh``, and the containment of the two spawns
-this module makes. The wrappers the entrypoint dispatches to are covered by
-their own modules under ``tests/scripts/``, not here.
+this module makes.
 
 Allowed commands dispatch to ``/usr/local/bin/<cmd>.sh``. Only the agent-cli
 image installs those wrappers; the environment these tests run in does not, so
@@ -59,15 +58,10 @@ _SCRATCH_CANONICAL_MARKER = "# scratch-checkout canonical"
 def _scratch_root(tmp_path: Path) -> Path:
     """Return (creating on first use) the throwaway root every spawn runs from.
 
-    The root sits one level below ``tmp_path`` so a test's own scratch ``HOME``
-    stays outside the directory a spawned script can reach through
-    CWD-relative writes.
-
-    ``TestSpawnContainment`` asserts that depth separately from the root's
-    identity, and the two assertions are not redundant: an equality check
-    against this function's own return value still passes once the root
-    collapses into ``tmp_path``, so the parent check beside it is the only
-    thing that would notice.
+    ``TestSpawnContainment`` asserts the root's depth below ``tmp_path``
+    separately from its identity: an equality check against this function's own
+    return value still passes once the root collapses into ``tmp_path``, so the
+    parent check beside it is the only thing that would notice.
     """
     root = tmp_path / "ws"
     root.mkdir(exist_ok=True)
@@ -78,16 +72,10 @@ def _scratch_checkout(tmp_path: Path) -> Path:
     """Mirror into the scratch root the checkout paths the setup script resolves.
 
     ``setup_codex_reviewer.sh`` derives ``CANONICAL`` and ``TEMP_FILE`` from
-    ``${SCRIPT_DIR}/../``, never from its CWD, so re-rooting the spawn is not
-    enough on its own — the script has to live inside the root at the same
-    checkout-relative path it occupies here, which is why both copies are
-    placed by re-rooting that path rather than by respelling its segments. A
-    copy at the root itself resolves both one level up, into ``tmp_path`` —
-    which every caller of ``_run_setup`` hands the script as its ``HOME``, and
-    which holds no ``docker/agent-cli`` tree because nothing here creates one.
-    ``CANONICAL`` would then name a file that does not exist, and the
-    ``cp``/``cat`` reading it would fail under ``set -e``, so every case dies
-    at its returncode assertion rather than silently relocating its writes.
+    ``${SCRIPT_DIR}/../``, never from its CWD, so the script has to live inside
+    the root at the same checkout-relative path it occupies here: a copy at the
+    root resolves ``CANONICAL`` into ``tmp_path``, which holds no
+    ``docker/agent-cli`` tree, so the run fails loudly instead.
 
     ``<root>/tmp/`` is deliberately not created here: the script's own
     ``mkdir -p`` is its only creator, which is what keeps section 7's
@@ -108,10 +96,7 @@ def _scratch_checkout(tmp_path: Path) -> Path:
 def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Replace ``subprocess.run`` with a recorder and return the kwargs it sees.
 
-    Neither script spawned by this module reports its CWD, the environment it
-    inherits or the stdin it is handed through anything an end-state assertion
-    could read, so the call itself is the only observable. The returned mapping
-    is populated by the time the helper under test returns.
+    The returned mapping is populated by the time the helper under test returns.
     """
     captured: dict[str, Any] = {}
 
@@ -307,7 +292,10 @@ class TestSetupCodexReviewer:
     """
 
     def _run_setup(self, tmp_path: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-        """Run the scratch copy of the setup script with the given environment."""
+        """Run the scratch copy of the setup script with the given environment.
+
+        ``PATH`` is applied last, so an override cannot reopen the search path.
+        """
         root = _scratch_checkout(tmp_path)
         return subprocess.run(
             ["bash", str(root / SETUP_SCRIPT.relative_to(WORKSPACE))],
@@ -315,7 +303,7 @@ class TestSetupCodexReviewer:
             capture_output=True,
             text=True,
             timeout=10,
-            env={"PATH": _SPAWN_PATH, **env},
+            env={**env, "PATH": _SPAWN_PATH},
             cwd=str(root),
         )
 
@@ -384,52 +372,30 @@ class TestSetupCodexReviewer:
 # ---------------------------------------------------------------------------
 # 7. Spawn containment
 # ---------------------------------------------------------------------------
-# Three axes decide where a spawned script writes: its CWD, the tree its own
-# BASH_SOURCE resolves from, and the environment it inherits. Neither script
-# here reports any of them. entrypoint.sh is a pure case/exec dispatcher, and
-# setup_codex_reviewer.sh names its TEMP_FILE off BASH_SOURCE but then moves
-# that file away under an EXIT trap that removes it — so the file's absence
-# afterwards is the same on fixed and unfixed code and proves nothing.
-#
-# CWD and the inherited environment are therefore locked by capturing the
-# subprocess call, the only place either is observable. BASH_SOURCE is locked
-# behaviorally, by a marker carried only by the scratch copy of the canonical
-# config: it reaches the installed profile only if the script resolved
-# CANONICAL inside the scratch checkout. That marker is the whole of the
-# evidence today — CANONICAL and TEMP_FILE both derive from the same
-# ${SCRIPT_DIR}/../, so anything that moves SCRIPT_DIR moves both and trips
-# the marker first. The scratch tmp/ assertion beside it is defense in depth
-# against a later script edit that decouples the two paths, after which it
-# would be the only thing watching TEMP_FILE.
 
 
 class TestSpawnContainment:
     """Verify what contains the two spawns this module makes.
 
-    The subject is the kwargs ``_run_entrypoint`` and ``_run_setup`` hand
-    ``subprocess.run`` — CWD, environment and stdin — plus the content of
-    ``_SPAWN_PATH`` and the tree ``setup_codex_reviewer.sh`` resolves its own
-    paths from. No claim here is quantified over spawns the module does not
-    make.
+    CWD, environment, stdin and the deadline are pinned against the captured
+    ``subprocess.run`` kwargs, since neither script reports any of them itself.
+    ``HOME`` is the load-bearing value among them: ``setup_codex_reviewer.sh``
+    derives ``${HOME}/.codex/config.toml`` and the ``.bak`` beside it, so a
+    ``HOME`` that drifted back to the developer's own would aim every setup
+    case at their live reviewer profile.
 
-    The mappings are compared whole rather than by key: a key set alone pins
-    that nothing extra was inherited, which is the credential containment the
-    module docstring calls primary, but leaves each value free. Both values
-    are load-bearing. ``PATH`` decides which binaries a child can reach, and
-    ``HOME`` decides where ``setup_codex_reviewer.sh`` writes — it derives
-    ``${HOME}/.codex/config.toml`` and the ``.bak`` beside it, so a ``HOME``
-    that drifted back to the developer's own would aim every setup case at
-    their live reviewer profile while the key set stayed green.
+    ``stdin`` and ``timeout`` are forward guards against an edit that
+    introduces a command reading the caller's stdin: nothing either script runs
+    today does, and the pair keeps such an edit reporting rather than blocking
+    on the session's terminal.
 
-    ``HOME`` is pinned against a fixture path, but ``PATH`` is pinned against
-    ``_SPAWN_PATH`` itself: those comparisons move with the constant and so
-    cannot see its value change. Its content is pinned separately below.
+    ``PATH`` is compared against ``_SPAWN_PATH`` itself, so those comparisons
+    move with the constant and cannot see its value change; its content is
+    pinned separately below.
 
-    ``stdin`` is asserted for the reason the sibling wrapper suites assert it:
-    nothing either script runs today reads the caller's stdin, so ``DEVNULL``
-    is a forward guard against an edit that introduces a command which does —
-    one whose failure mode is a suite blocked on the session's terminal rather
-    than one that reports.
+    The tree ``setup_codex_reviewer.sh`` resolves its own paths from is pinned
+    behaviorally instead, by a marker carried only by the scratch copy of the
+    canonical config.
     """
 
     # The directories ``_SPAWN_PATH`` may name, as a category rather than as a
@@ -449,6 +415,7 @@ class TestSpawnContainment:
         assert cwd.parent == tmp_path.resolve()
         assert captured["env"] == {"PATH": _SPAWN_PATH}
         assert captured["stdin"] is subprocess.DEVNULL
+        assert captured["timeout"] == 10
 
     def test_setup_runs_from_the_scratch_root_with_a_closed_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _capture_spawn(monkeypatch)
@@ -459,6 +426,12 @@ class TestSpawnContainment:
         assert cwd.parent == tmp_path.resolve()
         assert captured["env"] == {"PATH": _SPAWN_PATH, "HOME": str(tmp_path)}
         assert captured["stdin"] is subprocess.DEVNULL
+        assert captured["timeout"] == 10
+
+    def test_a_caller_supplied_path_cannot_reopen_the_setup_spawns_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured = _capture_spawn(monkeypatch)
+        TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path), "PATH": f"{tmp_path}:/usr/bin"})
+        assert captured["env"]["PATH"] == _SPAWN_PATH
 
     def test_the_spawn_path_names_only_system_directories(self) -> None:
         outside = sorted(set(_SPAWN_PATH.split(":")) - self._SYSTEM_BIN_DIRS)
@@ -475,11 +448,12 @@ class TestSpawnContainment:
         # Path 3 — the only branch that creates the TEMP_FILE directory.
         config = codex_dir / "config.toml"
         config.write_text('[profiles.reviewer]\nmodel = "old-model"\n')
+        # TEMP_FILE's parent must be the script's own creation, not the fixture's.
+        assert not (root / "tmp").exists()
 
         result = TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)})
 
         assert result.returncode == 0
         # CANONICAL resolved to the marked copy, not the checked-in one.
         assert _SCRATCH_CANONICAL_MARKER in config.read_text()
-        # TEMP_FILE's parent is created by the script; _scratch_checkout leaves it absent.
         assert (root / "tmp").is_dir()

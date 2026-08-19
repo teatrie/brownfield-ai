@@ -27,18 +27,12 @@ def wrapper_tmp_paths(scripts: Iterable[Path], substitutions: Mapping[str, str])
     """Extract the literal ``tmp/`` paths the given shell sources name, relative to ``tmp/``.
 
     Whole-line comments are dropped first, so usage banners and rationale notes
-    that spell an artifact name do not register. Within the literal names it
-    finds, what survives is a superset of the sources' writes: a path a source
-    only reads registers too, and erring wide is the safe direction — a caller
-    comparing a watch set against this result is told about one path too many
-    rather than one too few.
-
-    That guarantee does not extend past the literal ``tmp/`` prefix. No
-    variable holding a directory is expanded, so a path spelled
-    ``"${OUTPUT_DIR}/name.md"`` is missed outright and the result is silently
-    narrower than the source. A caller whose watch set matters therefore has
-    to pin the expected derivation as well as compare against it; a coverage
-    comparison alone passes on whatever the scan failed to see.
+    that spell an artifact name do not register. What the scan then finds is
+    literal ``tmp/``-prefixed names, up to the first path segment, with the
+    requested ``${VAR}`` substitutions applied to the name. A name reached only
+    through a variable holding the directory — ``"${OUTPUT_DIR}/name.md"`` — is
+    not found at all, so a caller whose watch set matters has to pin the
+    expected derivation rather than only compare against it.
 
     Args:
         scripts: the shell sources to scan.
