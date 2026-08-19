@@ -1,9 +1,8 @@
 """Tests for the codex reviewer setup script.
 
 Covered here: ``scripts/setup_codex_reviewer.sh``, the derivation both CI test
-routers reach this module through, and the containment of the two children this
-module spawns: ``bash`` over a copy of the setup script, and ``grep`` over the
-pattern that script's two match sites share.
+routers reach this module through, and the containment of the ``bash`` child
+this module spawns over a copy of the setup script.
 
 Every setup run here starts from a directory under ``tmp_path``, against a copy
 of the script inside a scratch checkout there. It arms an ``EXIT`` trap over
@@ -602,9 +601,7 @@ class TestRoutingDerivation:
     nothing routes no tests and still exits 0.
 
     Nothing here imports ``helpers.router_harness``, which carries the
-    behavioural half: both routers add a changed file under ``tests/scripts/``
-    as itself and nothing else, so the import would be a dependency no router
-    covers. Do not merge the two copies.
+    behavioural half. Do not merge the two copies.
 
     Two accepted limitations, both deferred rather than blind. A deletion-only
     diff of this module reaches neither half: its path is derived rather than
