@@ -1,10 +1,10 @@
 """Tests for the codex reviewer setup script.
 
 Covered here: ``scripts/setup_codex_reviewer.sh``, the derivation both CI test
-routers reach this module through, and the containment of the one spawn this
+routers reach this module through, and the containment of the setup spawn this
 module makes.
 
-Every subprocess here runs from a directory under ``tmp_path``, against a copy
+Every setup run here starts from a directory under ``tmp_path``, against a copy
 of the script inside a scratch checkout there. It arms an ``EXIT`` trap over
 a ``BASH_SOURCE``-derived temp path before it branches, so spawning the
 checked-in copy aims an ``rm -f`` at the live checkout on every code path,
@@ -30,6 +30,11 @@ import pytest
 WORKSPACE = Path(__file__).resolve().parents[2]
 SETUP_SCRIPT = WORKSPACE / "scripts" / "setup_codex_reviewer.sh"
 CANONICAL_CONFIG = WORKSPACE / "docker" / "agent-cli" / "codex-config.toml"
+
+# Read from the canonical rather than restated, so an assertion against it
+# says the canonical was installed. A lone model bump there routes to no test
+# in either router, so a literal here would go stale uncaught.
+_CANONICAL_REVIEWER_MODEL: str = tomllib.loads(CANONICAL_CONFIG.read_text(encoding="utf-8"))["profiles"]["reviewer"]["model"]
 
 # System directories only, so no checkout-managed entry such as ``.venv/bin``
 # can supply a binary to a spawned child.
@@ -168,6 +173,29 @@ def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return captured
 
 
+def _grep_matches(pattern: str, body: str, path: Path) -> bool:
+    """Report whether ``grep`` matches ``pattern`` in ``body``, written to ``path``.
+
+    The real binary, not a Python ``re`` compile of the same string: the
+    script's two sites are read as POSIX BREs by ``grep`` itself. An exit
+    status outside 0 and 1 is ``grep`` rejecting the pattern, which fails here
+    rather than being read as "no match".
+    """
+    path.write_text(body, encoding="utf-8")
+    result = subprocess.run(
+        ["grep", "-q", pattern, str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        # The PATH the setup runs use, so this probes the grep binary the
+        # script itself resolves under test.
+        env={"PATH": _SPAWN_PATH},
+    )
+    assert result.returncode in (0, 1), f"grep rejected {pattern!r} with exit {result.returncode}: {result.stderr.strip()}"
+    return result.returncode == 0
+
+
 def _assert_reviewer_table_declared_once(content: str) -> None:
     """Assert an installed config declares ``[profiles.reviewer]`` once and parses.
 
@@ -185,7 +213,7 @@ def _assert_reviewer_table_declared_once(content: str) -> None:
 def _derived_test_path(source: str) -> str:
     """Replicate the routers' ``scripts/*`` derivation over a checkout-relative source path.
 
-    Behaviourally equivalent to ``ci/test_staged.sh`` and ``ci/test_changed.sh``:
+    Replicates ``ci/test_staged.sh`` and ``ci/test_changed.sh``:
     strip the last extension off the basename, map dashes to underscores, and
     re-root the source's own directory under ``tests/``. Not a step-for-step
     transcription -- it collapses the routers' two shell steps into one
@@ -204,11 +232,11 @@ def _derived_test_path(source: str) -> str:
 class TestSetupCodexReviewer:
     """Test scripts/setup_codex_reviewer.sh across all three code paths.
 
-    Every case that spawns runs the scratch copy ``_scratch_checkout``
-    provisions rather than the checked-in script. The ``EXIT`` trap that
-    removes the cleaned-config temp file is armed ahead of the branch, so all
-    three paths bind a ``TEMP_FILE`` under whichever tree the script was
-    spawned from.
+    Every case that runs the setup script uses the scratch copy
+    ``_scratch_checkout`` provisions rather than the checked-in script. The
+    ``EXIT`` trap that removes the cleaned-config temp file is armed ahead of
+    the branch, so all three paths bind a ``TEMP_FILE`` under whichever tree
+    the script copy lives in.
     """
 
     def _run_setup(
@@ -223,13 +251,17 @@ class TestSetupCodexReviewer:
 
         A ``PATH`` in ``env`` is discarded. ``path_prefix`` composes ahead of
         ``_SPAWN_PATH`` and must resolve under ``tmp_path``. ``cwd`` defaults to
-        the scratch root and must likewise resolve under ``tmp_path``. Both are
+        the scratch root and must likewise resolve under ``tmp_path``. ``HOME``
+        is required in ``env`` and held to the same bound. All three are
         enforced here rather than at a call site, so no caller can hand the
         script a directory outside ``tmp_path``.
         """
         root = _scratch_checkout(tmp_path)
         contained = tmp_path.resolve()
-        for label, candidate in (("path_prefix", path_prefix), ("cwd", cwd)):
+        # Required rather than tolerated-if-absent: of the three contained
+        # values, HOME is the one the script writes under.
+        assert "HOME" in env, "env must set HOME: the script writes ${HOME}/.codex/config.toml and the .bak beside it"
+        for label, candidate in (("path_prefix", path_prefix), ("cwd", cwd), ("HOME", Path(env["HOME"]))):
             if candidate is not None:
                 assert candidate.resolve().is_relative_to(contained), f"{label} {candidate} does not resolve under {tmp_path}"
         path = _SPAWN_PATH if path_prefix is None else f"{path_prefix}:{_SPAWN_PATH}"
@@ -290,27 +322,25 @@ class TestSetupCodexReviewer:
         content = config.read_text(encoding="utf-8")
         assert "[settings]" in content
         assert "[profiles.reviewer]" in content
-        assert "gpt-5.3-codex" in content
+        assert _CANONICAL_REVIEWER_MODEL in content
         assert "old-model" not in content
         _assert_reviewer_table_declared_once(content)
         # Pre-run bytes: a backup taken after the rewrite holds the cleaned file.
         assert (codex_dir / "config.toml.bak").read_bytes() == original
 
     @pytest.mark.parametrize(
-        ("existing", "must_be_gone", "must_survive", "surviving_bytes"),
+        ("existing", "must_be_gone", "surviving_bytes"),
         [
             pytest.param(
                 _CONFIG_WITH_REVIEWER_SUBSECTION,
                 ("Old Role", "Old focus"),
-                (),
                 b'[settings]\ntheme = "dark"\n\n',
                 id="deletion-scope",
             ),
             pytest.param(
                 _CONFIG_WITH_ADJACENT_PROFILES,
                 (),
-                ("[profiles.other]", "[profiles.reviewer_backup]"),
-                None,
+                b'[settings]\ntheme = "dark"\n\n[profiles.reviewer_backup]\nmodel = "backup-model"\n\n[profiles.other]\nmodel = "other-model"\n',
                 id="boundary",
             ),
         ],
@@ -320,8 +350,7 @@ class TestSetupCodexReviewer:
         tmp_path: Path,
         existing: str,
         must_be_gone: tuple[str, ...],
-        must_survive: tuple[str, ...],
-        surviving_bytes: bytes | None,
+        surviving_bytes: bytes,
     ) -> None:
         """Path 3: the skip zone covers the reviewer subsection and clears at the next profile.
 
@@ -330,8 +359,10 @@ class TestSetupCodexReviewer:
         are gone rather than its header: a sed-range deletion eats the header
         and leaves the keys behind.
 
-        ``surviving_bytes`` is what the awk leaves of ``existing``, or ``None``
-        to skip the exact-composition check.
+        ``surviving_bytes`` is what the awk leaves of ``existing``.
+        ``test_update_existing_reviewer`` stays substring-only because its awk
+        output composes to the deletion-scope bytes exactly; what it holds
+        alone is the ``.bak`` contents.
         """
         root = _scratch_checkout(tmp_path)
         canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
@@ -346,25 +377,21 @@ class TestSetupCodexReviewer:
         content = config.read_text(encoding="utf-8")
         assert "[settings]" in content
         assert "[profiles.reviewer]" in content
-        assert "gpt-5.3-codex" in content
+        assert _CANONICAL_REVIEWER_MODEL in content
         assert "old-model" not in content
         for token in must_be_gone:
             assert token not in content
-        for token in must_survive:
-            assert token in content
         _assert_reviewer_table_declared_once(content)
-        if surviving_bytes is not None:
-            # Composition rather than substrings: dropping the separating
-            # newline satisfies every check above and would go unnoticed.
-            assert config.read_bytes() == surviving_bytes + b"\n" + canonical.read_bytes()
+        # Composition rather than substrings: dropping the separating newline
+        # satisfies every check above and would go unnoticed.
+        assert config.read_bytes() == surviving_bytes + b"\n" + canonical.read_bytes()
 
     def test_the_exit_trap_removes_a_temp_file_path_one_never_writes(self, tmp_path: Path) -> None:
         """The trap is armed ahead of the branch, so Path 1 clears a temp file it never wrote."""
         root = _scratch_checkout(tmp_path)
         canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
         # ``<root>/tmp/`` is characterized, not endorsed: the module docstring
-        # calls a checkout-internal TEMP_FILE a hazard, so expect this path to
-        # change when it is relocated.
+        # calls a checkout-internal TEMP_FILE a hazard.
         temp_file = root / "tmp" / "codex-config-cleaned.toml"
         temp_file.parent.mkdir(parents=True)
         temp_file.write_text("stale\n", encoding="utf-8")
@@ -417,16 +444,8 @@ class TestSetupCodexReviewer:
         assert result.stdout.count(_INSTALL_HINT) == (0 if codex_on_path else 1)
         assert result.stdout.count(_AUTH_HINT) == (1 if api_key is None and not auth_json else 0)
 
-    def test_both_grep_sites_share_a_pattern_the_canonical_toml_matches(self) -> None:
-        """The append-vs-replace discriminator and the post-install gate stay coupled to the TOML.
-
-        Sound only over the intersection of POSIX BRE -- what the script's
-        plain ``grep`` uses at both sites, not ``grep -E`` -- and Python
-        ``re``. They diverge on ``\\|``, ``\\{...\\}`` and ``\\(...\\)``, so a
-        future BRE edit can pass here against a pattern ``grep`` reads
-        differently, or trip the ``re.error`` branch below against one
-        ``grep`` accepts.
-        """
+    def test_both_grep_sites_share_a_pattern_the_canonical_toml_matches(self, tmp_path: Path) -> None:
+        """The append-vs-replace discriminator and the post-install gate stay coupled to the TOML."""
         sites = _GREP_SITE_RE.findall(SETUP_SCRIPT.read_text(encoding="utf-8"))
         assert len(sites) == 2, f"expected the append-vs-replace discriminator and the verification gate, found {sites}"
         keywords = [keyword for keyword, _ in sites]
@@ -434,19 +453,15 @@ class TestSetupCodexReviewer:
         patterns = {pattern for _, pattern in sites}
         assert len(patterns) == 1, f"the two grep sites must test one pattern, found {sorted(patterns)}"
         pattern = patterns.pop()
-        try:
-            matcher = re.compile(pattern, re.MULTILINE)
-        except re.error as error:
-            pytest.fail(f"{pattern!r} does not compile under Python re, so this case cannot check it against the TOML: {error}")
-        assert matcher.search(CANONICAL_CONFIG.read_text(encoding="utf-8")) is not None, (
+        assert _grep_matches(pattern, CANONICAL_CONFIG.read_text(encoding="utf-8"), tmp_path / "canonical.toml"), (
             f"{pattern!r} matches nothing in {CANONICAL_CONFIG}"
         )
         subsection_only = '[profiles.reviewer.instructions]\nrole = "Old Role"\n'
-        assert matcher.search(subsection_only) is None, (
-            f"{pattern!r} matches a body whose only reviewer header is the [profiles.reviewer.instructions] subsection, so it is either unanchored or leaves the dot unescaped. Such a pattern sends a config that has no [profiles.reviewer] header down the replace path at the discriminator, and lets the verification gate report success over a config that never gained one. Every assertion above passes with the pattern mutated to 'profiles.reviewer' at both sites."
+        assert not _grep_matches(pattern, subsection_only, tmp_path / "subsection-only.toml"), (
+            f"{pattern!r} matches a body whose only reviewer header is the [profiles.reviewer.instructions] subsection. Such a pattern sends a config that has no [profiles.reviewer] header down the replace path at the discriminator, and lets the verification gate report success over a config that never gained one. Every assertion above passes with the pattern mutated to 'profiles.reviewer' at both sites."
         )
         foreign_header_only = '[profilesXreviewer]\nmodel = "old-model"\n'
-        assert matcher.search(foreign_header_only) is None, (
+        assert not _grep_matches(pattern, foreign_header_only, tmp_path / "foreign-header-only.toml"), (
             f"{pattern!r} matches a body whose only header is [profilesXreviewer], so it leaves the dot unescaped. Such a pattern sends a config that has no [profiles.reviewer] header down the replace path at the discriminator, and lets the verification gate report success over a config that never gained one. The subsection probe above cannot see this: dropping the backslash keeps the `^` anchor and the `\\]`, so the mutated pattern still fails to match [profiles.reviewer.instructions] and every assertion before this one passes."
         )
 
@@ -457,7 +472,7 @@ class TestSetupCodexReviewer:
 
 
 class TestSpawnContainment:
-    """Verify what contains the spawn this module makes.
+    """Verify what contains the setup spawn this module makes.
 
     CWD, environment, stdin and the deadline are pinned against the captured
     ``subprocess.run`` kwargs, since the script reports none of them itself.
@@ -510,13 +525,8 @@ class TestSpawnContainment:
             f"_SPAWN_PATH must name system directories only; {outside} is not among them. A checkout-managed entry such as .venv/bin ahead of the system directories lets a spawned child resolve a binary out of the repository under test, and a relative or empty entry resolves one against the CWD instead. Neither env comparison above can see this: both are written against _SPAWN_PATH itself, so they move with whatever it is set to. Widening the allowlist is the deliberate step a genuinely new directory has to take."
         )
 
-    def test_a_composed_path_prefix_stays_under_tmp_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Separate from the guard above, which a composed PATH would fail by construction.
-
-        Containment under ``tmp_path`` is asserted inside ``_run_setup``, on
-        every call site rather than this one; what is left here is the compose
-        order, which nothing else pins.
-        """
+    def test_a_composed_path_prefix_precedes_the_spawn_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Separate from the guard above, which a composed PATH would fail by construction."""
         captured = _capture_spawn(monkeypatch)
         prefix = _stub_codex_bin(tmp_path)
         TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)}, path_prefix=prefix)
@@ -554,9 +564,8 @@ class TestSpawnContainment:
         (codex_dir / "config.toml").write_text('[profiles.reviewer]\nmodel = "old-model"\n', encoding="utf-8")
         # Asserted immediately before the spawn: TEMP_FILE's parent has to be
         # the script's own creation for the check after it to mean anything.
-        # ``<root>/tmp/`` is characterized, not endorsed — the module docstring
-        # calls a checkout-internal TEMP_FILE a hazard — so expect this path to
-        # change when it is relocated.
+        # ``<root>/tmp/`` is characterized, not endorsed — see
+        # test_the_exit_trap_removes_a_temp_file_path_one_never_writes.
         assert not (root / "tmp").exists()
 
         result = TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)}, cwd=cwd)
