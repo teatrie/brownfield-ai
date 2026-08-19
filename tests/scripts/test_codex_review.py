@@ -890,8 +890,12 @@ class TestOutputRouting:
         assert "-o" in argv
         out_arg = argv[argv.index("-o") + 1]
         assert out_arg == "tmp/codex-review-output-1.md"
+        err_file = _workspace_root(tmp_path) / "tmp" / "codex-review-err.txt"
+        assert err_file.is_file(), (
+            f"host mode must route the stderr capture into tmp/ — ERR_FILE is a shell redirection, so it reaches no argv and the -o assertion above cannot see it, while the agent-review/ check below stays green if it is renamed to any other tmp/ path. Presence is the whole of the check: `2>|` creates and truncates its target before the command is looked up, so a run that succeeds silently leaves the file empty and any non-empty assertion would fail on the ordinary green path. expected={err_file}"
+        )
         assert list((_workspace_root(tmp_path) / "agent-review").iterdir()) == [], (
-            "host mode must leave agent-review/ untouched — the -o assertion above cannot see ERR_FILE, and agent-review/ is the one directory deliberately left un-gitignored so codex can read it, so a stderr capture routed there is committable noise"
+            "host mode must leave agent-review/ untouched — per docker-compose.yml the agent-cli service bind-mounts the host's ~/.brownfield-ai/agent-review onto /app/agent-review read-write while the checkout itself is mounted read-only, so a stderr capture routed there is host-persistent and shared with every other workspace using that mount rather than scoped to this run"
         )
 
     def test_container_context_writes_to_agent_review(self, tmp_path: Path) -> None:

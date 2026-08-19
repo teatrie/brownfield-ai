@@ -1,10 +1,11 @@
 """Tests for the agent-cli entrypoint allowlist and the codex reviewer setup.
 
-Covered here: the ``docker/agent-cli/entrypoint.sh`` command allowlist, the
-canonical reviewer invariants the templates inject, the
-``docker/agent-cli/codex-config.toml`` reviewer profile, and
-``scripts/setup_codex_reviewer.sh``. The wrappers the entrypoint dispatches to
-are covered by their own modules under ``tests/scripts/``, not here.
+Covered here: the ``docker/agent-cli/entrypoint.sh`` command allowlist and its
+absence of a bypass variable, the canonical reviewer invariants the templates
+inject, the ``docker/agent-cli/codex-config.toml`` reviewer profile,
+``scripts/setup_codex_reviewer.sh``, and the containment of the two spawns
+this module makes. The wrappers the entrypoint dispatches to are covered by
+their own modules under ``tests/scripts/``, not here.
 
 Allowed commands dispatch to ``/usr/local/bin/<cmd>.sh``. Only the agent-cli
 image installs those wrappers; the environment these tests run in does not, so
@@ -61,6 +62,12 @@ def _scratch_root(tmp_path: Path) -> Path:
     The root sits one level below ``tmp_path`` so a test's own scratch ``HOME``
     stays outside the directory a spawned script can reach through
     CWD-relative writes.
+
+    ``TestSpawnContainment`` asserts that depth separately from the root's
+    identity, and the two assertions are not redundant: an equality check
+    against this function's own return value still passes once the root
+    collapses into ``tmp_path``, so the parent check beside it is the only
+    thing that would notice.
     """
     root = tmp_path / "ws"
     root.mkdir(exist_ok=True)
@@ -73,26 +80,27 @@ def _scratch_checkout(tmp_path: Path) -> Path:
     ``setup_codex_reviewer.sh`` derives ``CANONICAL`` and ``TEMP_FILE`` from
     ``${SCRIPT_DIR}/../``, never from its CWD, so re-rooting the spawn is not
     enough on its own — the script has to live inside the root at the same
-    relative depth it occupies in the checkout. A copy at the root itself
-    resolves both one level up, into ``tmp_path`` — which every caller of
-    ``_run_setup`` hands the script as its ``HOME``, and which holds no
-    ``docker/agent-cli`` tree because nothing here creates one. ``CANONICAL``
-    would then name a file that does not exist, and the ``cp``/``cat`` reading
-    it would fail under ``set -e``, so every case dies at its returncode
-    assertion rather than silently relocating its writes.
+    checkout-relative path it occupies here, which is why both copies are
+    placed by re-rooting that path rather than by respelling its segments. A
+    copy at the root itself resolves both one level up, into ``tmp_path`` —
+    which every caller of ``_run_setup`` hands the script as its ``HOME``, and
+    which holds no ``docker/agent-cli`` tree because nothing here creates one.
+    ``CANONICAL`` would then name a file that does not exist, and the
+    ``cp``/``cat`` reading it would fail under ``set -e``, so every case dies
+    at its returncode assertion rather than silently relocating its writes.
 
     ``<root>/tmp/`` is deliberately not created here: the script's own
     ``mkdir -p`` is its only creator, which is what keeps section 7's
     assertion on that directory from being vacuous.
     """
     root = _scratch_root(tmp_path)
-    script = root / "scripts" / SETUP_SCRIPT.name
+    script = root / SETUP_SCRIPT.relative_to(WORKSPACE)
     if script.exists():
         return root
-    script.parent.mkdir(exist_ok=True)
+    script.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(SETUP_SCRIPT, script)
-    canonical = root / "docker" / "agent-cli" / CANONICAL_CONFIG.name
-    canonical.parent.mkdir(parents=True)
+    canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(CANONICAL_CONFIG, canonical)
     return root
 
@@ -100,10 +108,10 @@ def _scratch_checkout(tmp_path: Path) -> Path:
 def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Replace ``subprocess.run`` with a recorder and return the kwargs it sees.
 
-    Neither script spawned by this module reports its CWD or its inherited
-    environment through anything an end-state assertion could read, so the call
-    itself is the only observable. The returned mapping is populated by the
-    time the helper under test returns.
+    Neither script spawned by this module reports its CWD, the environment it
+    inherits or the stdin it is handed through anything an end-state assertion
+    could read, so the call itself is the only observable. The returned mapping
+    is populated by the time the helper under test returns.
     """
     captured: dict[str, Any] = {}
 
@@ -126,6 +134,7 @@ def _run_entrypoint(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[s
     """
     return subprocess.run(
         ["bash", ENTRYPOINT, *args],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=10,
@@ -301,7 +310,8 @@ class TestSetupCodexReviewer:
         """Run the scratch copy of the setup script with the given environment."""
         root = _scratch_checkout(tmp_path)
         return subprocess.run(
-            ["bash", str(root / "scripts" / SETUP_SCRIPT.name)],
+            ["bash", str(root / SETUP_SCRIPT.relative_to(WORKSPACE))],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=10,
@@ -394,33 +404,71 @@ class TestSetupCodexReviewer:
 
 
 class TestSpawnContainment:
-    """Verify no spawn in this module can write into the live checkout."""
+    """Verify what contains the two spawns this module makes.
+
+    The subject is the kwargs ``_run_entrypoint`` and ``_run_setup`` hand
+    ``subprocess.run`` — CWD, environment and stdin — plus the content of
+    ``_SPAWN_PATH`` and the tree ``setup_codex_reviewer.sh`` resolves its own
+    paths from. No claim here is quantified over spawns the module does not
+    make.
+
+    The mappings are compared whole rather than by key: a key set alone pins
+    that nothing extra was inherited, which is the credential containment the
+    module docstring calls primary, but leaves each value free. Both values
+    are load-bearing. ``PATH`` decides which binaries a child can reach, and
+    ``HOME`` decides where ``setup_codex_reviewer.sh`` writes — it derives
+    ``${HOME}/.codex/config.toml`` and the ``.bak`` beside it, so a ``HOME``
+    that drifted back to the developer's own would aim every setup case at
+    their live reviewer profile while the key set stayed green.
+
+    ``HOME`` is pinned against a fixture path, but ``PATH`` is pinned against
+    ``_SPAWN_PATH`` itself: those comparisons move with the constant and so
+    cannot see its value change. Its content is pinned separately below.
+
+    ``stdin`` is asserted for the reason the sibling wrapper suites assert it:
+    nothing either script runs today reads the caller's stdin, so ``DEVNULL``
+    is a forward guard against an edit that introduces a command which does —
+    one whose failure mode is a suite blocked on the session's terminal rather
+    than one that reports.
+    """
+
+    # The directories ``_SPAWN_PATH`` may name, as a category rather than as a
+    # copy of its current value. An allowlist rather than a check for entries
+    # under ``WORKSPACE``: the checkout root is ``/app`` under pytest-cli and an
+    # arbitrary path outside it on a host, so a WORKSPACE-relative predicate
+    # would reject a ``/app/.venv/bin`` entry only when run in the container and
+    # pass on the identical string here.
+    _SYSTEM_BIN_DIRS: frozenset[str] = frozenset({"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin"})
 
     def test_entrypoint_runs_from_the_scratch_root_with_a_closed_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _capture_spawn(monkeypatch)
         _run_entrypoint(tmp_path, "codex-review")
         cwd = Path(captured["cwd"]).resolve()
         assert cwd == _scratch_root(tmp_path).resolve()
-        # Strictly below tmp_path, which doubles as the scratch HOME. Nothing
-        # else catches the root collapsing into tmp_path: the equality above
-        # goes green once the two paths coincide.
+        # Not redundant with the equality above — see _scratch_root.
         assert cwd.parent == tmp_path.resolve()
-        assert set(captured["env"]) == {"PATH"}
+        assert captured["env"] == {"PATH": _SPAWN_PATH}
+        assert captured["stdin"] is subprocess.DEVNULL
 
     def test_setup_runs_from_the_scratch_root_with_a_closed_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _capture_spawn(monkeypatch)
         TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)})
         cwd = Path(captured["cwd"]).resolve()
         assert cwd == _scratch_root(tmp_path).resolve()
-        # Strictly below tmp_path, which this call also passes as HOME. Nothing
-        # else catches the root collapsing into tmp_path: the equality above
-        # goes green once the two paths coincide.
+        # Not redundant with the equality above — see _scratch_root.
         assert cwd.parent == tmp_path.resolve()
-        assert set(captured["env"]) == {"PATH", "HOME"}
+        assert captured["env"] == {"PATH": _SPAWN_PATH, "HOME": str(tmp_path)}
+        assert captured["stdin"] is subprocess.DEVNULL
+
+    def test_the_spawn_path_names_only_system_directories(self) -> None:
+        outside = sorted(set(_SPAWN_PATH.split(":")) - self._SYSTEM_BIN_DIRS)
+        assert outside == [], (
+            f"_SPAWN_PATH must name system directories only; {outside} is not among them. A checkout-managed entry such as .venv/bin ahead of the system directories lets a spawned child resolve a binary out of the repository under test, and a relative or empty entry resolves one against the CWD instead. Neither env comparison above can see this: both are written against _SPAWN_PATH itself, so they move with whatever it is set to. Widening the allowlist is the deliberate step a genuinely new directory has to take."
+        )
 
     def test_setup_resolves_script_dir_inside_the_scratch_checkout(self, tmp_path: Path) -> None:
         root = _scratch_checkout(tmp_path)
-        canonical = root / "docker" / "agent-cli" / CANONICAL_CONFIG.name
+        canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
         canonical.write_text(f"{canonical.read_text()}\n{_SCRATCH_CANONICAL_MARKER}\n")
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
