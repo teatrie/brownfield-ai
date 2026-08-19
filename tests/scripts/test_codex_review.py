@@ -520,9 +520,12 @@ class TestRoundValidation:
         bin_dir = _install_shim(tmp_path, log_path=log)
         env = _default_env(bin_dir, tmp_path)
         result = _run_review(tmp_path, env_overrides=env, args=["--round", "0"])
-        assert result.returncode != 0
+        assert result.returncode == 1
         assert _read_shim_log(log) == []
         exit_json = _read_exit_json(tmp_path)
+        assert exit_json.get("signal") == "CODEX_ERROR", (
+            f"every rejection path carries its own signal literal — there is no shared emitter — so no other rejection's assertion covers this one; got {exit_json!r}"
+        )
         assert exit_json.get("error_class") == "arg_validation"
 
     def test_round_non_numeric_rejected(self, tmp_path: Path) -> None:
@@ -531,7 +534,7 @@ class TestRoundValidation:
         bin_dir = _install_shim(tmp_path, log_path=log)
         env = _default_env(bin_dir, tmp_path)
         result = _run_review(tmp_path, env_overrides=env, args=["--round", "abc"])
-        assert result.returncode != 0
+        assert result.returncode == 1
         assert _read_shim_log(log) == []
 
 
@@ -801,7 +804,20 @@ class TestOutputFromAnEarlierAttemptCannotBeReadAsTheRetrysVerdict:
 
 
 class TestTokenAndSecretGuards:
-    """Token-missing signal in non-host context without OPENAI_API_KEY."""
+    """The token guard fires only where both of its conditions hold.
+
+    A missing ``OPENAI_API_KEY`` is unavailability only outside host context;
+    under ``CODEX_EXECUTION_CONTEXT=host`` the CLI authenticates from its own
+    OAuth store, so the same env is the ordinary local invocation. Both sides
+    are pinned here because only the pair distinguishes the guard from a
+    token check that ignores context — one that would report every local
+    developer run as ``CODEX_UNAVAILABLE`` without ever reaching the CLI,
+    while still satisfying the non-host case below.
+
+    The secrets guard this class is also named for fires on a readable
+    ``/app/.env``, an absolute path no fixture under ``tmp_path`` can create
+    or displace.
+    """
 
     def test_token_missing_emits_unavailable_signal(self, tmp_path: Path) -> None:
         """Non-host context without OPENAI_API_KEY -> CODEX_UNAVAILABLE, exit 0."""
@@ -817,11 +833,28 @@ class TestTokenAndSecretGuards:
         assert exit_json.get("signal") == "CODEX_UNAVAILABLE"
         assert exit_json.get("reason") == "token_missing"
 
+    def test_host_context_reaches_the_cli_without_a_token(self, tmp_path: Path) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, log_path=log)
+        env = _default_env(bin_dir, tmp_path)
+        env.pop("OPENAI_API_KEY")
+        result = _run_review(tmp_path, env_overrides=env)
+        assert result.returncode == 0, result.stderr
+        assert _read_shim_log(log), (
+            "host context authenticates through the CLI's own OAuth store, so the run must reach codex with no token in the environment; an empty log is the guard firing on a run it does not own"
+        )
+        signal = _workspace_root(tmp_path) / "tmp" / "codex-exit.json"
+        assert not signal.exists(), (
+            "a host run that reaches the CLI and completes writes no signal of its own, so the startup clear must leave nothing behind; a file here — CODEX_UNAVAILABLE above all — is a verdict this run never reached"
+        )
+
 
 class TestOutputRouting:
     """Container vs host artifact routing (agent-review/ vs tmp/).
 
-    The routing paths are observable through the shim's argv capture; both
+    The output path is observable through the shim's argv capture; the stderr
+    capture is not — ``ERR_FILE`` is a shell redirection, so it reaches no
+    argv and is observable only as the file it leaves on disk. Both
     directories exist in the test's own workspace root, so neither branch
     writes into the repo (which may also be read-only inside the pytest
     container).
@@ -857,6 +890,13 @@ class TestOutputRouting:
         assert "-o" in argv
         out_arg = argv[argv.index("-o") + 1]
         assert out_arg == "tmp/codex-review-output-1.md"
+        err_file = _workspace_root(tmp_path) / "tmp" / "codex-review-err.txt"
+        assert err_file.is_file(), (
+            f"host mode must route the stderr capture into tmp/ — ERR_FILE is a shell redirection, so it reaches no argv and the -o assertion above cannot see it, while the agent-review/ check below stays green if it is renamed to any other tmp/ path. Presence is the whole of the check: `2>|` creates and truncates its target before the command is looked up, so a run that succeeds silently leaves the file empty and any non-empty assertion would fail on the ordinary green path. expected={err_file}"
+        )
+        assert list((_workspace_root(tmp_path) / "agent-review").iterdir()) == [], (
+            "host mode must leave agent-review/ untouched — per docker-compose.yml the agent-cli service bind-mounts the host's ~/.brownfield-ai/agent-review onto /app/agent-review read-write while the checkout itself is mounted read-only, so a stderr capture routed there is host-persistent and shared with every other workspace using that mount rather than scoped to this run"
+        )
 
     def test_container_context_writes_to_agent_review(self, tmp_path: Path) -> None:
         """Container context -> ``-o agent-review/<workspace>-codex-review-output-<session>.md``."""
@@ -1034,13 +1074,21 @@ class TestXhighRejectionHandling:
         The opt-in narrowly targets the xhigh-reject class. Generic transient
         errors follow the transient-retry path (one retry).
         """
-        _, records = self._run_with_xhigh_stderr(
+        result, records = self._run_with_xhigh_stderr(
             tmp_path,
             stderr_text="Error: connection timeout",
             extra_env={"EFFORT_FALLBACK_ON_REJECT": "1"},
         )
+        assert result.returncode == 0, (
+            f"an exhausted transient retry reports itself through the signal and exits 0; stderr={result.stderr!r}"
+        )
         assert len(records) == 2, f"expected 2 shim calls (initial + transient retry), got {len(records)}"
-        assert _read_exit_json(tmp_path).get("error_class") == "transient"
+        exit_json = _read_exit_json(tmp_path)
+        assert exit_json.get("signal") == "CODEX_ERROR"
+        assert exit_json.get("error_class") == "transient"
+        assert exit_json.get("retried") is True, (
+            f"the retry the two shim calls prove happened must also be reported, or a caller reading retried:false re-dispatches into the same outage; got {exit_json!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1312,13 +1360,19 @@ class TestHighTier429_503Fallback:
 
     def test_gpt54_auth_error_no_fallback(self, tmp_path: Path) -> None:
         """MODEL=gpt-5.4 + 401 -> terminal auth failure; no HIGH-tier retry."""
-        _, records = self._run_sequence(
+        result, records = self._run_sequence(
             tmp_path,
             exit_codes=[1],
             stderr_texts=["Error: 401 Unauthorized: bad token"],
         )
+        assert result.returncode == 0, f"a classified auth failure exits 0 having written its signal; stderr={result.stderr!r}"
         assert len(records) == 1  # auth failure is terminal, no retries
-        assert _read_exit_json(tmp_path).get("error_class") == "auth"
+        exit_json = _read_exit_json(tmp_path)
+        assert exit_json.get("signal") == "CODEX_ERROR"
+        assert exit_json.get("error_class") == "auth"
+        assert exit_json.get("retried") is False, (
+            f"the auth path is terminal, so the single call it spent must be reported as unretried; got {exit_json!r}"
+        )
 
     def test_auth_error_invalidates_preflight_cache(self, tmp_path: Path) -> None:
         """Auth failure at execution time MUST delete the preflight cache."""

@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, TypedDict
 
 import pytest
-from helpers.artifact_isolation import wrapper_tmp_paths
+from helpers.wrapper_sources import wrapper_tmp_paths
 
 WORKSPACE: Path = Path(__file__).resolve().parents[2]
 REVIEW_SCRIPT: str = str(WORKSPACE / "scripts" / "agent-cli" / "gemini-review.sh")
