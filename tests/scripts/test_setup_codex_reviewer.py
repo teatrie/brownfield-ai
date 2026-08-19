@@ -1,7 +1,8 @@
 """Tests for the codex reviewer setup script.
 
-Covered here: ``scripts/setup_codex_reviewer.sh`` and the containment of the
-one spawn this module makes.
+Covered here: ``scripts/setup_codex_reviewer.sh``, the derivation both CI test
+routers reach this module through, and the containment of the one spawn this
+module makes.
 
 Every subprocess here runs from a directory under ``tmp_path``, against a copy
 of the script inside a scratch checkout there. It arms an ``EXIT`` trap over
@@ -75,6 +76,15 @@ _CONFIG_WITH_ADJACENT_PROFILES = (
     "[profiles.other]\n"
     'model = "other-model"\n'
 )
+
+# The two CI test routers, checkout-relative. Neither names this module: both
+# derive its path from the script it covers.
+_TEST_ROUTERS: tuple[str, str] = ("ci/test_staged.sh", "ci/test_changed.sh")
+
+# The line each router's ``scripts/*`` branch builds its target on, verbatim.
+# The target that line produces appears as a literal in neither file, so the
+# derivation is the only thing a source-text check can hold them to.
+_DERIVATION_LINE = 'test_file="tests/${dirname}/test_${basename}.py"'
 
 
 def _scratch_root(tmp_path: Path) -> Path:
@@ -153,6 +163,18 @@ def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(subprocess, "run", _record)
     return captured
+
+
+def _derived_test_path(source: str) -> str:
+    """Replicate the routers' ``scripts/*`` derivation over a checkout-relative source path.
+
+    Mirrors ``ci/test_staged.sh`` and ``ci/test_changed.sh`` step for step:
+    strip the last extension off the basename, map dashes to underscores, and
+    re-root the source's own directory under ``tests/``.
+    """
+    path = Path(source)
+    basename = path.stem.replace("-", "_")
+    return f"tests/{path.parent.as_posix()}/test_{basename}.py"
 
 
 # ---------------------------------------------------------------------------
@@ -479,3 +501,81 @@ class TestSpawnContainment:
         assert result.returncode == 0
         assert (root / "tmp").is_dir()
         assert not (cwd / "tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# 3. Routing
+# ---------------------------------------------------------------------------
+
+
+class TestRoutingDerivation:
+    """Pin the derivation both CI test routers reach this module through.
+
+    ``scripts/setup_codex_reviewer.sh`` matches no literal in either router; it
+    falls through to the ``scripts/*`` branch, which builds
+    ``tests/<dirname>/test_<basename>.py`` and guards it with
+    ``[ -f "$test_file" ]``. A derived name that resolves to nothing appends no
+    target and the router still exits 0, so the routing is lost silently, and a
+    no-tests-collected pytest exit is treated as success on top of that.
+
+    Nothing here executes a router or touches the ``route`` fixture, and
+    nothing is imported from ``helpers.router_harness`` — which carries the
+    behavioural half of this pin, run against both routers under a fixture
+    visible only to ``tests/ci/``. Both routers add a changed file under
+    ``tests/scripts/`` as itself and nothing else, so a sibling import would be
+    a dependency no router covers: renaming the helper would break this file at
+    collection time with nothing running to report it. Do not merge the two
+    copies.
+
+    Accepted limitation, recorded rather than closed: a deletion-only diff of
+    this module *reaches* neither half. Its path is derived rather than
+    hard-coded, so no literal anywhere goes stale when it disappears — both
+    routers take their ``tests/scripts/*`` branch, whose ``[ -f ]`` guard is
+    false for a path that is gone, append nothing, print ``No testable scripts
+    found.`` and exit 0; ``scripts/setup_codex_reviewer.sh`` then routes to
+    nothing every time it changes after that. The gap is deferred detection
+    rather than permanent blindness: the behavioural half does fail on a
+    deleted module — its routed-target list collapses to ``[]``, and its
+    ``is_file()`` check on the derived suite turns False — so the next change
+    under ``tests/ci/`` or ``tests/helpers/``, either router's own next edit,
+    and every full ``task test:scripts`` run report it. A rename is caught
+    here, because a renamed module no longer satisfies the derivation; a
+    router edit is caught in ``tests/ci/``.
+    """
+
+    def test_the_router_derivation_over_the_setup_script_names_this_module(self) -> None:
+        """The derivation applied to the covered script resolves to this file's own path.
+
+        The assertion that survives a rename, and the reason this half exists:
+        move or rename this module and the derived name stops matching it while
+        the routers go on deriving the old one.
+        """
+        source = SETUP_SCRIPT.relative_to(WORKSPACE).as_posix()
+        derived = _derived_test_path(source)
+        own_path = Path(__file__).resolve().relative_to(WORKSPACE).as_posix()
+        assert derived == own_path, (
+            f"both routers derive {derived!r} from {source!r} and guard it with `[ -f ]`, but this module "
+            f"lives at {own_path!r}; the derived name resolves to nothing, so a change to {source} routes no "
+            "tests at all and the router still exits 0 — move this module back to the derived path, or "
+            "rename the script it covers so the derivation lands on it again"
+        )
+
+    def test_both_routers_still_carry_the_derivation(self) -> None:
+        """Each router still builds its ``scripts/*`` target out of the changed path.
+
+        The other direction of the same pin: the case above holds this module
+        to the name the routers derive, this one holds the routers to deriving
+        it. Checked as source text rather than run, for the routing reason in
+        the class docstring, and against the derivation rather than against
+        ``tests/scripts/test_setup_codex_reviewer.py`` — that path is computed,
+        so it is a literal in neither router and a search for it would fail.
+        """
+        source = SETUP_SCRIPT.relative_to(WORKSPACE).as_posix()
+        for router in _TEST_ROUTERS:
+            text = (WORKSPACE / router).read_text(encoding="utf-8")
+            assert _DERIVATION_LINE in text, (
+                f"{router} no longer builds its `scripts/*` target as {_DERIVATION_LINE} — a changed {source} "
+                "then derives some other name, and the `[ -f ]` guard turns a name that resolves to nothing "
+                "into an empty target list and a zero exit; restore the derivation, or update _DERIVATION_LINE "
+                "to whatever replaced it and re-check that it still names this module"
+            )

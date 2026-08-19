@@ -119,6 +119,17 @@ CONTAINER_INTEGRATION_RERUN_ROUTER = "test_changed.sh"
 #: The single target every reviewer-template source produces.
 REVIEWER_TEMPLATE_SUITE = "tests/scripts/test_reviewer_templates.py"
 
+#: A source whose test target both routers *derive* rather than name: it falls
+#: through to the ``scripts/*`` branch, which builds the target out of the
+#: changed path's own basename and directory.
+DERIVED_TARGET_SOURCE = "scripts/setup_codex_reviewer.sh"
+
+#: The target DERIVED_TARGET_SOURCE derives to. Unlike REVIEWER_TEMPLATE_SUITE
+#: this string appears in neither router, so a source-text search for it there
+#: finds nothing and would fail; ``tests/scripts/test_setup_codex_reviewer.py``
+#: pins the derivation that produces it instead of the name it produces.
+DERIVED_TARGET_SUITE = "tests/scripts/test_setup_codex_reviewer.py"
+
 #: The routers that hard-code REVIEWER_TEMPLATE_SUITE as a literal.
 TEST_ROUTERS: tuple[str, str] = ("test_staged.sh", "test_changed.sh")
 
@@ -578,6 +589,44 @@ class RouterContract:
         result = route(self.SCRIPT, [source])
         assert "No scripts or script tests changed." not in result.stdout, f"{source}\n{diagnose(result)}"
         assert "No testable scripts found." not in result.stdout, f"{source}\n{diagnose(result)}"
+
+    def test_derived_target_source_routes_to_its_derived_suite(self, route: RouteFn) -> None:
+        """A script routed by derivation reaches the suite the derivation names.
+
+        The ``scripts/*`` branch guards its derived name with
+        ``[ -f "$test_file" ]``, so a name that resolves to nothing is not an
+        error anywhere downstream: the router appends no target, announces
+        none, and exits 0 — and a no-tests-collected pytest exit is treated as
+        success too. Exit code, target list, both silent-zero messages, and the
+        file on disk are therefore each asserted, because an empty target list
+        cannot say which of them broke.
+
+        The two messages separate the two ways the routing is lost, as in
+        ``test_lint_suite_test_file_alone_is_not_reported_as_untestable``:
+        dropping ``scripts/`` from the ``CHANGED_SCRIPTS`` filter drops the
+        path before any branch sees it, while dropping the branch itself lets
+        the path through to a dispatch chain that matches nothing.
+        """
+        result = route(self.SCRIPT, [DERIVED_TARGET_SOURCE])
+        assert result.returncode == 0, f"ci/{self.SCRIPT} failed on {DERIVED_TARGET_SOURCE}\n{diagnose(result)}"
+        assert routed_targets(result) == [DERIVED_TARGET_SUITE], (
+            f"ci/{self.SCRIPT} no longer routes {DERIVED_TARGET_SOURCE} to {DERIVED_TARGET_SUITE} — restore the "
+            "`scripts/*` branch's derivation of `tests/${dirname}/test_${basename}.py`, or point "
+            f"DERIVED_TARGET_SUITE at wherever the suite now lives\n{diagnose(result)}"
+        )
+        assert "No scripts or script tests changed." not in result.stdout, (
+            f"ci/{self.SCRIPT} filtered {DERIVED_TARGET_SOURCE} out before any branch saw it — restore the "
+            f"`scripts/` prefix in the CHANGED_SCRIPTS grep\n{diagnose(result)}"
+        )
+        assert "No testable scripts found." not in result.stdout, (
+            f"ci/{self.SCRIPT} let {DERIVED_TARGET_SOURCE} reach the dispatch chain and matched no branch — restore "
+            f"the `scripts/*` branch\n{diagnose(result)}"
+        )
+        assert (REPO_ROOT / DERIVED_TARGET_SUITE).is_file(), (
+            f"{DERIVED_TARGET_SUITE} is missing; the `scripts/*` branch of both routers guards its derived name "
+            f"with `[ -f ]`, so {DERIVED_TARGET_SOURCE} would route nothing and the router would still exit 0 — "
+            "restore the suite at the derived path, or rename it and point DERIVED_TARGET_SUITE at the new one"
+        )
 
     def test_reviewer_template_suite_path_is_pinned(self) -> None:
         """Both routers name the reviewer-template suite, and it exists on disk.
