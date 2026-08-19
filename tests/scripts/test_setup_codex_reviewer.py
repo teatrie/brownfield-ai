@@ -3,8 +3,8 @@
 Covered here: ``scripts/setup_codex_reviewer.sh`` and the containment of the
 one spawn this module makes.
 
-Every subprocess here runs from a throwaway root under ``tmp_path``, and the
-setup script runs from a copy inside that root. It arms an ``EXIT`` trap over
+Every subprocess here runs from a directory under ``tmp_path``, against a copy
+of the script inside a scratch checkout there. It arms an ``EXIT`` trap over
 a ``BASH_SOURCE``-derived temp path before it branches, so spawning the
 checked-in copy aims an ``rm -f`` at the live checkout on every code path,
 whatever the CWD is -- and on the update path writes there as well.
@@ -17,6 +17,7 @@ with ``PYTHONPATH`` and the rest of the session.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -37,9 +38,47 @@ _SPAWN_PATH = "/usr/bin:/bin:/usr/local/bin"
 # checkout. A TOML comment, so the marked copy still parses.
 _SCRATCH_CANONICAL_MARKER = "# scratch-checkout canonical"
 
+# Carried only by the decoy canonical under the CWD, so a profile installed
+# carrying it proves CANONICAL was resolved against the CWD instead.
+_DECOY_CANONICAL_MARKER = "# decoy-cwd canonical"
+
+# The two post-setup hints, verbatim.
+_INSTALL_HINT = "Install Codex CLI: npm install -g @openai/codex"
+_AUTH_HINT = "Set OPENAI_API_KEY or run 'codex login' for OAuth"
+
+# Both ``grep -q`` sites in the script: the append-vs-replace discriminator
+# (``elif``) and the post-install verification gate (``if``).
+_GREP_SITE_RE = re.compile(r"^\s*(if|elif) ! grep -q '([^']*)'", re.MULTILINE)
+
+# Path 3 fixtures. One cannot carry both awk directions: with an
+# ``.instructions`` block between the reviewer keys and the next profile, a
+# sed-range deletion stops at the subsection header and the next profile
+# survives it, so the boundary direction needs a fixture without one.
+_CONFIG_WITH_REVIEWER_SUBSECTION = (
+    '[settings]\ntheme = "dark"\n\n'
+    "[profiles.reviewer]\n"
+    'model = "old-model"\n\n'
+    "[profiles.reviewer.instructions]\n"
+    'role = "Old Role"\n'
+    'focus = "Old focus"\n'
+)
+
+# [profiles.reviewer_backup] has to stay immediately after the reviewer keys:
+# an unrelated profile ahead of it clears ``skip`` first, so a widened
+# character class in the awk would delete nothing extra and go unnoticed.
+_CONFIG_WITH_ADJACENT_PROFILES = (
+    '[settings]\ntheme = "dark"\n\n'
+    "[profiles.reviewer]\n"
+    'model = "old-model"\n'
+    "[profiles.reviewer_backup]\n"
+    'model = "backup-model"\n\n'
+    "[profiles.other]\n"
+    'model = "other-model"\n'
+)
+
 
 def _scratch_root(tmp_path: Path) -> Path:
-    """Return (creating on first use) the throwaway root every spawn runs from.
+    """Return (creating on first use) the throwaway root the scratch checkout lives in.
 
     ``TestSpawnContainment`` asserts the root's depth below ``tmp_path``
     separately from its identity: an equality check against this function's own
@@ -60,9 +99,8 @@ def _scratch_checkout(tmp_path: Path) -> Path:
     root resolves ``CANONICAL`` into ``tmp_path``, which holds no
     ``docker/agent-cli`` tree, so the run fails loudly instead.
 
-    ``<root>/tmp/`` is deliberately not created here: the script's own
-    ``mkdir -p`` is its only creator, which is what keeps section 2's
-    assertion on that directory from being vacuous.
+    ``<root>/tmp/`` is deliberately not created here, so section 2 can assert
+    the script's own ``mkdir -p`` created it.
     """
     root = _scratch_root(tmp_path)
     script = root / SETUP_SCRIPT.relative_to(WORKSPACE)
@@ -74,6 +112,32 @@ def _scratch_checkout(tmp_path: Path) -> Path:
     canonical.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(CANONICAL_CONFIG, canonical)
     return root
+
+
+def _decoy_cwd(tmp_path: Path) -> Path:
+    """Create, outside the scratch checkout, a CWD holding a decoy canonical config.
+
+    Under the scratch root a ``SCRIPT_DIR``-derived path and a CWD-relative one
+    name the same file, so nothing run from there can tell the two apart.
+    """
+    cwd = tmp_path / "decoy"
+    canonical = cwd / CANONICAL_CONFIG.relative_to(WORKSPACE)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text(f'[profiles.reviewer]\nmodel = "decoy-model"\n{_DECOY_CANONICAL_MARKER}\n')
+    return cwd
+
+
+def _stub_codex_bin(tmp_path: Path) -> Path:
+    """Create under ``tmp_path`` a directory holding an executable ``codex`` stub.
+
+    ``command -v`` only stats the entry, so the stub is never executed.
+    """
+    bin_dir = tmp_path / "stub-bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "codex"
+    stub.write_text("#!/usr/bin/env bash\nexit 0\n")
+    stub.chmod(0o755)
+    return bin_dir
 
 
 def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -99,88 +163,209 @@ def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 class TestSetupCodexReviewer:
     """Test scripts/setup_codex_reviewer.sh across all three code paths.
 
-    Every case runs the scratch copy ``_scratch_checkout`` provisions rather
-    than the checked-in script. The ``EXIT`` trap that removes the
-    cleaned-config temp file is armed ahead of the branch, so all three paths
-    bind a ``TEMP_FILE`` under whichever tree the script was spawned from.
+    Every case that spawns runs the scratch copy ``_scratch_checkout``
+    provisions rather than the checked-in script. The ``EXIT`` trap that
+    removes the cleaned-config temp file is armed ahead of the branch, so all
+    three paths bind a ``TEMP_FILE`` under whichever tree the script was
+    spawned from.
     """
 
-    def _run_setup(self, tmp_path: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    def _run_setup(
+        self,
+        tmp_path: Path,
+        env: dict[str, str],
+        *,
+        path_prefix: Path | None = None,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         """Run the scratch copy of the setup script with the given environment.
 
-        ``PATH`` is applied last, so an override cannot reopen the search path.
+        A ``PATH`` in ``env`` is discarded. ``path_prefix`` composes ahead of
+        ``_SPAWN_PATH`` and must resolve under ``tmp_path``. ``cwd`` defaults to
+        the scratch root and must likewise resolve under ``tmp_path``.
         """
         root = _scratch_checkout(tmp_path)
+        path = _SPAWN_PATH if path_prefix is None else f"{path_prefix}:{_SPAWN_PATH}"
         return subprocess.run(
             ["bash", str(root / SETUP_SCRIPT.relative_to(WORKSPACE))],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=10,
-            env={**env, "PATH": _SPAWN_PATH},
-            cwd=str(root),
+            env={**env, "PATH": path},
+            cwd=str(root if cwd is None else cwd),
         )
 
     def test_fresh_install(self, tmp_path: Path) -> None:
-        """Path 1: No existing config — copies canonical file."""
-        codex_dir = tmp_path / ".codex"
-        codex_dir.mkdir()
+        """Path 1: No existing config — copies the canonical file byte for byte."""
+        root = _scratch_checkout(tmp_path)
+        canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
+        # Unmarked, the scratch and checked-in canonicals are identical copies
+        # and the comparison below would not say which one was read.
+        canonical.write_text(f"{canonical.read_text()}\n{_SCRATCH_CANONICAL_MARKER}\n")
+        # ~/.codex is left absent, so the script's own mkdir -p has to create it.
+        assert not (tmp_path / ".codex").exists()
+
         result = self._run_setup(tmp_path, {"HOME": str(tmp_path)})
+
         assert result.returncode == 0
-        config = codex_dir / "config.toml"
-        assert config.exists()
-        assert "[profiles.reviewer]" in config.read_text()
+        assert (tmp_path / ".codex" / "config.toml").read_bytes() == canonical.read_bytes()
 
     def test_append_to_existing(self, tmp_path: Path) -> None:
         """Path 2: Existing config without [profiles.reviewer] — appends."""
+        root = _scratch_checkout(tmp_path)
+        canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
         config = codex_dir / "config.toml"
-        config.write_text('[settings]\ntheme = "dark"\n')
+        original = b'[settings]\ntheme = "dark"\n'
+        config.write_bytes(original)
+
         result = self._run_setup(tmp_path, {"HOME": str(tmp_path)})
+
         assert result.returncode == 0
-        content = config.read_text()
-        assert "[settings]" in content
-        assert "[profiles.reviewer]" in content
+        # Composition rather than startswith/endswith: dropping the separating
+        # newline satisfies both of those and would go unnoticed.
+        assert config.read_bytes() == original + b"\n" + canonical.read_bytes()
+        assert not (codex_dir / "config.toml.bak").exists()
 
     def test_update_existing_reviewer(self, tmp_path: Path) -> None:
-        """Path 3: Existing config with [profiles.reviewer] — replaces."""
+        """Path 3: Existing config with [profiles.reviewer] — replaces, backing up first."""
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
         config = codex_dir / "config.toml"
-        config.write_text('[settings]\ntheme = "dark"\n\n[profiles.reviewer]\nmodel = "old-model"\n')
-        result = self._run_setup(tmp_path, {"HOME": str(tmp_path)})
-        assert result.returncode == 0
-        content = config.read_text()
-        assert "[settings]" in content
-        assert "[profiles.reviewer]" in content
-        assert "gpt-5.3-codex" in content
-        assert "old-model" not in content
-        # Backup should exist
-        assert (codex_dir / "config.toml.bak").exists()
+        original = b'[settings]\ntheme = "dark"\n\n[profiles.reviewer]\nmodel = "old-model"\n'
+        config.write_bytes(original)
 
-    def test_update_existing_reviewer_with_subsections(self, tmp_path: Path) -> None:
-        """Path 3: Existing config with reviewer + instructions subsection — replaces cleanly."""
-        codex_dir = tmp_path / ".codex"
-        codex_dir.mkdir()
-        config = codex_dir / "config.toml"
-        config.write_text(
-            '[settings]\ntheme = "dark"\n\n'
-            "[profiles.reviewer]\n"
-            'model = "old-model"\n\n'
-            "[profiles.reviewer.instructions]\n"
-            'role = "Old Role"\n'
-            'focus = "Old focus"\n'
-        )
         result = self._run_setup(tmp_path, {"HOME": str(tmp_path)})
+
         assert result.returncode == 0
         content = config.read_text()
         assert "[settings]" in content
         assert "[profiles.reviewer]" in content
         assert "gpt-5.3-codex" in content
         assert "old-model" not in content
-        assert "Old Role" not in content
-        assert "Old focus" not in content
+        # Pre-run bytes: a backup taken after the rewrite holds the cleaned file.
+        assert (codex_dir / "config.toml.bak").read_bytes() == original
+
+    @pytest.mark.parametrize(
+        ("existing", "must_be_gone", "must_survive"),
+        [
+            pytest.param(
+                _CONFIG_WITH_REVIEWER_SUBSECTION,
+                ("Old Role", "Old focus"),
+                (),
+                id="deletion-scope",
+            ),
+            pytest.param(
+                _CONFIG_WITH_ADJACENT_PROFILES,
+                (),
+                ("[profiles.other]", "[profiles.reviewer_backup]"),
+                id="boundary",
+            ),
+        ],
+    )
+    def test_update_replaces_only_the_reviewer_section(
+        self,
+        tmp_path: Path,
+        existing: str,
+        must_be_gone: tuple[str, ...],
+        must_survive: tuple[str, ...],
+    ) -> None:
+        """Path 3: the skip zone covers the reviewer subsection and clears at the next profile.
+
+        Neither case asserts ``[profiles.reviewer]`` is absent -- Path 3
+        re-appends it. The deletion-scope case asserts the subsection's *keys*
+        are gone rather than its header: a sed-range deletion eats the header
+        and leaves the keys behind.
+        """
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        config = codex_dir / "config.toml"
+        config.write_text(existing)
+
+        result = self._run_setup(tmp_path, {"HOME": str(tmp_path)})
+
+        assert result.returncode == 0
+        content = config.read_text()
+        assert "[settings]" in content
+        assert "[profiles.reviewer]" in content
+        assert "gpt-5.3-codex" in content
+        assert "old-model" not in content
+        for token in must_be_gone:
+            assert token not in content
+        for token in must_survive:
+            assert token in content
+
+    def test_the_exit_trap_removes_a_temp_file_path_one_never_writes(self, tmp_path: Path) -> None:
+        """The trap is armed ahead of the branch, so Path 1 clears a temp file it never wrote."""
+        root = _scratch_checkout(tmp_path)
+        canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
+        temp_file = root / "tmp" / "codex-config-cleaned.toml"
+        temp_file.parent.mkdir(parents=True)
+        temp_file.write_text("stale\n")
+
+        result = self._run_setup(tmp_path, {"HOME": str(tmp_path)})
+
+        assert result.returncode == 0
+        config = tmp_path / ".codex" / "config.toml"
+        # Path 1 discriminators: paths 2 and 3 both leave the prior config ahead
+        # of the canonical bytes, and path 3 also writes a backup.
+        assert not (config.parent / "config.toml.bak").exists()
+        assert config.read_bytes() == canonical.read_bytes()
+        assert not temp_file.exists()
+
+    @pytest.mark.parametrize("auth_json", [None, "", '{"tokens": {}}'], ids=["auth-missing", "auth-empty", "auth-non-empty"])
+    @pytest.mark.parametrize("api_key", [None, "sk-test"], ids=["no-api-key", "api-key"])
+    @pytest.mark.parametrize("codex_on_path", [False, True], ids=["codex-absent", "codex-present"])
+    def test_post_setup_hints_fire_exactly_on_their_conditions(
+        self,
+        tmp_path: Path,
+        codex_on_path: bool,
+        api_key: str | None,
+        auth_json: str | None,
+    ) -> None:
+        """Both hints, over (codex on PATH) x (OPENAI_API_KEY) x (auth.json)."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        if auth_json is not None:
+            (codex_dir / "auth.json").write_text(auth_json)
+        env = {"HOME": str(tmp_path)}
+        if api_key is not None:
+            env["OPENAI_API_KEY"] = api_key
+        path_prefix: Path | None = None
+        if codex_on_path:
+            path_prefix = _stub_codex_bin(tmp_path)
+        else:
+            # _SPAWN_PATH names /usr/local/bin, where the Codex CLI installs, so
+            # the absent rows are a claim about the environment. Fail loudly
+            # rather than let them assert nothing.
+            assert shutil.which("codex", path=_SPAWN_PATH) is None
+
+        result = self._run_setup(tmp_path, env, path_prefix=path_prefix)
+
+        assert result.returncode == 0
+        assert result.stdout.count(_INSTALL_HINT) == (0 if codex_on_path else 1)
+        assert result.stdout.count(_AUTH_HINT) == (1 if api_key is None and not auth_json else 0)
+
+    def test_both_grep_sites_share_a_pattern_the_canonical_toml_matches(self) -> None:
+        """The append-vs-replace discriminator and the post-install gate stay coupled to the TOML."""
+        sites = _GREP_SITE_RE.findall(SETUP_SCRIPT.read_text())
+        assert len(sites) == 2, f"expected the append-vs-replace discriminator and the verification gate, found {sites}"
+        keywords = [keyword for keyword, _ in sites]
+        assert keywords == ["elif", "if"], f"expected the elif discriminator then the if gate, found {sites}"
+        patterns = {pattern for _, pattern in sites}
+        assert len(patterns) == 1, f"the two grep sites must test one pattern, found {sorted(patterns)}"
+        pattern = patterns.pop()
+        try:
+            matcher = re.compile(pattern, re.MULTILINE)
+        except re.error as error:
+            pytest.fail(f"{pattern!r} does not compile under Python re, so this case cannot check it against the TOML: {error}")
+        assert matcher.search(CANONICAL_CONFIG.read_text()) is not None, f"{pattern!r} matches nothing in {CANONICAL_CONFIG}"
+        subsection_only = '[profiles.reviewer.instructions]\nrole = "Old Role"\n'
+        assert matcher.search(subsection_only) is None, (
+            f"{pattern!r} matches a body whose only reviewer header is the [profiles.reviewer.instructions] subsection, so it is either unanchored or leaves the dot unescaped. Such a pattern sends a config that has no [profiles.reviewer] header down the replace path at the discriminator, and lets the verification gate report success over a config that never gained one. Every assertion above passes with the pattern mutated to 'profiles.reviewer' at both sites."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -242,21 +427,55 @@ class TestSpawnContainment:
             f"_SPAWN_PATH must name system directories only; {outside} is not among them. A checkout-managed entry such as .venv/bin ahead of the system directories lets a spawned child resolve a binary out of the repository under test, and a relative or empty entry resolves one against the CWD instead. Neither env comparison above can see this: both are written against _SPAWN_PATH itself, so they move with whatever it is set to. Widening the allowlist is the deliberate step a genuinely new directory has to take."
         )
 
+    def test_a_composed_path_prefix_stays_under_tmp_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Separate from the guard above, which a composed PATH would fail by construction."""
+        captured = _capture_spawn(monkeypatch)
+        prefix = _stub_codex_bin(tmp_path)
+        TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)}, path_prefix=prefix)
+        entries = captured["env"]["PATH"].split(":")
+        # Ahead of _SPAWN_PATH: composed behind it, an installed Codex CLI in
+        # /usr/local/bin would win and the codex-present hint rows would prove
+        # nothing about the stub.
+        assert entries == [str(prefix), *_SPAWN_PATH.split(":")]
+        for entry in entries:
+            if entry in self._SYSTEM_BIN_DIRS:
+                continue
+            candidate = Path(entry)
+            assert not candidate.is_symlink(), f"{entry} is a symlink, so it can name a directory outside {tmp_path}"
+            assert candidate.resolve().is_relative_to(tmp_path.resolve()), f"{entry} is not under {tmp_path}"
+
     def test_setup_resolves_script_dir_inside_the_scratch_checkout(self, tmp_path: Path) -> None:
         root = _scratch_checkout(tmp_path)
         canonical = root / CANONICAL_CONFIG.relative_to(WORKSPACE)
         canonical.write_text(f"{canonical.read_text()}\n{_SCRATCH_CANONICAL_MARKER}\n")
+        cwd = _decoy_cwd(tmp_path)
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
-        # Path 3 — the only branch that creates the TEMP_FILE directory.
+        # Path 3 — reads CANONICAL at the end of the update branch.
         config = codex_dir / "config.toml"
         config.write_text('[profiles.reviewer]\nmodel = "old-model"\n')
-        # TEMP_FILE's parent must be the script's own creation, not the fixture's.
-        assert not (root / "tmp").exists()
 
-        result = TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)})
+        result = TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)}, cwd=cwd)
 
         assert result.returncode == 0
-        # CANONICAL resolved to the marked copy, not the checked-in one.
-        assert _SCRATCH_CANONICAL_MARKER in config.read_text()
+        content = config.read_text()
+        # CANONICAL resolved to the marked copy, not to the decoy under the CWD.
+        assert _SCRATCH_CANONICAL_MARKER in content
+        assert _DECOY_CANONICAL_MARKER not in content
+
+    def test_setup_creates_the_temp_file_parent_inside_its_own_tree(self, tmp_path: Path) -> None:
+        root = _scratch_checkout(tmp_path)
+        cwd = _decoy_cwd(tmp_path)
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        # Path 3 — the only branch that reaches the TEMP_FILE mkdir.
+        (codex_dir / "config.toml").write_text('[profiles.reviewer]\nmodel = "old-model"\n')
+        # Asserted immediately before the spawn: TEMP_FILE's parent has to be
+        # the script's own creation for the check after it to mean anything.
+        assert not (root / "tmp").exists()
+
+        result = TestSetupCodexReviewer()._run_setup(tmp_path, {"HOME": str(tmp_path)}, cwd=cwd)
+
+        assert result.returncode == 0
         assert (root / "tmp").is_dir()
+        assert not (cwd / "tmp").exists()
