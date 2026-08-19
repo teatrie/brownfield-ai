@@ -1,16 +1,19 @@
 """Tests for the codex reviewer setup script.
 
 Covered here: ``scripts/setup_codex_reviewer.sh``, the derivation both CI test
-routers reach this module through, and the containment of the setup spawn this
-module makes.
+routers reach this module through, and the containment of the two children this
+module spawns: ``bash`` over a copy of the setup script, and ``grep`` over the
+pattern that script's two match sites share.
 
 Every setup run here starts from a directory under ``tmp_path``, against a copy
 of the script inside a scratch checkout there. It arms an ``EXIT`` trap over
 a ``BASH_SOURCE``-derived temp path before it branches, so spawning the
 checked-in copy aims an ``rm -f`` at the live checkout on every code path,
-whatever the CWD is -- and on the update path writes there as well.
+whatever the CWD is -- and on the update path writes there as well. The
+``grep`` spawn is given a ``cwd`` under ``tmp_path`` as well, so neither child
+runs from the pytest process's own directory.
 
-The environment the child receives is enumerated, never inherited. That is
+The environment each child receives is enumerated, never inherited. That is
 credential containment first and path hygiene second: an inherited
 environment would hand the script the pytest process's own credentials along
 with ``PYTHONPATH`` and the rest of the session.
@@ -32,8 +35,8 @@ SETUP_SCRIPT = WORKSPACE / "scripts" / "setup_codex_reviewer.sh"
 CANONICAL_CONFIG = WORKSPACE / "docker" / "agent-cli" / "codex-config.toml"
 
 # Read from the canonical rather than restated, so an assertion against it
-# says the canonical was installed. A lone model bump there routes to no test
-# in either router, so a literal here would go stale uncaught.
+# says the canonical was installed. A lone model bump there reaches this
+# module in neither router, so a literal here would go stale uncaught.
 _CANONICAL_REVIEWER_MODEL: str = tomllib.loads(CANONICAL_CONFIG.read_text(encoding="utf-8"))["profiles"]["reviewer"]["model"]
 
 # System directories only, so no checkout-managed entry such as ``.venv/bin``
@@ -118,6 +121,13 @@ def _scratch_checkout(tmp_path: Path) -> Path:
 
     ``<root>/tmp/`` is deliberately not created here, so section 2 can assert
     the script's own ``mkdir -p`` created it.
+
+    The early return sits *above* the canonical copy, so a second call leaves
+    an already-provisioned canonical untouched -- and ``_run_setup`` makes that
+    second call. Copying unconditionally instead would strip the marker the two
+    cases below write beforehand: the one that asserts the marker fails, while
+    ``test_fresh_install``'s byte comparison silently stops discriminating the
+    scratch canonical from the checked-in one.
     """
     root = _scratch_root(tmp_path)
     script = root / SETUP_SCRIPT.relative_to(WORKSPACE)
@@ -147,13 +157,17 @@ def _decoy_cwd(tmp_path: Path) -> Path:
 def _stub_codex_bin(tmp_path: Path) -> Path:
     """Create under ``tmp_path`` a directory holding an executable ``codex`` stub.
 
-    ``command -v`` resolves the name against ``PATH`` and tests the execute
-    bit; it never runs the file, so the stub's body is never executed.
+    The body exits non-zero on purpose. ``command -v`` resolves the name
+    against ``PATH`` and tests the execute bit without running the file, so the
+    hint rows are unaffected -- but a probe rewritten to invoke the binary
+    would see the failure and fire the install hint on all six
+    ``codex-present`` rows. With an ``exit 0`` body that rewrite is invisible:
+    the present rows suppress the hint either way.
     """
     bin_dir = tmp_path / "stub-bin"
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "codex"
-    stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    stub.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
     stub.chmod(0o755)
     return bin_dir
 
@@ -173,14 +187,24 @@ def _capture_spawn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return captured
 
 
-def _grep_matches(pattern: str, body: str, path: Path) -> bool:
-    """Report whether ``grep`` matches ``pattern`` in ``body``, written to ``path``.
+def _grep_matches(
+    pattern: str,
+    body: str,
+    tmp_path: Path,
+    name: str,
+) -> bool:
+    """Report whether ``grep`` matches ``pattern`` in ``body``, held as ``name`` under ``tmp_path``.
 
     The real binary, not a Python ``re`` compile of the same string: the
     script's two sites are read as POSIX BREs by ``grep`` itself. An exit
-    status outside 0 and 1 is ``grep`` rejecting the pattern, which fails here
-    rather than being read as "no match".
+    status outside 0 and 1 is a ``grep`` error -- an invalid pattern, or a file
+    it could not read -- which fails here rather than being read as "no match".
+
+    Callers name the scratch file rather than hand over a path, so the
+    destination is derived here. Mirrors ``_decoy_cwd`` and ``_stub_codex_bin``,
+    which likewise take ``tmp_path`` and derive their own.
     """
+    path = tmp_path / name
     path.write_text(body, encoding="utf-8")
     result = subprocess.run(
         ["grep", "-q", pattern, str(path)],
@@ -188,11 +212,12 @@ def _grep_matches(pattern: str, body: str, path: Path) -> bool:
         capture_output=True,
         text=True,
         timeout=10,
-        # The PATH the setup runs use, so this probes the grep binary the
-        # script itself resolves under test.
+        # The enumerated _SPAWN_PATH the setup spawns are built from (two tests
+        # compose a prefix ahead of it), rather than an inherited environment.
         env={"PATH": _SPAWN_PATH},
+        cwd=str(tmp_path),
     )
-    assert result.returncode in (0, 1), f"grep rejected {pattern!r} with exit {result.returncode}: {result.stderr.strip()}"
+    assert result.returncode in (0, 1), f"grep failed on {pattern!r} with exit {result.returncode}: {result.stderr.strip()}"
     return result.returncode == 0
 
 
@@ -208,20 +233,6 @@ def _assert_reviewer_table_declared_once(content: str) -> None:
     headers = [line for line in content.splitlines() if line.startswith("[profiles.reviewer]")]
     assert len(headers) == 1, f"expected exactly one [profiles.reviewer] header in the installed config, found {len(headers)}"
     assert "reviewer" in tomllib.loads(content)["profiles"]
-
-
-def _derived_test_path(source: str) -> str:
-    """Replicate the routers' ``scripts/*`` derivation over a checkout-relative source path.
-
-    Replicates ``ci/test_staged.sh`` and ``ci/test_changed.sh``:
-    strip the last extension off the basename, map dashes to underscores, and
-    re-root the source's own directory under ``tests/``. Not a step-for-step
-    transcription -- it collapses the routers' two shell steps into one
-    expression, and diverges from them on dotfile names.
-    """
-    path = Path(source)
-    basename = path.stem.replace("-", "_")
-    return f"tests/{path.parent.as_posix()}/test_{basename}.py"
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +272,9 @@ class TestSetupCodexReviewer:
         # Required rather than tolerated-if-absent: of the three contained
         # values, HOME is the one the script writes under.
         assert "HOME" in env, "env must set HOME: the script writes ${HOME}/.codex/config.toml and the .bak beside it"
-        for label, candidate in (("path_prefix", path_prefix), ("cwd", cwd), ("HOME", Path(env["HOME"]))):
+        home = Path(env["HOME"])
+        assert home.resolve().is_relative_to(contained), f"HOME {home} does not resolve under {tmp_path}"
+        for label, candidate in (("path_prefix", path_prefix), ("cwd", cwd)):
             if candidate is not None:
                 assert candidate.resolve().is_relative_to(contained), f"{label} {candidate} does not resolve under {tmp_path}"
         path = _SPAWN_PATH if path_prefix is None else f"{path_prefix}:{_SPAWN_PATH}"
@@ -453,15 +466,15 @@ class TestSetupCodexReviewer:
         patterns = {pattern for _, pattern in sites}
         assert len(patterns) == 1, f"the two grep sites must test one pattern, found {sorted(patterns)}"
         pattern = patterns.pop()
-        assert _grep_matches(pattern, CANONICAL_CONFIG.read_text(encoding="utf-8"), tmp_path / "canonical.toml"), (
+        assert _grep_matches(pattern, CANONICAL_CONFIG.read_text(encoding="utf-8"), tmp_path, "canonical.toml"), (
             f"{pattern!r} matches nothing in {CANONICAL_CONFIG}"
         )
         subsection_only = '[profiles.reviewer.instructions]\nrole = "Old Role"\n'
-        assert not _grep_matches(pattern, subsection_only, tmp_path / "subsection-only.toml"), (
+        assert not _grep_matches(pattern, subsection_only, tmp_path, "subsection-only.toml"), (
             f"{pattern!r} matches a body whose only reviewer header is the [profiles.reviewer.instructions] subsection. Such a pattern sends a config that has no [profiles.reviewer] header down the replace path at the discriminator, and lets the verification gate report success over a config that never gained one. Every assertion above passes with the pattern mutated to 'profiles.reviewer' at both sites."
         )
         foreign_header_only = '[profilesXreviewer]\nmodel = "old-model"\n'
-        assert not _grep_matches(pattern, foreign_header_only, tmp_path / "foreign-header-only.toml"), (
+        assert not _grep_matches(pattern, foreign_header_only, tmp_path, "foreign-header-only.toml"), (
             f"{pattern!r} matches a body whose only header is [profilesXreviewer], so it leaves the dot unescaped. Such a pattern sends a config that has no [profiles.reviewer] header down the replace path at the discriminator, and lets the verification gate report success over a config that never gained one. The subsection probe above cannot see this: dropping the backslash keeps the `^` anchor and the `\\]`, so the mutated pattern still fails to match [profiles.reviewer.instructions] and every assertion before this one passes."
         )
 
@@ -611,8 +624,12 @@ class TestRoutingDerivation:
         move or rename this module and the derived name stops matching it while
         the routers go on deriving the old one.
         """
-        source = SETUP_SCRIPT.relative_to(WORKSPACE).as_posix()
-        derived = _derived_test_path(source)
+        covered = SETUP_SCRIPT.relative_to(WORKSPACE)
+        source = covered.as_posix()
+        # The routers' ``scripts/*`` derivation over this one constant: strip
+        # the extension off the basename, map dashes to underscores, re-root
+        # the source's own directory under ``tests/``.
+        derived = f"tests/{covered.parent.as_posix()}/test_{covered.stem.replace('-', '_')}.py"
         own_path = Path(__file__).resolve().relative_to(WORKSPACE).as_posix()
         assert derived == own_path, (
             f"both routers derive {derived!r} from {source!r} and guard it with `[ -f ]`, but this module "
