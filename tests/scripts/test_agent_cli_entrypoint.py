@@ -101,7 +101,6 @@ class TestCommandAllowlist:
 
     @pytest.mark.parametrize("cmd", ["copilot-review", "gemini-review", "codex-review", "preflight"])
     def test_allowed_command_not_rejected_by_allowlist(self, tmp_path: Path, cmd: str) -> None:
-        """Allowed commands must not trigger the allowlist error message."""
         result = _run_entrypoint(tmp_path, cmd)
         assert "unknown command" not in result.stderr
 
@@ -110,19 +109,16 @@ class TestCommandAllowlist:
         ["bash", "sh", "node", "python3", "cat", "hack-something"],
     )
     def test_blocked_command_exits_1(self, tmp_path: Path, cmd: str) -> None:
-        """Non-allowlisted commands must exit 1 with ERROR in stderr."""
         result = _run_entrypoint(tmp_path, cmd)
         assert result.returncode == 1
         assert "ERROR" in result.stderr
 
     def test_empty_command_exits_1(self, tmp_path: Path) -> None:
-        """Empty command (no arguments) must exit 1 with ERROR in stderr."""
         result = _run_entrypoint(tmp_path)
         assert result.returncode == 1
         assert "ERROR" in result.stderr
 
     def test_random_string_blocked(self, tmp_path: Path) -> None:
-        """Arbitrary random string must be rejected."""
         result = _run_entrypoint(tmp_path, "xyzzy-not-a-command")
         assert result.returncode == 1
         assert "ERROR" in result.stderr
@@ -141,7 +137,7 @@ class TestCommandAllowlist:
 
 
 # ---------------------------------------------------------------------------
-# 3. Prompt template content (Req-008)
+# 3. Prompt template content
 # ---------------------------------------------------------------------------
 
 
@@ -175,7 +171,7 @@ class TestPromptTemplateContent:
 
 
 # ---------------------------------------------------------------------------
-# 4. No bypass variable (Req-N02)
+# 4. No bypass variable
 # ---------------------------------------------------------------------------
 
 
@@ -183,13 +179,12 @@ class TestNoBypassVariable:
     """Verify the entrypoint contains no emergency bypass variable."""
 
     def test_gate_disabled_absent(self) -> None:
-        """GATE_DISABLED must not appear anywhere in entrypoint.sh."""
         content = Path(ENTRYPOINT).read_text()
         assert "GATE_DISABLED" not in content
 
 
 # ---------------------------------------------------------------------------
-# 5. Codex config TOML (Req-C01)
+# 5. Codex config TOML
 # ---------------------------------------------------------------------------
 
 
@@ -206,14 +201,12 @@ class TestCodexConfigToml:
     """
 
     def test_valid_toml_syntax(self) -> None:
-        """codex-config.toml must parse as valid TOML."""
         content = CANONICAL_CONFIG.read_bytes()
         data = tomllib.loads(content.decode())
         assert "profiles" in data
         assert "reviewer" in data["profiles"]
 
     def test_reviewer_profile_has_model(self) -> None:
-        """Reviewer profile must specify a model."""
         data = tomllib.loads(CANONICAL_CONFIG.read_bytes().decode())
         reviewer = data["profiles"]["reviewer"]
         assert "model" in reviewer
@@ -234,7 +227,6 @@ class TestCodexConfigToml:
         )
 
     def test_pointer_comment_present(self) -> None:
-        """The pointer comment must document where criteria live."""
         text = CANONICAL_CONFIG.read_text()
         assert "_invariants.md" in text, "codex-config.toml must retain the pointer comment identifying the canonical criteria source."
         assert "template-lint" in text, "pointer comment must warn that the lint fails on re-introduced criteria."

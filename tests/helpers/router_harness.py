@@ -597,15 +597,10 @@ class RouterContract:
         ``[ -f "$test_file" ]``, so a name that resolves to nothing is not an
         error anywhere downstream: the router appends no target, announces
         none, and exits 0 — and a no-tests-collected pytest exit is treated as
-        success too. Exit code, target list, both silent-zero messages, and the
-        file on disk are therefore each asserted, because an empty target list
-        cannot say which of them broke.
-
-        The two messages separate the two ways the routing is lost, as in
-        ``test_lint_suite_test_file_alone_is_not_reported_as_untestable``:
-        dropping ``scripts/`` from the ``CHANGED_SCRIPTS`` filter drops the
-        path before any branch sees it, while dropping the branch itself lets
-        the path through to a dispatch chain that matches nothing.
+        success too. Exit code and target list are what this case asserts; the
+        diagnostics that say *which* way the routing was lost are asserted by
+        ``test_derived_target_source_alone_is_not_reported_as_untestable``,
+        which the target-list equality here implies and would pre-empt.
         """
         result = route(self.SCRIPT, [DERIVED_TARGET_SOURCE])
         assert result.returncode == 0, f"ci/{self.SCRIPT} failed on {DERIVED_TARGET_SOURCE}\n{diagnose(result)}"
@@ -614,6 +609,28 @@ class RouterContract:
             "`scripts/*` branch's derivation of `tests/${dirname}/test_${basename}.py`, or point "
             f"DERIVED_TARGET_SUITE at wherever the suite now lives\n{diagnose(result)}"
         )
+
+    def test_derived_target_source_alone_is_not_reported_as_untestable(self, route: RouteFn) -> None:
+        """Neither silent-zero message is printed for a lone derivation-routed script.
+
+        Its own method rather than three more assertions on
+        ``test_derived_target_source_routes_to_its_derived_suite``, mirroring
+        the pair ``test_lint_suite_test_file_routes_directly`` /
+        ``test_lint_suite_test_file_alone_is_not_reported_as_untestable``: that
+        case's target-list equality already implies all three below — a router
+        that announced the target took neither silent-zero branch and appended
+        it under ``[ -f ]`` against the ``tests/`` tree the ``route`` fixture
+        symlinks in — so as trailing assertions they would only ever run once
+        they could not fail. Split out, they run on a node of their own.
+
+        The two messages separate the two ways the routing is lost: dropping
+        ``scripts/`` from the ``CHANGED_SCRIPTS`` filter drops the path before
+        any branch sees it, while dropping the branch itself lets the path
+        through to a dispatch chain that matches nothing. The ``is_file()``
+        check names the third — a suite renamed or deleted out from under the
+        derivation, which the ``[ -f ]`` guard turns into a zero exit.
+        """
+        result = route(self.SCRIPT, [DERIVED_TARGET_SOURCE])
         assert "No scripts or script tests changed." not in result.stdout, (
             f"ci/{self.SCRIPT} filtered {DERIVED_TARGET_SOURCE} out before any branch saw it — restore the "
             f"`scripts/` prefix in the CHANGED_SCRIPTS grep\n{diagnose(result)}"
