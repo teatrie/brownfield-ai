@@ -601,7 +601,10 @@ class TestRoutingDerivation:
     nothing routes no tests and still exits 0.
 
     Nothing here imports ``helpers.router_harness``, which carries the
-    behavioural half. Do not merge the two copies.
+    behavioural half: both routers fan a changed module under
+    ``tests/helpers/`` out to ``tests/helpers/`` and ``tests/ci/`` only, so an
+    import from ``tests/scripts/`` would be a dependency no router covers. Do
+    not merge the two copies.
 
     Two accepted limitations, both deferred rather than blind. A deletion-only
     diff of this module reaches neither half: its path is derived rather than
