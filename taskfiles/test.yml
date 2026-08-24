@@ -12,6 +12,7 @@ tasks:
       - task: scripts
       - task: dashboard
       - task: integration
+      - task: routing
 
   purge-envs:
     desc: Force-purge dead or conflicting mock containers (like Moto/LocalStack) left behind by pytest-docker
@@ -229,6 +230,15 @@ tasks:
         -o cache_dir=tmp/.pytest_cache
         --junitxml=tmp/junit_container_integration.xml
         {{.CLI_ARGS}}
+
+  routing:
+    desc: Run the routing-coverage guard host-side (no container; .venv only)
+    deps: [setup]
+    cmds:
+      - >-
+        .venv/bin/pytest tests/ci/test_router_coverage.py -v
+        -o cache_dir=tmp/.pytest_cache
+        --junitxml=tmp/junit_routing.xml
 
   staged:
     desc: Run tests natively only for staged files
