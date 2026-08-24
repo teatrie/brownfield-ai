@@ -145,6 +145,28 @@ CHANGED_SCRIPTS_PATTERN = re.compile(r'^[ \t]*CHANGED_SCRIPTS=.*?-E\s+"\^\((.+?)
 #: in ``test_staged.sh`` the prefix would admit paths that then match no branch.
 KNOWN_ROUTER_DIVERGENCE: frozenset[str] = frozenset({"docker/agent-cli/"})
 
+#: Tracked paths every router's ``CHANGED_SCRIPTS`` universe must contain. Each
+#: sits under an alternative written without regex escapes, deliberately: a
+#: universe built with ``str.startswith`` over the escaped alternatives still
+#: holds them, so this pin fails only when an alternative is *dropped* and the
+#: dot-prefixed alternatives are left to the per-alternative coverage check.
+#: Adding a ``.claude/`` path here would collapse the two into one check.
+UNIVERSE_SENTINELS: tuple[str, ...] = (
+    "ci/test_staged.sh",
+    "ci/test_changed.sh",
+    "scripts/setup_codex_reviewer.sh",
+    "tests/ci/conftest.py",
+    "tests/helpers/router_harness.py",
+    "docker/shared/python-security-gate.sh",
+)
+
+#: A tracked path that *contains* a ``CHANGED_SCRIPTS`` alternative without
+#: starting with one. A lower bound is satisfied by an over-matching pattern
+#: too, so only a path that must stay *out* of the universe can catch a lost
+#: ``^`` anchor or a substring match. It must stay tracked to mean anything —
+#: an untracked negative sentinel can never appear, and the check goes vacuous.
+UNIVERSE_NEGATIVE_SENTINEL = "workflows/agent-memory/skills/execution-ledger/scripts/todo_cli.py"
+
 #: Opening line of the reviewer-template branch both test routers must carry
 #: byte-identically.
 REVIEWER_TEMPLATE_BRANCH_MARKER = 'elif [[ "$file" == .claude/prompts/reviewer/* ]]'
@@ -324,6 +346,120 @@ def assert_changed_scripts_prefixes_agree() -> None:
         f"in ci/{staged_script} only: {sorted(missing)} (pinned: none)\n"
         "add the prefix to both routers, or pin the divergence in KNOWN_ROUTER_DIVERGENCE"
     )
+
+
+def split_nul_records(payload: str) -> tuple[str, ...]:
+    """
+    Split a NUL-delimited git payload into records.
+
+    ``git ls-files -z`` *terminates* every record rather than separating them,
+    so the split leaves a trailing empty fragment; discarding empties keeps a
+    zero-length path out of the universe. NUL delimiting is also what holds a
+    path containing a space or a newline together, which line splitting would
+    not.
+
+    Args:
+        payload: Raw NUL-delimited stdout.
+
+    Returns:
+        One entry per record, empty fragments discarded.
+    """
+    return tuple(record for record in payload.split("\0") if record)
+
+
+def tracked_paths() -> tuple[str, ...]:
+    """
+    Enumerate every path git tracks in this repository.
+
+    Shells out on each call, so a caller that needs the listing more than once
+    should hold the result rather than re-enumerate per case.
+
+    Returns:
+        Repository-relative tracked paths, in ``git ls-files`` order.
+
+    Raises:
+        AssertionError: If git exits non-zero, or reports nothing at all. A
+            partial listing is the dangerous case — it shrinks the universe
+            silently, and every downstream comparison then passes on a subset.
+    """
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"`git ls-files -z` failed in {REPO_ROOT} with exit {result.returncode}; whatever "
+        f"reached stdout is a partial listing and is not usable\n{result.stderr}"
+    )
+    paths = split_nul_records(result.stdout)
+    assert paths, f"`git ls-files -z` reported no tracked files in {REPO_ROOT}"
+    return paths
+
+
+def changed_scripts_universe(script: str) -> tuple[str, ...]:
+    """
+    Enumerate the tracked paths a test router's ``CHANGED_SCRIPTS`` filter admits.
+
+    The filter is reconstructed from the router's own source rather than
+    restated here, so the universe follows a prefix added to or dropped from
+    the router with no list to maintain. ``changed_scripts_prefixes`` returns
+    its alternatives regex-escaped, so the reconstruction has to stay a regex
+    *and* has to stay anchored: a ``str.startswith`` equivalent drops every
+    dot-prefixed alternative, and an unanchored match admits any path that
+    merely contains one.
+
+    The floor below is asserted here rather than in a test of its own, so it
+    runs on every call — a caller that never happens to run that test would
+    otherwise consume a silently narrowed universe.
+
+    Args:
+        script: Router filename under ``ci/``.
+
+    Returns:
+        Tracked repository-relative paths the filter admits, in
+        ``git ls-files`` order.
+
+    Raises:
+        AssertionError: If the universe is empty, omits a pinned sentinel,
+            leaves an alternative with no member, or if the negative sentinel
+            has stopped being tracked or has entered the universe.
+    """
+    alternatives = changed_scripts_prefixes(script)
+    pattern = re.compile("^(" + "|".join(sorted(alternatives)) + ")")
+    tracked = tracked_paths()
+    universe = tuple(path for path in tracked if pattern.search(path))
+
+    assert universe, (
+        f"ci/{script}: the reconstructed CHANGED_SCRIPTS filter {pattern.pattern!r} admitted none of the {len(tracked)} tracked paths"
+    )
+    absent = [sentinel for sentinel in UNIVERSE_SENTINELS if sentinel not in universe]
+    assert not absent, (
+        f"ci/{script}: pinned universe sentinels are missing: {absent} — either the router dropped "
+        "a CHANGED_SCRIPTS prefix, or those paths moved and UNIVERSE_SENTINELS needs repointing"
+    )
+    uncovered: list[str] = []
+    for alternative in sorted(alternatives):
+        admits = re.compile("^(" + alternative + ")")
+        if not any(admits.search(path) for path in universe):
+            uncovered.append(alternative)
+    assert not uncovered, (
+        f"ci/{script}: CHANGED_SCRIPTS alternatives with no tracked member: {uncovered} — an "
+        "alternative that matches nothing means the reconstruction stopped being a regex, or the "
+        "prefix is dead and belongs out of the router"
+    )
+    assert UNIVERSE_NEGATIVE_SENTINEL in tracked, (
+        f"{UNIVERSE_NEGATIVE_SENTINEL} is no longer tracked, which leaves the over-match check "
+        "below vacuous — repoint UNIVERSE_NEGATIVE_SENTINEL at another tracked path that contains "
+        "a CHANGED_SCRIPTS alternative without starting with one"
+    )
+    assert UNIVERSE_NEGATIVE_SENTINEL not in universe, (
+        f"ci/{script}: {pattern.pattern!r} admitted {UNIVERSE_NEGATIVE_SENTINEL}, which only "
+        "contains an alternative rather than starting with one — the pattern lost its `^` anchor, "
+        "or it is being applied in a way that ignores the anchor, so the universe over-matches"
+    )
+    return universe
 
 
 def extract_marked_block(
