@@ -173,6 +173,13 @@ UNIVERSE_NEGATIVE_SENTINEL = "workflows/agent-memory/skills/execution-ledger/scr
 #: byte-identically.
 REVIEWER_TEMPLATE_BRANCH_MARKER = 'elif [[ "$file" == .claude/prompts/reviewer/* ]]'
 
+#: Opening line of the ``scripts/*`` dispatch branch both test routers must
+#: carry byte-identically. Pinned as the whole condition line rather than a
+#: prefix of it: ``ci/test_changed.sh`` opens its agent-cli branch with
+#: ``elif [[ "$file" == scripts/`` as well, and a marker matching two blocks
+#: fails extraction outright instead of comparing either one.
+SCRIPTS_BRANCH_MARKER = 'elif [[ "$file" == scripts/* ]] || [[ "$file" == ci/* ]]; then'
+
 #: Opening prefix shared by every branch of the changed-file dispatch chain.
 #: Bounding a block slice at the next sibling branch is what keeps it from
 #: running on to the enclosing loop's ``fi`` and swallowing the rest of the
@@ -199,6 +206,34 @@ CONTAINER_DETECTION_TOKENS: tuple[str, ...] = (
     "INSIDE_CONTAINER",
     "/proc/1/cgroup",
     "/proc/self/cgroup",
+)
+
+#: Expressions that rebuild a routing target out of a source path. The
+#: routing-coverage guard runs the routers instead of re-modelling them, because
+#: a reconstructed dispatch chain agrees with a broken router, so its own source
+#: must carry none of these. The list lives here for the reason
+#: CONTAINER_DETECTION_TOKENS does: a module scanning its own source for a
+#: literal it also declares always matches itself. It is deliberately scoped to
+#: that one module — RouterContract's negative derivation tests below spell some
+#: of these on purpose, to prove the routers do not derive.
+#: The ``.replace`` entries stop before their second argument, so a derivation
+#: written without the interior space is caught by the same token.
+#: Known limits include: a test-path literal used as an expected target, which
+#: cannot be tokenised at all, since the guard's outcome pins are required to
+#: name ``tests/ci/`` and ``tests/helpers/``; a target rebuilt by f-string or
+#: concatenation, which carries no token to match; ``basename`` imported by
+#: name and then called bare, which none of the dotted spellings reach; and
+#: ``.parent`` or ``.parts``, which are left out because a path split on either
+#: of them is not by itself a rebuilt target. The list is a drift guard over one
+#: module's source, not a closed enumeration of every way to derive a path.
+SOURCE_PATH_DERIVATION_TOKENS: tuple[str, ...] = (
+    "os.path.basename",
+    "os.path.dirname",
+    "os.path.splitext",
+    ".stem",
+    ".name",
+    '.replace("-"',
+    ".replace('-'",
 )
 
 GIT_STUB = """#!/usr/bin/env bash
@@ -963,6 +998,29 @@ class RouterContract:
         """
         assert_block_mirrored(
             REVIEWER_TEMPLATE_BRANCH_MARKER,
+            routers=TEST_ROUTERS,
+            boundaries=BRANCH_BOUNDARY_MARKERS,
+        )
+
+    def test_scripts_branch_is_byte_identical(self) -> None:
+        """Both routers carry the ``scripts/*`` dispatch branch byte-identically.
+
+        ``test_derived_target_source_routes_to_its_derived_suite`` drives the
+        branch through one source, which catches a trigger *dropped* from a
+        router; comparing the branch text closes the other direction, where a
+        trigger is added to one router only.
+
+        What byte-identity here does **not** pin is routing parity for
+        ``scripts/agent-cli/``. ``ci/test_changed.sh`` matches those paths in an
+        earlier branch, so they never reach this block at all, and the two
+        routers genuinely resolve them to different targets while this block
+        stays identical. Closing that gap is tracked separately.
+
+        Ignores ``SCRIPT`` and reads both routers, for the same reason as
+        ``test_reviewer_template_suite_path_is_pinned``.
+        """
+        assert_block_mirrored(
+            SCRIPTS_BRANCH_MARKER,
             routers=TEST_ROUTERS,
             boundaries=BRANCH_BOUNDARY_MARKERS,
         )

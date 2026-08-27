@@ -26,11 +26,13 @@ from typing import NamedTuple
 
 import pytest
 import yaml
+from helpers import router_coverage_registry
 from helpers.router_coverage_registry import EXEMPTIONS
 from helpers.router_harness import (
     ANNOUNCE_PREFIX,
     CONTAINER_DETECTION_TOKENS,
     REPO_ROOT,
+    SOURCE_PATH_DERIVATION_TOKENS,
     TEST_ROUTERS,
     RouteFn,
     RouteVariantFn,
@@ -68,6 +70,30 @@ CONTAINER_DETECTION_SCAN_SOURCES: tuple[str, ...] = (
     GUARD_MODULE,
     "tests/ci/conftest.py",
 )
+
+#: A registered hole whose *shape* is pinned as well as its existence. An
+#: exemption records only that a pair reaches no test, so a router that started
+#: announcing some other wrong target would keep the hole set balanced and pass.
+PINNED_OUTCOME_PATH = "tests/ci/conftest.py"
+
+#: What each router announces for PINNED_OUTCOME_PATH. The staged router admits
+#: any existing ``*.py`` under ``tests/ci/`` and routes it to itself, which
+#: announces a target that collects nothing; the changed router admits only a
+#: ``test_*.py`` name, so it announces nothing at all.
+PINNED_OUTCOME_TARGETS: dict[str, tuple[str, ...]] = {
+    "test_staged.sh": (PINNED_OUTCOME_PATH,),
+    "test_changed.sh": (),
+}
+
+#: The registry this guard reads, and the two directory targets a changed
+#: helper module fans out to in both routers. The registry sits under
+#: ``tests/helpers/`` so that an edit to it re-runs this suite; the fan-out is
+#: pinned because relocating it under ``tests/ci/`` would route it to itself and
+#: leave the guard blind to its own data changing. The literal is tied to the
+#: module actually imported above, the way GUARD_MODULE is tied to this one, so
+#: a moved registry cannot leave the fan-out measured for a stale path.
+REGISTRY_MODULE = "tests/helpers/router_coverage_registry.py"
+REGISTRY_FANOUT_TARGETS: frozenset[str] = frozenset({"tests/ci/", "tests/helpers/"})
 
 #: Paths the contamination check routes through both a reused and a fresh
 #: workspace. One per branch shape that yields a target: a whole-suite fan-out,
@@ -551,6 +577,61 @@ class TestRouterCoverage:
             "use the id whose subject describes the hole, or the standing-holes catch-all"
         )
 
+    def test_pinned_path_routing_outcome_is_unchanged(self, routing_probe: RoutingProbe) -> None:
+        """Each router's announcement for the pinned path is asserted, not merely exempted.
+
+        The pair is a registered hole in both routers, and the registry records
+        only that it is one. The two routers arrive there by different branches
+        and produce different shapes — a self-target that collects nothing on one
+        side, no target at all on the other — and nothing else asserts either, so
+        a change from one wrong outcome to another would leave the hole set
+        balanced and pass.
+        """
+        assert frozenset(PINNED_OUTCOME_TARGETS) == frozenset(TEST_ROUTERS), (
+            f"the pinned outcomes cover {sorted(PINNED_OUTCOME_TARGETS)} while the routers are "
+            f"{sorted(TEST_ROUTERS)}; a router with no pinned outcome is not asserted here at all"
+        )
+        for router in TEST_ROUTERS:
+            announced = routing_probe.announced_targets(router, PINNED_OUTCOME_PATH)
+            assert announced == PINNED_OUTCOME_TARGETS[router], (
+                f"ci/{router} announces {list(announced)} for {PINNED_OUTCOME_PATH}, not "
+                f"{list(PINNED_OUTCOME_TARGETS[router])}; if the routing was fixed, drop the registry "
+                "exemption for the pair and repoint this pin"
+            )
+            for target in announced:
+                assert not routing_probe.collects_tests(target), (
+                    f"ci/{router} routes {PINNED_OUTCOME_PATH} to {target}, which now collects tests; "
+                    "the pair is no longer a hole and its registry exemption has to go"
+                )
+
+    def test_registry_edits_route_back_into_this_suite(self, routing_probe: RoutingProbe) -> None:
+        """A changed registry module reaches the helpers suite and this one, in both routers.
+
+        The registry is this guard's data, so an edit to it has to re-run the
+        guard. That holds only while it sits under ``tests/helpers/``, whose
+        fan-out reaches ``tests/ci/`` as well. Under ``tests/ci/`` it would route
+        to itself and collect nothing, and under any other prefix it would route
+        nowhere — either way the guard would never see its own data change.
+        """
+        assert REGISTRY_FANOUT_TARGETS, "the pinned fan-out is empty, which leaves this check vacuous"
+        registry_source = router_coverage_registry.__file__
+        assert registry_source and (REPO_ROOT / REGISTRY_MODULE).resolve() == Path(registry_source).resolve(), (
+            f"{REGISTRY_MODULE} is not the module this guard reads its exemptions from ({registry_source}), so "
+            "the fan-out below is measured for a path the guard does not actually depend on — repoint "
+            "REGISTRY_MODULE at wherever the registry now lives"
+        )
+        assert (REPO_ROOT / REGISTRY_MODULE).is_file(), (
+            f"{REGISTRY_MODULE} is missing; both routers guard the fan-out below with `[ -f ]`, so a "
+            "moved registry routes somewhere else in silence"
+        )
+        for router in TEST_ROUTERS:
+            announced = frozenset(routing_probe.announced_targets(router, REGISTRY_MODULE))
+            assert REGISTRY_FANOUT_TARGETS <= announced, (
+                f"ci/{router} routes {REGISTRY_MODULE} to {sorted(announced)}, which omits "
+                f"{sorted(REGISTRY_FANOUT_TARGETS - announced)}; the registry belongs under "
+                "tests/helpers/ precisely so that editing it re-runs this guard"
+            )
+
     def test_guard_sources_carry_no_container_detection(self) -> None:
         """Neither this module nor the conftest behind it branches on being containerised.
 
@@ -574,6 +655,30 @@ class TestRouterCoverage:
                 f"{relative} references container detectors {present}; this guard MUST NOT skip "
                 "in-container, because in-container is where an un-routed source is detected"
             )
+
+    def test_guard_source_rebuilds_no_routing_target(self) -> None:
+        """This module re-models no part of either dispatch chain.
+
+        The guard's whole value is that it executes the routers: a target
+        rebuilt from a source path agrees with a broken router by construction,
+        which is the defect being guarded against. The scan reads this module
+        only — ``helpers.router_harness`` spells the same expressions on purpose,
+        in the negative tests that prove the routers do not derive.
+        """
+        assert SOURCE_PATH_DERIVATION_TOKENS, "the derivation-token list is empty, which leaves this scan vacuous"
+        source_path = REPO_ROOT / GUARD_MODULE
+        assert source_path.resolve() == Path(__file__).resolve(), (
+            f"{GUARD_MODULE} is not this module, so the scan below reads the wrong source — repoint "
+            "GUARD_MODULE at wherever this guard now lives"
+        )
+        # No emptiness guard on the source itself: the assertion above already ties it to the module
+        # currently executing, which cannot be an empty file and still be running this test.
+        source = source_path.read_text(encoding="utf-8")
+        present = [token for token in SOURCE_PATH_DERIVATION_TOKENS if token in source]
+        assert not present, (
+            f"{GUARD_MODULE} builds a routing target with {present}; run the router and read its "
+            "announcement instead, because a rebuilt target agrees with a router that is broken"
+        )
 
     def test_session_workspace_survives_prior_calls(
         self,
