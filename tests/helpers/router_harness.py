@@ -30,10 +30,12 @@ Lives under ``tests/helpers/`` because ``pytest.ini`` sets
 """
 
 import difflib
+import os
 import re
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -186,6 +188,19 @@ BLOCK_TERMINATOR = "fi"
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
+#: Container-detection expressions the routing-coverage guard and the fixtures
+#: it consumes must not carry. In-container execution of that guard is certain —
+#: both routers route ``tests/ci/`` into ``pytest-cli`` — so a skip keyed on one
+#: of these would silence it exactly where it is most needed. The list lives
+#: here rather than beside the scan that reads it: a module scanning its own
+#: source for a literal it also declares always matches itself.
+CONTAINER_DETECTION_TOKENS: tuple[str, ...] = (
+    "/.dockerenv",
+    "INSIDE_CONTAINER",
+    "/proc/1/cgroup",
+    "/proc/self/cgroup",
+)
+
 GIT_STUB = """#!/usr/bin/env bash
 # Fully synthetic git — nothing here reaches the real binary, so no assertion
 # can be swayed by the state of the developer's or the runner's checkout.
@@ -222,6 +237,162 @@ exit 0
 """
 
 RouteFn = Callable[..., subprocess.CompletedProcess[str]]
+
+#: Builds a ``RouteFn`` over a fresh workspace whose stub set and security-gate
+#: shadow the caller chooses.
+RouteVariantFn = Callable[..., RouteFn]
+
+#: Executables a router workspace shadows on PATH, and the stub body each gets.
+#: ``task`` is stubbed alongside ``docker`` so a changed-file list reaching the
+#: agent-cli branch of ``ci/test_changed.sh`` cannot launch the real
+#: container-integration suite from a unit test.
+ROUTER_PATH_STUBS: tuple[tuple[str, str], ...] = (
+    ("git", GIT_STUB),
+    ("docker", NOOP_STUB),
+    ("task", NOOP_STUB),
+)
+
+
+class RouterWorkspace(NamedTuple):
+    """A synthetic workspace and stub PATH, ready to run a router against."""
+
+    #: Working directory the router runs from.
+    workspace: Path
+    #: Directory prepended to PATH, holding the executable stubs.
+    bin_dir: Path
+    #: File each run rewrites with its changed-file list.
+    listing: Path
+    #: Value pinned into ``GITHUB_EVENT_NAME`` on every run.
+    event_name: str
+
+
+def build_router_workspace(
+    root: Path,
+    event_name: str,
+    *,
+    stubs: Sequence[tuple[str, str]] = ROUTER_PATH_STUBS,
+    shadow_security_gate: bool = True,
+) -> RouterWorkspace:
+    """
+    Lay out a synthetic workspace a test router can be run against.
+
+    The routers invoke the security gate by a path relative to the working
+    directory, so shadowing it means placing a stub at that relative path.
+    Shadowing is the normal case: the real gate writes
+    ``tmp/.python-gate-pass``, which in CI is already owned by the outer gate
+    run's uid, so a nested invocation fails with EACCES and ``set -e`` kills the
+    router before it announces anything. Withholding the shadow reproduces that
+    death on demand, which is how a caller can tell a router that *failed* apart
+    from one that deliberately selected nothing — but only for a changed-file
+    list that reaches ``run_pytest_docker``, since both routers return early on
+    an empty target list and never touch the gate.
+
+    ``tests/`` is symlinked in rather than copied, so the routers' ``[ -f ]``
+    probes see the repository's real test files.
+
+    Args:
+        root: Directory to build under.
+        event_name: Value to pin into ``GITHUB_EVENT_NAME`` on every run.
+        stubs: ``(executable name, script body)`` pairs to shadow on PATH.
+        shadow_security_gate: Whether to place the security-gate stub.
+
+    Returns:
+        The workspace, its stub bin directory, the changed-file listing path,
+        and the pinned event name.
+    """
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True)
+    for name, body in stubs:
+        stub = bin_dir / name
+        stub.write_text(body, encoding="utf-8")
+        stub.chmod(0o755)
+
+    workspace = root / "workspace"
+    (workspace / "docker" / "shared").mkdir(parents=True)
+    if shadow_security_gate:
+        gate = workspace / "docker" / "shared" / "python-security-gate.sh"
+        gate.write_text(NOOP_STUB, encoding="utf-8")
+        gate.chmod(0o755)
+    (workspace / "tmp").mkdir()
+    (workspace / "tests").symlink_to(REPO_ROOT / "tests")
+
+    return RouterWorkspace(
+        workspace=workspace,
+        bin_dir=bin_dir,
+        listing=root / "changed-files.txt",
+        event_name=event_name,
+    )
+
+
+def run_router(
+    space: RouterWorkspace,
+    script: str,
+    changed_files: Sequence[str],
+    *,
+    target: str = "scripts",
+) -> subprocess.CompletedProcess[str]:
+    """
+    Run a router script in a prepared workspace against a changed-file list.
+
+    The listing is rewritten in full on every call, so no earlier call's paths
+    survive into a later one. That is what makes one workspace safe to reuse for
+    a whole session rather than rebuilding it per test.
+
+    The exit status is returned rather than checked: the caller decides whether
+    a non-zero router is a failure or the outcome under test.
+
+    Args:
+        space: Prepared workspace to run in.
+        script: Router filename under ``ci/``.
+        changed_files: Paths the stubbed ``git`` reports as changed.
+        target: Router target argument.
+
+    Returns:
+        The completed router process.
+    """
+    space.listing.write_text("".join(f"{path}\n" for path in changed_files), encoding="utf-8")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{space.bin_dir}{os.pathsep}{env['PATH']}"
+    env["ROUTER_TEST_CHANGED_FILES"] = str(space.listing)
+    env["GITHUB_EVENT_NAME"] = space.event_name
+
+    return subprocess.run(
+        ["bash", str(REPO_ROOT / "ci" / script), target],
+        cwd=space.workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+
+def make_route(space: RouterWorkspace) -> RouteFn:
+    """
+    Bind a workspace into a ``RouteFn``, so callers pass only script and paths.
+
+    The closure lives here rather than in the fixture that returns it because
+    only this module resolves under mypy: ``tests/`` is not a package base, so
+    an importer of ``helpers.router_harness`` sees every name as ``Any`` and a
+    call to ``run_router`` there checks nothing.
+
+    Args:
+        space: Prepared workspace every routed call runs in.
+
+    Returns:
+        Callable taking the script filename under ``ci/`` and the changed-file
+        list, plus an optional keyword-only ``target``.
+    """
+
+    def _route(
+        script: str,
+        changed_files: Sequence[str],
+        *,
+        target: str = "scripts",
+    ) -> subprocess.CompletedProcess[str]:
+        return run_router(space, script, changed_files, target=target)
+
+    return _route
 
 
 def routed_targets(result: subprocess.CompletedProcess[str]) -> list[str]:
