@@ -7,10 +7,16 @@
 - **aws-vault**: Used to securely manage AWS SSO credentials. We use the `task aws:auth` task wrapper and our `aws-vault-auth` agent capability to securely extract temporary tokens into a local, git-ignored file (`tmp/.aws-credentials.env`), preventing STS secrets from bleeding into the LLM context limits or persisting permanently.
 - **uv** (Optional): Astral's Rust-based Python package manager.
 Used by `task test:setup` to create the host `.venv/` with Python
-3.12 for host-run tests — primarily `test:skills:staged`, which
-cannot run in a container per [CLAUDE.md](../CLAUDE.md) §11. Only
+3.12 for host-run tests — `test:skills:staged`, `test:container-integration`
+and `test:routing`, the three exceptions that cannot or must not run in a
+container per [CLAUDE.md](../CLAUDE.md) §11. Only
 developers who run the test suite locally need `uv`. CI installs
-it explicitly via `.github/workflows/test.yml` (official Astral curl installer).
+it explicitly via `.github/workflows/test.yml` (official Astral curl installer)
+and restores `~/.cache/uv` from an `actions/cache` step keyed on the three
+requirements files, so the `test:routing` step does not pay a cold resolve on
+every pull request. The cached path is the uv package cache and never `.venv`
+itself: a virtualenv records absolute interpreter paths and does not survive
+relocation.
 Install locally via `task setup:env` (offers brew install on
 macOS) or manually: `brew install uv` (macOS) / `pip install uv`
 (any platform) / `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -38,9 +44,19 @@ execution in `python-cli` and `pytest-cli` containers. Layer 1: Claude Code
 PreToolUse hooks block direct Docker access. Layer 2: Host-side gate script
 (`docker/shared/python-security-gate.sh`) validates paths, flags, and
 git-tracking. Layer 3: Container entrypoint validates a time-limited gate
-artifact. All existing
-taskfile tasks (`ledger:*`, `chromadb:*`, `todo:*`, `test:*`, `lint:*`)
-route through the gate automatically. See
+artifact. Every containerised taskfile task that runs Python through the
+`pytest-cli` / `python-cli` entrypoint routes through the gate
+automatically (`test:dashboard` is an exception: it overrides the
+entrypoint and calls no gate). The host-side targets are outside
+its scope by construction, because the gate exists to validate paths and
+flags before Python runs *in a container*: `test:container-integration`
+calls it anyway, since it launches real containers; `test:skills` and
+`test:routing` do not. `test:routing` follows the `test:skills` shape —
+`.venv/bin/pytest` invoked directly — and is safe to leave ungated because
+it takes no caller input at all: it threads no `{{.CLI_ARGS}}`, which
+`tests/ci/test_router_coverage.py` asserts, and its pytest argument is a
+fixed module literal by construction (not separately pinned), so there is
+no agent-supplied path or flag for a gate to validate. See
 [docs/container_security.md](container_security.md) for the full security
 model, deny rules, Docker build auditing, and contributor onboarding.
 - **CLI Invocation Discipline**: Many `task` aliases (`ledger:*`,

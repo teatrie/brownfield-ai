@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+import yaml
 from helpers.router_coverage_registry import EXEMPTIONS
 from helpers.router_harness import (
     ANNOUNCE_PREFIX,
@@ -107,6 +108,75 @@ ENUMERATED_TODO_IDS: frozenset[str] = frozenset({
     "TODO-0334",
     "TODO-0335",
 })
+
+#: The two files that carry this guard's wiring: the CI step that runs it on
+#: every PR, and the target that step invokes.
+WORKFLOW_PATH = ".github/workflows/test.yml"
+TASKFILE_PATH = "taskfiles/test.yml"
+
+#: The workflow job the guard step belongs to. Every step lookup below is
+#: scoped by this key rather than searched file-wide: ``Install uv`` appears in
+#: two jobs and ``Install Task`` in three, so an unscoped search either matches
+#: several steps or makes the ordering assertions depend on edits to a job this
+#: guard has nothing to do with.
+GUARD_JOB = "test-src-scripts"
+
+#: The guard step, pinned by name **and** by the command it runs. Either alone
+#: leaves a rename direction open: matching on the name only lets the command
+#: be retargeted at some other target, and matching on the command only lets
+#: the step be renamed into something a reader no longer recognises as this
+#: guard.
+GUARD_STEP_NAME = "Run Routing Coverage Guard"
+GUARD_STEP_COMMAND = "task test:routing"
+
+#: The steps the guard step must sit between. After the uv install because that
+#: step appends to ``$GITHUB_PATH`` and so affects only later steps; before the
+#: script tests because a script-test failure would otherwise suppress a guard
+#: whose whole point is that it always runs.
+UV_INSTALL_STEP_NAME = "Install uv"
+SCRIPT_TESTS_STEP_NAME = "Run Script Tests"
+
+#: The uv package cache the guard's ``deps: [setup]`` venv build restores from.
+#: The package cache, never ``.venv`` itself — a virtualenv is not relocatable.
+CACHE_ACTION_PREFIX = "actions/cache@"
+UV_CACHE_PATH = "~/.cache/uv"
+
+#: The requirements files ``task test:setup`` installs from, and therefore the
+#: files the cache key must track: a key that ignores one serves a stale cache
+#: across the dependency change that invalidated it.
+REQUIREMENTS_FILES: tuple[str, ...] = (
+    "requirements.txt",
+    "tests/requirements.txt",
+    "services/dashboard/requirements.txt",
+)
+
+#: The task target the guard step invokes, and the aggregate that must include
+#: it so the same wiring runs in a full local suite rather than only in CI.
+ROUTING_TASK_NAME = "routing"
+AGGREGATE_TASK_NAME = "all"
+ROUTING_TASK_RUNNER = ".venv/bin/pytest"
+ROUTING_TASK_DEPENDENCY = "setup"
+
+#: Tokens that MUST NOT appear in the routing target's commands. The first
+#: three would put a host-side guard back under the container path it was moved
+#: off; the fourth would let a caller inject pytest arguments — including a
+#: selection that deselects every case — into a target whose value is that it
+#: always runs the same thing.
+FORBIDDEN_ROUTING_TOKENS: tuple[str, ...] = (
+    "docker",
+    "--entrypoint",
+    "PYTHON_GATE_DISABLED",
+    "{{.CLI_ARGS}}",
+)
+
+#: The or-true suffix, matched as a pattern rather than a literal so both
+#: spacings are caught. Tolerating a non-zero pytest exit here would fail open
+#: in exactly the class this guard exists to close.
+OR_TRUE_SUFFIX = re.compile(r"\|\|\s*true")
+
+#: Reads the junit destination back off a target's commands, so the routing
+#: target's artifact can be checked against every other target's.
+JUNIT_DESTINATION = re.compile(r"--junitxml=(\S+)")
 
 #: Probes whether one announced target collects, returning the raw process so
 #: the exit-code contract stays with the caller.
@@ -558,3 +628,282 @@ class TestRouterCoverage:
                 f"ci/{router} announced {routed_targets(settled)} for {UNROUTED_SAMPLE} after a call that "
                 f"routed {list(CONTAMINATION_NOISE)}: the earlier list survived into the later call"
             )
+
+
+def _load_yaml_mapping(relative: str) -> dict[str, object]:
+    """Parse one wiring file, failing loudly rather than yielding an empty mapping to read nothing off."""
+    path = REPO_ROOT / relative
+    assert path.is_file(), f"{relative} is missing, so the wiring it carries cannot be pinned"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(document, dict), f"{relative} did not parse as a mapping, so no wiring can be read off it"
+    return document
+
+
+def _guard_job_steps() -> list[dict[str, object]]:
+    """Return the guard job's steps, scoped by job key.
+
+    Scoping is the whole safeguard. ``Install uv`` appears in two jobs of this
+    workflow and ``Install Task`` in three, so a file-wide search would either
+    match several steps or make the ordering assertions turn on edits to a job
+    this guard has nothing to do with.
+    """
+    workflow = _load_yaml_mapping(WORKFLOW_PATH)
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, dict) and jobs, f"{WORKFLOW_PATH} declares no jobs, so the guard step cannot be located"
+    assert GUARD_JOB in jobs, (
+        f"{WORKFLOW_PATH} declares no {GUARD_JOB!r} job — it declares {sorted(jobs)}; every lookup below is "
+        "scoped by job key because step names repeat across jobs, so a renamed job unwires the pin rather "
+        "than relocating it"
+    )
+    job = jobs[GUARD_JOB]
+    assert isinstance(job, dict), f"{WORKFLOW_PATH} job {GUARD_JOB} did not parse as a mapping"
+    steps = job.get("steps")
+    assert isinstance(steps, list) and steps, f"{WORKFLOW_PATH} job {GUARD_JOB} declares no steps"
+    mistyped = [index for index, step in enumerate(steps) if not isinstance(step, dict)]
+    assert not mistyped, f"{WORKFLOW_PATH} job {GUARD_JOB} has non-mapping steps at {mistyped}"
+    return steps
+
+
+def _sole_step_index(steps: list[dict[str, object]], name: str) -> int:
+    """Locate exactly one step by name, so neither absence nor duplication passes silently."""
+    matches = [index for index, step in enumerate(steps) if step.get("name") == name]
+    assert len(matches) == 1, (
+        f"{WORKFLOW_PATH} job {GUARD_JOB} carries {len(matches)} steps named {name!r}, not exactly 1; an "
+        "absent step leaves the ordering assertion nothing to anchor on, and a duplicated one makes which "
+        "step it anchors on arbitrary"
+    )
+    return matches[0]
+
+
+def _guard_step_index(steps: list[dict[str, object]]) -> int:
+    """Locate the guard step by name **and** by the command it runs.
+
+    Both predicates are required. Matching the name alone would let the command
+    be retargeted at some other task while the step keeps its label; matching
+    the command alone would let the step be renamed into something no reader
+    recognises as this guard.
+    """
+    matches = [
+        index for index, step in enumerate(steps) if step.get("name") == GUARD_STEP_NAME and GUARD_STEP_COMMAND in str(step.get("run", ""))
+    ]
+    assert len(matches) == 1, (
+        f"{WORKFLOW_PATH} job {GUARD_JOB} carries {len(matches)} steps named {GUARD_STEP_NAME!r} that run "
+        f"{GUARD_STEP_COMMAND!r}, not exactly 1; the guard is unwired until exactly one step satisfies both"
+    )
+    return matches[0]
+
+
+def _cache_step_index(steps: list[dict[str, object]]) -> int:
+    """Locate the single caching step in the guard job."""
+    matches = [index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith(CACHE_ACTION_PREFIX)]
+    assert len(matches) == 1, (
+        f"{WORKFLOW_PATH} job {GUARD_JOB} carries {len(matches)} {CACHE_ACTION_PREFIX} steps, not exactly 1; "
+        "without one the guard's venv is rebuilt from an empty package cache on every run"
+    )
+    return matches[0]
+
+
+def _declared_tasks() -> dict[str, object]:
+    """Return every target declared in the taskfile."""
+    taskfile = _load_yaml_mapping(TASKFILE_PATH)
+    tasks = taskfile.get("tasks")
+    assert isinstance(tasks, dict) and tasks, f"{TASKFILE_PATH} declares no tasks"
+    return tasks
+
+
+def _routing_target() -> dict[str, object]:
+    """Return the target the CI step invokes."""
+    tasks = _declared_tasks()
+    assert ROUTING_TASK_NAME in tasks, (
+        f"{TASKFILE_PATH} declares no {ROUTING_TASK_NAME!r} target, so the CI step pinned above invokes nothing that exists"
+    )
+    target = tasks[ROUTING_TASK_NAME]
+    assert isinstance(target, dict), f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} did not parse as a mapping"
+    return target
+
+
+def _command_strings(target: object) -> tuple[str, ...]:
+    """Return a target's literal commands, dropping the ``task:`` and ``defer:`` mapping entries."""
+    if not isinstance(target, dict):
+        return ()
+    cmds = target.get("cmds")
+    if not isinstance(cmds, list):
+        return ()
+    return tuple(entry for entry in cmds if isinstance(entry, str))
+
+
+def _junit_destinations(target: object) -> frozenset[str]:
+    """Read the junit paths a target writes to."""
+    return frozenset(str(match) for command in _command_strings(target) for match in JUNIT_DESTINATION.findall(command))
+
+
+class TestGuardWiring:
+    """The CI step and the task target that make this guard unconditional.
+
+    Everything above measures routing coverage; nothing above notices when the
+    thing that runs it is deleted, renamed, made conditional, or pointed
+    somewhere else. ``.github/`` and ``taskfiles/`` sit under no router prefix,
+    so no diff-scoped job covers either file — this class is what makes a
+    wiring regression fail in the run it happens in, wherever the guard is
+    invoked from.
+    """
+
+    def test_workflow_runs_the_guard_unconditionally(self) -> None:
+        """The guard step carries no ``if:``.
+
+        A condition is how this guard gets quietly retired: any diff-scoped
+        predicate skips it on exactly the pull requests that add a source
+        reaching no test, which is the case it exists for.
+        """
+        steps = _guard_job_steps()
+        guard = steps[_guard_step_index(steps)]
+        assert "if" not in guard, (
+            f"{WORKFLOW_PATH} step {GUARD_STEP_NAME!r} carries `if: {guard['if']}`; the guard must run on "
+            "every pull request, including the ones touching no router-prefixed path"
+        )
+
+    def test_workflow_runs_the_guard_between_uv_install_and_script_tests(self) -> None:
+        """The guard step sits after the uv install and before the script tests.
+
+        The lower bound is mechanical: the uv install appends to
+        ``$GITHUB_PATH``, which affects only subsequent steps, so a guard placed
+        earlier finds no ``uv`` for its ``deps: [setup]`` venv build. The upper
+        bound is the point of the guard: after the script tests, an ordinary
+        script-test failure would suppress it.
+        """
+        steps = _guard_job_steps()
+        guard_index = _guard_step_index(steps)
+        uv_index = _sole_step_index(steps, UV_INSTALL_STEP_NAME)
+        script_index = _sole_step_index(steps, SCRIPT_TESTS_STEP_NAME)
+        assert uv_index < guard_index, (
+            f"{WORKFLOW_PATH} job {GUARD_JOB} runs {GUARD_STEP_NAME!r} at step {guard_index}, before "
+            f"{UV_INSTALL_STEP_NAME!r} at step {uv_index}; uv is on $PATH only for steps after its install"
+        )
+        assert guard_index < script_index, (
+            f"{WORKFLOW_PATH} job {GUARD_JOB} runs {GUARD_STEP_NAME!r} at step {guard_index}, after "
+            f"{SCRIPT_TESTS_STEP_NAME!r} at step {script_index}; a script-test failure would then suppress "
+            "the one step that is meant to run unconditionally"
+        )
+
+    def test_workflow_caches_uv_packages_before_the_guard(self) -> None:
+        """A uv package cache keyed on the requirements files precedes the guard step.
+
+        The cached path is the uv package cache and not ``.venv``: a virtualenv
+        records absolute interpreter paths and does not survive relocation, so
+        restoring one would be worse than rebuilding.
+        """
+        assert REQUIREMENTS_FILES, "the requirements-file list is empty, which leaves the key check vacuous"
+        steps = _guard_job_steps()
+        guard_index = _guard_step_index(steps)
+        cache_index = _cache_step_index(steps)
+        cache = steps[cache_index]
+        settings = cache.get("with")
+        assert isinstance(settings, dict), f"{WORKFLOW_PATH} step {cache.get('name')!r} declares no `with:` block"
+        assert settings.get("path") == UV_CACHE_PATH, (
+            f"{WORKFLOW_PATH} caches {settings.get('path')!r}, not {UV_CACHE_PATH!r}; the package cache is "
+            "restorable across runners and a virtualenv is not"
+        )
+        key = str(settings.get("key", ""))
+        # Matched as the quoted `hashFiles` argument, not as a bare substring: `requirements.txt`
+        # is a suffix of `tests/requirements.txt`, so a substring test would read a key naming only
+        # the two nested files as covering the root one too.
+        unkeyed = [name for name in REQUIREMENTS_FILES if f"'{name}'" not in key]
+        assert not unkeyed, (
+            f"{WORKFLOW_PATH} keys the uv cache on {key!r}, which ignores {unkeyed}; a change to an ignored "
+            "requirements file would hit a cache the change invalidated"
+        )
+        assert cache_index < guard_index, (
+            f"{WORKFLOW_PATH} restores the uv cache at step {cache_index}, after {GUARD_STEP_NAME!r} at step "
+            f"{guard_index}; a cache restored afterwards saves the guard's venv build nothing"
+        )
+
+    def test_routing_target_runs_host_side_under_the_venv(self) -> None:
+        """The target runs the host ``.venv`` pytest and builds it first.
+
+        ``deps: [setup]`` is what makes the target self-sufficient in CI, where
+        no ``.venv`` exists until something creates one; without it the target
+        fails on a fresh runner for a reason that has nothing to do with routing.
+        """
+        target = _routing_target()
+        commands = _command_strings(target)
+        assert commands, f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} declares no commands"
+        assert ROUTING_TASK_RUNNER in "\n".join(commands), (
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} does not run {ROUTING_TASK_RUNNER}; the guard is "
+            "host-side by design and a runner outside the venv is a different execution environment"
+        )
+        deps = target.get("deps")
+        assert isinstance(deps, list), f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} declares no deps list"
+        assert ROUTING_TASK_DEPENDENCY in deps, (
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} depends on {deps}, which omits "
+            f"{ROUTING_TASK_DEPENDENCY!r}; the venv it runs under would then have to pre-exist"
+        )
+
+    def test_routing_target_is_part_of_the_full_suite(self) -> None:
+        """The aggregate target invokes the routing target.
+
+        The guard *module* is already collected by the containerised scripts
+        suite. What needs aggregating is the *target* — its host-side venv
+        wiring — which otherwise runs only in CI and so is only ever exercised
+        where a failure is most expensive to diagnose.
+        """
+        tasks = _declared_tasks()
+        assert AGGREGATE_TASK_NAME in tasks, f"{TASKFILE_PATH} declares no {AGGREGATE_TASK_NAME!r} target"
+        aggregate = tasks[AGGREGATE_TASK_NAME]
+        assert isinstance(aggregate, dict), f"{TASKFILE_PATH} target {AGGREGATE_TASK_NAME} did not parse as a mapping"
+        cmds = aggregate.get("cmds")
+        assert isinstance(cmds, list) and cmds, f"{TASKFILE_PATH} target {AGGREGATE_TASK_NAME} declares no commands"
+        referenced = [entry.get("task") for entry in cmds if isinstance(entry, dict)]
+        assert ROUTING_TASK_NAME in referenced, (
+            f"{TASKFILE_PATH} target {AGGREGATE_TASK_NAME} runs {referenced}, which omits "
+            f"{ROUTING_TASK_NAME!r}; the host-side wiring would then run only in CI"
+        )
+
+    def test_routing_target_carries_no_container_or_tolerance_tokens(self) -> None:
+        """The target neither reaches for a container nor tolerates a non-zero exit.
+
+        A drift guard rather than an adversarial boundary — the boundary is the
+        permission surface plus review. What it catches is the accidental
+        reintroduction of the container path this target was deliberately moved
+        off, and the or-true suffix an implementer reaches for when the guard
+        reds.
+        """
+        assert FORBIDDEN_ROUTING_TOKENS, "the forbidden-token list is empty, which leaves this scan vacuous"
+        commands = "\n".join(_command_strings(_routing_target()))
+        assert commands, f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} declares no commands to scan"
+        present = [token for token in FORBIDDEN_ROUTING_TOKENS if token in commands]
+        assert not present, (
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} references {present}; the guard runs host-side "
+            "under the venv, and its commands take no caller-supplied arguments"
+        )
+        tolerated = OR_TRUE_SUFFIX.findall(commands)
+        assert not tolerated, (
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} suffixes a command with {tolerated}; a swallowed "
+            "pytest exit reports green for a guard that never asserted anything"
+        )
+
+    def test_routing_target_junit_artifact_is_its_own(self) -> None:
+        """No other target writes to the routing target's junit path.
+
+        Scoped to this target rather than asserted globally: two pre-existing
+        targets already share a junit path, and repairing that is out of scope
+        here. What matters is that the aggregate suite, which runs several
+        targets in one pass, cannot have one of them clobber this guard's
+        results file.
+        """
+        destinations = _junit_destinations(_routing_target())
+        assert destinations, (
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} writes no junit file, so there is no artifact to "
+            "keep distinct and nothing here to assert"
+        )
+        others = frozenset(
+            destination
+            for name, target in _declared_tasks().items()
+            if name != ROUTING_TASK_NAME
+            for destination in _junit_destinations(target)
+        )
+        assert others, f"{TASKFILE_PATH} declares no other junit destination, which leaves this comparison vacuous"
+        shared = sorted(destinations & others)
+        assert not shared, (
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} writes {shared}, which another target also writes; "
+            "under the aggregate suite whichever runs last silently replaces the other's results"
+        )
