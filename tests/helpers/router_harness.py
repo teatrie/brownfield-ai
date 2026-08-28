@@ -195,6 +195,12 @@ BLOCK_TERMINATOR = "fi"
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 
+#: Liveness ceiling on the tracked-file listing. Its callers run it at import
+#: time, so a git that never returns wedges collection itself rather than
+#: failing a test: there is no case left to report the stall against, and the
+#: run reports nothing at all.
+TRACKED_PATHS_TIMEOUT_SECONDS = 60
+
 #: Container-detection expressions the routing-coverage guard and the fixtures
 #: it consumes must not carry. In-container execution of that guard is certain —
 #: both routers route ``tests/ci/`` into ``pytest-cli`` — so a skip keyed on one
@@ -587,6 +593,8 @@ def tracked_paths() -> tuple[str, ...]:
         AssertionError: If git exits non-zero, or reports nothing at all. A
             partial listing is the dangerous case — it shrinks the universe
             silently, and every downstream comparison then passes on a subset.
+        subprocess.TimeoutExpired: If git has not returned within
+            ``TRACKED_PATHS_TIMEOUT_SECONDS``.
     """
     result = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -594,6 +602,7 @@ def tracked_paths() -> tuple[str, ...]:
         capture_output=True,
         encoding="utf-8",
         check=False,
+        timeout=TRACKED_PATHS_TIMEOUT_SECONDS,
     )
     assert result.returncode == 0, (
         f"`git ls-files -z` failed in {REPO_ROOT} with exit {result.returncode}; whatever "

@@ -94,6 +94,18 @@ jobs:
       - name: Run Routing Coverage Guard
         run: task test:routing
 
+      - name: Publish Routing Coverage Guard Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-results-routing
+          path: tmp/junit_routing.xml
+          # The guard's value when it reds is the per-case list of unrouted
+          # paths, which the junit carries and a truncated log does not. The
+          # file is absent when the venv build fails ahead of pytest, and
+          # upload-artifact@v4 would log a warning.
+          if-no-files-found: ignore
+
       - name: Run Script Tests
         run: task test:scripts:changed
 

@@ -212,14 +212,18 @@ EXEMPTIONS: tuple[RoutingExemption, ...] = (
         router="test_changed.sh",
         path="docker/agent-cli/Dockerfile",
         reason="the agent-cli branch checks tests/scripts/test_Dockerfile.py and tests/scripts/test_agent_cli_Dockerfile.py, "
-        "neither of which exists",
+        "neither of which exists; the path is still tested, via the post-loop AGENT_CLI_RELEVANT match that delegates to "
+        "task test:container-integration — a channel this guard cannot observe, since it equates coverage with announced "
+        "pytest targets",
         todo_id="TODO-0333",
     ),
     RoutingExemption(
         router="test_changed.sh",
         path="docker/agent-cli/codex-config.toml",
         reason="the agent-cli branch precedes the reviewer-template branch and checks tests/scripts/test_codex_config.py and "
-        "tests/scripts/test_agent_cli_codex_config.py, neither of which exists",
+        "tests/scripts/test_agent_cli_codex_config.py, neither of which exists; the path is still tested, via the post-loop "
+        "AGENT_CLI_RELEVANT match that delegates to task test:container-integration — a channel this guard cannot observe, "
+        "since it equates coverage with announced pytest targets",
         todo_id="TODO-0333",
     ),
     RoutingExemption(
@@ -238,7 +242,9 @@ EXEMPTIONS: tuple[RoutingExemption, ...] = (
         router="test_changed.sh",
         path="scripts/agent-cli/_review-common.sh",
         reason="the agent-cli branch checks tests/scripts/test__review_common.py and "
-        "tests/scripts/test_agent_cli__review_common.py, neither of which exists",
+        "tests/scripts/test_agent_cli__review_common.py, neither of which exists; the path is still tested, via the "
+        "post-loop AGENT_CLI_RELEVANT match that delegates to task test:container-integration — a channel this guard "
+        "cannot observe, since it equates coverage with announced pytest targets",
         todo_id="TODO-0333",
     ),
     RoutingExemption(
@@ -266,7 +272,9 @@ EXEMPTIONS: tuple[RoutingExemption, ...] = (
         router="test_changed.sh",
         path="scripts/agent-cli/copilot-review.sh",
         reason="the agent-cli branch checks tests/scripts/test_copilot_review.py and "
-        "tests/scripts/test_agent_cli_copilot_review.py, neither of which exists",
+        "tests/scripts/test_agent_cli_copilot_review.py, neither of which exists; the path is still tested, via the "
+        "post-loop AGENT_CLI_RELEVANT match that delegates to task test:container-integration — a channel this guard "
+        "cannot observe, since it equates coverage with announced pytest targets",
         todo_id="TODO-0333",
     ),
     RoutingExemption(

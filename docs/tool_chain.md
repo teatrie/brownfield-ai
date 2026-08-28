@@ -7,7 +7,7 @@
 - **aws-vault**: Used to securely manage AWS SSO credentials. We use the `task aws:auth` task wrapper and our `aws-vault-auth` agent capability to securely extract temporary tokens into a local, git-ignored file (`tmp/.aws-credentials.env`), preventing STS secrets from bleeding into the LLM context limits or persisting permanently.
 - **uv** (Optional): Astral's Rust-based Python package manager.
 Used by `task test:setup` to create the host `.venv/` with Python
-3.12 for host-run tests — `test:skills:staged`, `test:container-integration`
+3.12 for host-run tests — `test:skills`, `test:container-integration`
 and `test:routing`, the three exceptions that cannot or must not run in a
 container per [CLAUDE.md](../CLAUDE.md) §11. Only
 developers who run the test suite locally need `uv`. CI installs
@@ -46,17 +46,24 @@ PreToolUse hooks block direct Docker access. Layer 2: Host-side gate script
 git-tracking. Layer 3: Container entrypoint validates a time-limited gate
 artifact. Every containerised taskfile task that runs Python through the
 `pytest-cli` / `python-cli` entrypoint routes through the gate
-automatically (`test:dashboard` is an exception: it overrides the
-entrypoint and calls no gate). The host-side targets are outside
+automatically. The exception is structural rather than a single target:
+any path that overrides the entrypoint bypasses the gate, which
+`test:dashboard` and the dashboard branches of both `ci/test_staged.sh`
+and `ci/test_changed.sh` all do. The host-side targets are outside
 its scope by construction, because the gate exists to validate paths and
 flags before Python runs *in a container*: `test:container-integration`
 calls it anyway, since it launches real containers; `test:skills` and
 `test:routing` do not. `test:routing` follows the `test:skills` shape —
 `.venv/bin/pytest` invoked directly — and is safe to leave ungated because
-it takes no caller input at all: it threads no `{{.CLI_ARGS}}`, which
-`tests/ci/test_router_coverage.py` asserts, and its pytest argument is a
-fixed module literal by construction (not separately pinned), so there is
-no agent-supplied path or flag for a gate to validate. See
+its host-side execution takes no caller input at all: it threads no
+`{{.CLI_ARGS}}`, which `tests/ci/test_router_coverage.py` asserts, and its
+pytest argument is a fixed module literal by construction (not separately
+pinned), so there is no agent-supplied path or flag for a gate to validate.
+That guard module is also collected in-container, since both routers fan
+`tests/ci/` into the containerised scripts suite, where it spawns nested
+collection subprocesses on router-derived paths; those inputs are repo
+content rather than agent input, and that execution is governed by the
+`pytest-cli` entrypoint like any other containerised suite. See
 [docs/container_security.md](container_security.md) for the full security
 model, deny rules, Docker build auditing, and contributor onboarding.
 - **CLI Invocation Discipline**: Many `task` aliases (`ledger:*`,

@@ -7,12 +7,15 @@ tasks:
   all:
     desc: Run all deterministic tests (excludes skills — those require API keys)
     deps: [purge-envs]
+    # routing runs first: cmds are sequential and stop at the first failure, so
+    # any container-backed target listed ahead of it would suppress the one
+    # guard here that is meant to report on every change.
     cmds:
+      - task: routing
       - task: brownfield_ai
       - task: scripts
       - task: dashboard
       - task: integration
-      - task: routing
 
   purge-envs:
     desc: Force-purge dead or conflicting mock containers (like Moto/LocalStack) left behind by pytest-docker

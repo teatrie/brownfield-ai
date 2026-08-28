@@ -158,7 +158,7 @@ of single-line `grep` patterns.
 Blocks `docker [compose] run/exec` targeting the Python execution containers,
 any `--entrypoint` override on those containers, legacy `docker-compose`
 access, and interactive shell tasks (`task sh:python-cli`, `task sh:pytest-cli`).
-It also blocks direct `pytest` and `py.test` invocations on the host (the legitimate path is `task test:skills`, which invokes pytest internally and is invisible to the hook).
+It also blocks direct `pytest` and `py.test` invocations on the host (the legitimate paths are the host-side targets enumerated in [CLAUDE.md](../CLAUDE.md) §11 — `task test:skills`, `task test:container-integration` and `task test:routing` — each of which invokes pytest internally and is invisible to the hook).
 
 **Docker build hook**
 ([`.claude/hooks/block-docker-build-escape.sh`](../.claude/hooks/block-docker-build-escape.sh)):
@@ -201,9 +201,14 @@ The timestamp has a 120-second TTL enforced by Layer 3. The SHA-256 hash is
 included for audit trail purposes; Layer 3 does not re-verify it (command
 binding is enforced at Layer 2).
 
-All existing taskfile tasks (`ledger:*`, `chromadb:*`, `todo:*`, `test:*`,
-`lint:*`) route through this gate automatically. A `defer` cleanup step
-removes the artifact after each task completes.
+Taskfile tasks that run Python through the `pytest-cli` / `python-cli`
+entrypoint route through this gate automatically, and a `defer` cleanup step
+removes the artifact after each task completes. The rule for the exceptions is
+structural rather than a list: any path that overrides the entrypoint
+(`docker compose run --entrypoint ""`) bypasses the gate, and any target that
+runs pytest host-side is outside its scope by construction — the gate exists to
+validate paths and flags before Python runs *in a container*. See
+[CLAUDE.md](../CLAUDE.md) §11 for the host-side targets.
 
 ### Terraform container — `tf-safe.sh` via task
 
