@@ -49,6 +49,21 @@ def route(tmp_path: Path) -> RouteFn:
         stub.write_text(body, encoding="utf-8")
         stub.chmod(0o755)
 
+    # This fixture builds its own workspace rather than calling
+    # `build_router_workspace`, so its stub set is a second copy of
+    # ROUTER_PATH_STUBS. Compared against what was actually written here, not
+    # against a third literal: a stub added to the harness constant and not to
+    # the loop above would otherwise leave these routers reaching the real
+    # executable, with nothing to say so.
+    shadowed = frozenset((stub.name, stub.read_text(encoding="utf-8")) for stub in bin_dir.iterdir())
+    pinned = frozenset(router_harness.ROUTER_PATH_STUBS)
+    assert shadowed == pinned, (
+        f"shadowed here but not in helpers.router_harness.ROUTER_PATH_STUBS: {sorted(name for name, _ in shadowed - pinned)}\n"
+        f"in ROUTER_PATH_STUBS but not shadowed here: {sorted(name for name, _ in pinned - shadowed)}\n"
+        "the two workspace builders keep separate stub sets, so one that grows or changes a stub body "
+        "without the other leaves this fixture's routers running against the real executable"
+    )
+
     # The routers run against a fake workspace, not the repository. The
     # security gate is invoked by a path relative to the working directory, so
     # this is the only way to shadow it — and it must be shadowed: the gate

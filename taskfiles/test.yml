@@ -7,9 +7,14 @@ tasks:
   all:
     desc: Run all deterministic tests (excludes skills — those require API keys)
     deps: [purge-envs]
-    # routing runs first: cmds are sequential and stop at the first failure, so
-    # any container-backed target listed ahead of it would suppress the one
-    # guard here that is meant to report on every change.
+    # routing is the first command, not the first thing to run: go-task
+    # completes deps before cmds[0], so purge-envs precedes it. Within cmds
+    # execution is sequential and stops at the first failure, so routing holds
+    # index 0 — any target ahead of it would suppress the one guard here that
+    # is meant to report on every change.
+    #
+    # Cost of that position: routing's deps: [setup] makes host uv a
+    # prerequisite for this aggregate, which otherwise needs only Docker.
     cmds:
       - task: routing
       - task: brownfield_ai

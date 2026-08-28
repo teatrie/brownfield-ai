@@ -204,11 +204,15 @@ binding is enforced at Layer 2).
 Taskfile tasks that run Python through the `pytest-cli` / `python-cli`
 entrypoint route through this gate automatically, and a `defer` cleanup step
 removes the artifact after each task completes. The rule for the exceptions is
-structural rather than a list: any path that overrides the entrypoint
-(`docker compose run --entrypoint ""`) bypasses the gate, and any target that
-runs pytest host-side is outside its scope by construction — the gate exists to
-validate paths and flags before Python runs *in a container*. See
-[CLAUDE.md](../CLAUDE.md) §11 for the host-side targets.
+structural rather than a list, and there are two independent bypasses: a path
+that never invokes this script bypasses Layer 2, and a path that overrides the
+entrypoint (`docker compose run --entrypoint ""`) bypasses Layer 3. Neither
+implies the other — an unmodified entrypoint does not establish that the
+host-side gate ran. Separately, a target that runs pytest host-side is outside
+this gate's scope by construction — the gate exists to validate paths and flags
+before Python runs *in a container* — with one carve-out:
+`test:container-integration` calls the gate anyway, because it launches real
+containers. See [CLAUDE.md](../CLAUDE.md) §11 for the host-side targets.
 
 ### Terraform container — `tf-safe.sh` via task
 

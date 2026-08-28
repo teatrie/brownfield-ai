@@ -586,6 +586,16 @@ def tracked_paths() -> tuple[str, ...]:
     Shells out on each call, so a caller that needs the listing more than once
     should hold the result rather than re-enumerate per case.
 
+    ``safe.directory`` is set for the directory being listed, and derived from
+    the same constant the call runs in so the two cannot drift. Both routers fan
+    a changed module under ``tests/helpers/`` into ``tests/ci/``, which runs in
+    ``pytest-cli`` as ``--user agent`` against a read-only bind mount of the
+    repository. That user is a system account created in the image, so on a
+    Linux runner it does not own the mounted tree, and git's ownership check
+    refuses to read the repository at all — exit 128 before a single path is
+    listed, taking every caller of this function with it. Where the uid already
+    matches, the option changes nothing.
+
     Returns:
         Repository-relative tracked paths, in ``git ls-files`` order.
 
@@ -597,7 +607,7 @@ def tracked_paths() -> tuple[str, ...]:
             ``TRACKED_PATHS_TIMEOUT_SECONDS``.
     """
     result = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "-c", f"safe.directory={REPO_ROOT}", "ls-files", "-z"],
         cwd=REPO_ROOT,
         capture_output=True,
         encoding="utf-8",
@@ -640,6 +650,8 @@ def changed_scripts_universe(script: str) -> tuple[str, ...]:
         AssertionError: If the universe is empty, omits a pinned sentinel,
             leaves an alternative with no member, or if the negative sentinel
             has stopped being tracked or has entered the universe.
+            Also if ``UNIVERSE_SENTINELS`` is itself empty, which would leave
+            the floor asserting nothing about the universe it admits.
     """
     alternatives = changed_scripts_prefixes(script)
     pattern = re.compile("^(" + "|".join(sorted(alternatives)) + ")")
@@ -649,6 +661,7 @@ def changed_scripts_universe(script: str) -> tuple[str, ...]:
     assert universe, (
         f"ci/{script}: the reconstructed CHANGED_SCRIPTS filter {pattern.pattern!r} admitted none of the {len(tracked)} tracked paths"
     )
+    assert UNIVERSE_SENTINELS, "the pinned sentinel list is empty, which leaves the universe floor vacuous"
     absent = [sentinel for sentinel in UNIVERSE_SENTINELS if sentinel not in universe]
     assert not absent, (
         f"ci/{script}: pinned universe sentinels are missing: {absent} — either the router dropped "

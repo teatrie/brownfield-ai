@@ -135,21 +135,18 @@ UNROUTED_SAMPLE = "README.md"
 
 #: The TODO ids a registry entry may cite. An id outside this set is either
 #: invented or points at work nobody tracks, and in both cases the exemption it
-#: carries has no closure path. ``TODO-0333`` is the catch-all standing-holes
-#: id, so a hole whose cause no other id names still gets an honest one.
+#: carries has no closure path. Held to the ids the registry actually cites
+#: rather than to every id filed: ``TODO-0332`` for the agent-cli routing
+#: divergence between the two routers, ``TODO-0333`` as the catch-all
+#: standing-holes id, so a hole whose cause no other id names still gets an
+#: honest one. An id admitted here but cited nowhere is a landing site a typo
+#: can hit while still passing.
 #: Known limit: this is a hand-copied mirror of the ids filed in the ledger and
 #: nothing checks it against one, so an id renamed or retired there keeps
 #: passing here until a reader notices.
 ENUMERATED_TODO_IDS: frozenset[str] = frozenset({
-    "TODO-0307",
-    "TODO-0313",
-    "TODO-0329",
-    "TODO-0330",
-    "TODO-0331",
     "TODO-0332",
     "TODO-0333",
-    "TODO-0334",
-    "TODO-0335",
 })
 
 #: The two files that carry this guard's wiring: the CI step that runs it on
@@ -157,37 +154,65 @@ ENUMERATED_TODO_IDS: frozenset[str] = frozenset({
 WORKFLOW_PATH = ".github/workflows/test.yml"
 TASKFILE_PATH = "taskfiles/test.yml"
 
-#: The workflow job the guard step belongs to. Every step lookup below is
-#: scoped by this key rather than searched file-wide: ``Install uv`` appears in
-#: two jobs and ``Install Task`` in three, so an unscoped search either matches
-#: several steps or makes the ordering assertions depend on edits to a job this
-#: guard has nothing to do with.
-GUARD_JOB = "test-src-scripts"
+#: The workflow job the guard step belongs to: a job of its own, holding only
+#: the checkout, toolchain and cache steps the guard needs. Every step lookup
+#: below is scoped by this key rather than searched file-wide, because the
+#: toolchain step names repeat across the workflow's jobs, so an unscoped search
+#: either matches several steps or makes the ordering assertions depend on edits
+#: to a job this guard has nothing to do with.
+GUARD_JOB = "routing-coverage"
 
 #: The guard step, pinned by name **and** by the command it runs. Either alone
 #: leaves a rename direction open: matching on the name only lets the command
 #: be retargeted at some other target, and matching on the command only lets
 #: the step be renamed into something a reader no longer recognises as this
-#: guard.
+#: guard. The command is compared against the whole ``run:`` scalar, stripped,
+#: rather than being searched for inside it: a search is satisfied by any one
+#: line of a multi-line block, so a ``run: |`` opening with an early ``exit 0``
+#: would retire the guard while still matching.
 GUARD_STEP_NAME = "Run Routing Coverage Guard"
 GUARD_STEP_COMMAND = "task test:routing"
-
-#: The command as a whole line rather than as a substring of ``run:``. A
-#: substring test is satisfied by any command with this one as a prefix —
-#: ``task test:routing:some-subset`` among them — which is a step that no
-#: longer runs the guard while still matching the pin.
-GUARD_STEP_COMMAND_LINE = re.compile(rf"^\s*{re.escape(GUARD_STEP_COMMAND)}\s*$", re.MULTILINE)
 
 #: The key that leaves the guard step running, and red, while the job it sits
 #: in still reports success.
 GUARD_STEP_TOLERANCE_KEY = "continue-on-error"
 
-#: The steps the guard step must sit between. After the uv install because that
-#: step appends to ``$GITHUB_PATH`` and so affects only later steps; before the
-#: script tests because a script-test failure would otherwise suppress a guard
-#: whose whole point is that it always runs.
+#: Job-level keys that retire every step the guard's job holds. ``if`` skips
+#: them, ``continue-on-error`` forgives their failures, and ``needs`` sequences
+#: the job behind another one — a guard sequenced behind a test job never starts
+#: when that job reds, so an ordinary test failure suppresses the one signal
+#: meant to survive it.
+GUARD_JOB_FORBIDDEN_KEYS: tuple[str, ...] = ("if", GUARD_STEP_TOLERANCE_KEY, "needs")
+
+#: The step the guard must follow, because the uv install appends to
+#: ``$GITHUB_PATH`` and so affects only later steps.
 UV_INSTALL_STEP_NAME = "Install uv"
+
+#: The step the guard must not share a job with. Steps within a job run in
+#: sequence and a failing one ends the job, so a test step ahead of the guard
+#: suppresses it. The guard holds a job of its own precisely so that no test
+#: failure can end the run before it reports.
 SCRIPT_TESTS_STEP_NAME = "Run Script Tests"
+
+#: The step uploading the guard's junit, and the action it must use. Located by
+#: step name rather than by the path it uploads: a search by path would stop
+#: matching exactly when the path drifted, which is the drift being checked.
+JUNIT_UPLOAD_STEP_NAME = "Publish Routing Coverage Guard Results"
+UPLOAD_ACTION_PREFIX = "actions/upload-artifact@"
+
+#: ``yaml.safe_load`` resolves a bare ``on`` key as the YAML 1.1 boolean, so the
+#: workflow's trigger block is read under ``True`` rather than under the string.
+WORKFLOW_TRIGGER_KEY = True
+
+#: The trigger the guard's whole purpose depends on. Without it the guard never
+#: runs on a pull request at all, which makes the filter check below vacuous.
+GUARD_TRIGGER_EVENT = "pull_request"
+
+#: Trigger-level filters that skip the entire workflow run for a diff touching
+#: nothing they list. They retire the guard on exactly the pull requests it
+#: exists for — the ones adding a source that reaches no test — and cost one
+#: line, one level above the ``if:`` the step-level pin already forbids.
+FORBIDDEN_TRIGGER_FILTER_KEYS: tuple[str, ...] = ("paths", "paths-ignore")
 
 #: The uv package cache the guard's ``deps: [setup]`` venv build restores from.
 #: The package cache, never ``.venv`` itself — a virtualenv is not relocatable.
@@ -219,6 +244,20 @@ AGGREGATE_TASK_NAME = "all"
 ROUTING_TASK_RUNNER = ".venv/bin/pytest"
 ROUTING_TASK_DEPENDENCY = "setup"
 
+#: The aggregate's sole dependency. go-task completes every ``deps:`` entry
+#: before ``cmds[0]``, so the guard's command index buys nothing against them:
+#: a target added here runs, and can fail, ahead of the guard whatever its
+#: index says. Pinned as the whole list rather than screened for members that
+#: run tests, because a target's name does not say whether it does.
+AGGREGATE_DEPENDENCY = "purge-envs"
+
+#: A ``cmds:`` entry in the mapping form, used to drive ``_command_entries``
+#: past the shape the routing target has. That target's ``cmds`` is a single
+#: folded string, so every entry of it fails ``isinstance(entry, dict)`` and the
+#: per-command scan below would pass just as well reading only the string
+#: commands.
+TOLERATED_COMMAND_ENTRY: dict[str, object] = {"cmd": "true", "ignore_error": True}
+
 #: This module as a whole pytest argument in the routing target's commands.
 #: ``taskfiles/`` sits under no router prefix, so a target repointed at some
 #: other file runs green in CI while the guard stops running at all — the
@@ -243,10 +282,12 @@ FORBIDDEN_ROUTING_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 #: Target-level keys that retire the guard without touching its commands:
 #: ``ignore_error`` swallows the pytest exit, ``status`` makes go-task skip a
-#: satisfied target outright — which is exactly how ``setup`` skips — and
+#: satisfied target outright — which is exactly how ``setup`` skips —
 #: ``platforms`` narrows the target to matching hosts, which is not a property
-#: an unconditional guard can have.
-FORBIDDEN_ROUTING_TARGET_KEYS: tuple[str, ...] = ("ignore_error", "status", "platforms")
+#: an unconditional guard can have, and ``sources`` puts the target under
+#: go-task's checksum comparison, which reports it up to date and runs nothing
+#: on any later invocation whose listed sources are unchanged.
+FORBIDDEN_ROUTING_TARGET_KEYS: tuple[str, ...] = ("ignore_error", "status", "platforms", "sources")
 
 #: The or-true suffix, matched as a pattern rather than a literal so both
 #: spacings are caught. Tolerating a non-zero pytest exit here would fail open
@@ -326,6 +367,7 @@ class RoutingProbe:
         self._collect = collect
         self._announced: dict[tuple[str, str], tuple[str, ...]] = {}
         self._collects: dict[str, bool] = {}
+        self._collect_failures: dict[str, Exception] = {}
 
     @property
     def cached_routes(self) -> int:
@@ -387,6 +429,17 @@ class RoutingProbe:
         """
         Probe whether an announced target collects at least one test.
 
+        A failed probe is cached alongside the successful ones. Several hundred
+        cases reference the same handful of targets, so a collector that wedges
+        or exits unclassifiably would otherwise be re-run once per referencing
+        case — each one paying the full liveness ceiling before failing the same
+        way, with the job's own timeout as the only bound.
+
+        The cached failure is reported rather than re-raised as the original
+        object: re-raising one exception several hundred times appends a frame
+        to its traceback on every raise, so the last case rendered would carry
+        a traceback the length of the walk.
+
         Args:
             target: Announced pytest target.
 
@@ -395,15 +448,25 @@ class RoutingProbe:
 
         Raises:
             AssertionError: If the collector exited anything other than
-                collected-or-empty.
+                collected-or-empty, or if an earlier probe of this target
+                already failed.
+            subprocess.TimeoutExpired: If the collector has not returned within
+                ``COLLECT_TIMEOUT_SECONDS``, on the first probe of a target.
         """
+        cached_failure = self._collect_failures.get(target)
+        if cached_failure is not None:
+            raise AssertionError(f"collecting {target} already failed once this run with {type(cached_failure).__name__}: {cached_failure}")
         if target not in self._collects:
-            result = self._collect(target)
-            assert result.returncode in (COLLECTED_EXIT, NO_TESTS_COLLECTED_EXIT), (
-                f"collecting {target} exited {result.returncode}; only {COLLECTED_EXIT} (collected) and "
-                f"{NO_TESTS_COLLECTED_EXIT} (no tests) classify, and reading any other exit as either "
-                f"one files a wrong verdict\n--- stdout ---\n{result.stdout}--- stderr ---\n{result.stderr}"
-            )
+            try:
+                result = self._collect(target)
+                assert result.returncode in (COLLECTED_EXIT, NO_TESTS_COLLECTED_EXIT), (
+                    f"collecting {target} exited {result.returncode}; only {COLLECTED_EXIT} (collected) and "
+                    f"{NO_TESTS_COLLECTED_EXIT} (no tests) classify, and reading any other exit as either "
+                    f"one files a wrong verdict\n--- stdout ---\n{result.stdout}--- stderr ---\n{result.stderr}"
+                )
+            except (AssertionError, subprocess.TimeoutExpired) as failure:
+                self._collect_failures[target] = failure
+                raise
             self._collects[target] = result.returncode == COLLECTED_EXIT
         return self._collects[target]
 
@@ -495,11 +558,11 @@ def _build_router_cases() -> tuple[tuple[RouterCase, ...], tuple[str, ...]]:
     ``AssertionError``; a ``re.error`` if a router's filter gains a nested
     alternation, since the reconstruction splits on the pipe and would then
     compile unbalanced fragments; an ``OSError`` if the git listing cannot be
-    run; a ``ValueError`` if it returns bytes the listing's declared encoding
-    cannot decode, which is what a tracked path in another encoding produces;
-    and a ``subprocess.TimeoutExpired`` if git does not return inside the
-    listing's liveness ceiling. Any one left uncaught is exactly the collection
-    error this degradation exists to avoid.
+    run; a ``UnicodeDecodeError`` if it returns bytes the listing's declared
+    encoding cannot decode, which is what a tracked path in another encoding
+    produces; and a ``subprocess.TimeoutExpired`` if git does not return inside
+    the listing's liveness ceiling. Any one left uncaught is exactly the
+    collection error this degradation exists to avoid.
 
     Returns:
         The cases, and their pytest ids in the same order.
@@ -509,7 +572,7 @@ def _build_router_cases() -> tuple[tuple[RouterCase, ...], tuple[str, ...]]:
     for router in TEST_ROUTERS:
         try:
             universe = changed_scripts_universe(router)
-        except (AssertionError, re.error, OSError, ValueError, subprocess.TimeoutExpired) as failure:
+        except (AssertionError, re.error, OSError, UnicodeDecodeError, subprocess.TimeoutExpired) as failure:
             cases.append(RouterCase(router, "", f"{type(failure).__name__}: {failure}"))
             ids.append(f"{router}-enumeration-failed")
             continue
@@ -679,8 +742,6 @@ class TestRouterCoverage:
             "the fan-out below is measured for a path the guard does not actually depend on — repoint "
             "REGISTRY_MODULE at wherever the registry now lives"
         )
-        # No existence check on the path: the assertion above already resolves it onto the ``__file__``
-        # of a module this test imported, which cannot be a file that is missing.
         for router in TEST_ROUTERS:
             announced = frozenset(routing_probe.announced_targets(router, REGISTRY_MODULE))
             assert REGISTRY_FANOUT_TARGETS <= announced, (
@@ -728,8 +789,6 @@ class TestRouterCoverage:
             f"{GUARD_MODULE} is not this module, so the scan below reads the wrong source — repoint "
             "GUARD_MODULE at wherever this guard now lives"
         )
-        # No emptiness guard on the source itself: the assertion above already ties it to the module
-        # currently executing, which cannot be an empty file and still be running this test.
         source = source_path.read_text(encoding="utf-8")
         present = [token for token in SOURCE_PATH_DERIVATION_TOKENS if token in source]
         assert not present, (
@@ -767,9 +826,6 @@ class TestRouterCoverage:
             f"{routing_probe.cached_collections} collection outcomes, so the walk has not run through this "
             "workspace yet and the comparison below would prove nothing about reuse"
         )
-        # Only the two variable-length collections are guarded. Emptying either would leave the loop
-        # below running zero comparisons and still passing. TEST_ROUTERS is a fixed-length 2-tuple,
-        # so its own type rules the empty case out and a non-empty assertion on it can never fire.
         assert CONTAMINATION_SAMPLES, "there are no samples to compare, which leaves the reuse check vacuous"
         assert CONTAMINATION_NOISE, "there is nothing to dirty the workspace with, which leaves the settling check vacuous"
         for router in TEST_ROUTERS:
@@ -805,6 +861,23 @@ def unclassified_collect(target: str) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[target], returncode=UNCLASSIFIED_COLLECT_EXIT, stdout="", stderr="")
 
 
+def unroutable(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    """
+    Fill a probe's route slot for a test that must never route.
+
+    Args:
+        args: Whatever the caller would have routed.
+        kwargs: Whatever the caller would have routed.
+
+    Returns:
+        Never returns.
+
+    Raises:
+        AssertionError: Always, since reaching it means the probe routed.
+    """
+    raise AssertionError(f"the probe routed {args!r} {kwargs!r}; this test exercises the collector only")
+
+
 class TestProbeHealthChecks:
     """The probe's two health assertions fire on the failures they describe.
 
@@ -830,20 +903,47 @@ class TestProbeHealthChecks:
             with pytest.raises(AssertionError, match="a router that fails is a router defect"):
                 probe.announced_targets(router, ROUTER_HEALTH_SAMPLE)
 
-    def test_collector_exit_outside_the_classified_pair_fails(self, session_route: RouteFn) -> None:
+    def test_collector_exit_outside_the_classified_pair_fails(self) -> None:
         """An unclassifiable collector exit fails, rather than being read as either verdict.
 
         Read as collected it excuses a hole; read as empty it invents one. The
         injected collector is the only way to produce such an exit, since the
         real one is a pytest collection run.
+
+        The route slot is filled by a callable that fails if it is ever called,
+        so the assertion covers the collector alone and no workspace is built to
+        serve a probe that never routes.
+
+        The second call asserts the failure is cached like a success. Several
+        hundred cases reference the same handful of targets, so a collector
+        that fails un-cached is re-run once per referencing case — each one
+        paying the full liveness ceiling to fail the same way — with nothing
+        but the job's own timeout to end it.
         """
-        probe = RoutingProbe(session_route, unclassified_collect)
+        probed: list[str] = []
+
+        def counting_collect(target: str) -> subprocess.CompletedProcess[str]:
+            probed.append(target)
+            return unclassified_collect(target)
+
+        probe = RoutingProbe(unroutable, counting_collect)
         with pytest.raises(AssertionError, match=f"exited {UNCLASSIFIED_COLLECT_EXIT}"):
             probe.collects_tests(STUB_COLLECT_TARGET)
+        with pytest.raises(AssertionError, match="already failed once this run"):
+            probe.collects_tests(STUB_COLLECT_TARGET)
+        assert probed == [STUB_COLLECT_TARGET], (
+            f"the collector ran {len(probed)} times for one target; a failed probe has to be held the way a "
+            "successful one is, or one wedging target is paid for once per case that names it"
+        )
 
 
-def _load_yaml_mapping(relative: str) -> dict[str, object]:
-    """Parse one wiring file, failing loudly rather than yielding an empty mapping to read nothing off."""
+def _load_yaml_mapping(relative: str) -> dict[object, object]:
+    """Parse one wiring file, failing loudly rather than yielding an empty mapping to read nothing off.
+
+    The key type is left open because a workflow's top-level ``on:`` resolves to
+    the YAML 1.1 boolean rather than to a string, so the mapping genuinely
+    carries keys of more than one type.
+    """
     path = REPO_ROOT / relative
     assert path.is_file(), f"{relative} is missing, so the wiring it carries cannot be pinned"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -854,8 +954,8 @@ def _load_yaml_mapping(relative: str) -> dict[str, object]:
 def _guard_job() -> dict[str, object]:
     """Return the job the guard step belongs to, located by key.
 
-    Scoping every later lookup by job is the whole safeguard. ``Install uv``
-    appears in two jobs of this workflow and ``Install Task`` in three, so a
+    Scoping every later lookup by job is the whole safeguard. The checkout,
+    toolchain and cache step names repeat across this workflow's jobs, so a
     file-wide search would either match several steps or make the ordering
     assertions turn on edits to a job this guard has nothing to do with.
     """
@@ -894,23 +994,29 @@ def _sole_step_index(steps: list[dict[str, object]], name: str) -> int:
 
 
 def _guard_step_index(steps: list[dict[str, object]]) -> int:
-    """Locate the guard step by name **and** by the command it runs.
+    """Locate the guard step by name **and** by the whole command it runs.
 
     Both predicates are required. Matching the name alone would let the command
     be retargeted at some other task while the step keeps its label; matching
     the command alone would let the step be renamed into something no reader
-    recognises as this guard. The command is matched as a whole line, so a
-    command that merely starts with it does not satisfy the pin.
+    recognises as this guard.
+
+    The whole ``run:`` scalar is compared, stripped, rather than searched. A
+    search matches any single line of a multi-line block, so a ``run: |``
+    opening with ``if [ … ]; then exit 0; fi`` above the command satisfies it
+    while retiring the guard — the same diff-scoped condition an ``if:`` would
+    carry, relocated one key across. Equality also rules out a command that
+    merely starts with this one, such as a narrower ``task test:routing:…``.
     """
     matches = [
         index
         for index, step in enumerate(steps)
-        if step.get("name") == GUARD_STEP_NAME and GUARD_STEP_COMMAND_LINE.search(str(step.get("run", "")))
+        if step.get("name") == GUARD_STEP_NAME and str(step.get("run", "")).strip() == GUARD_STEP_COMMAND
     ]
     assert len(matches) == 1, (
-        f"{WORKFLOW_PATH} job {GUARD_JOB} carries {len(matches)} steps named {GUARD_STEP_NAME!r} whose `run:` "
-        f"is exactly {GUARD_STEP_COMMAND!r}, not exactly 1; the guard is unwired until exactly one step "
-        "satisfies both"
+        f"{WORKFLOW_PATH} job {GUARD_JOB} carries {len(matches)} steps named {GUARD_STEP_NAME!r} whose whole "
+        f"`run:` is exactly {GUARD_STEP_COMMAND!r}, not exactly 1; the guard is unwired until exactly one "
+        "step satisfies both, and a `run:` carrying anything besides that command satisfies neither"
     )
     return matches[0]
 
@@ -1006,11 +1112,23 @@ class TestGuardWiring:
     """The CI step and the task target that make this guard unconditional.
 
     Everything above measures routing coverage; nothing above notices when the
-    thing that runs it is deleted, renamed, made conditional, or pointed
-    somewhere else. ``.github/`` and ``taskfiles/`` sit under no router prefix,
-    so no diff-scoped job covers either file — this class is what makes a
-    wiring regression fail in the run it happens in, wherever the guard is
-    invoked from.
+    thing that runs it is made conditional, forgiven, skipped, sequenced behind
+    another job, filtered out of its trigger, or pointed somewhere else. These
+    pins are what notice.
+
+    Their limit is *when* they run, not what they assert. This module runs in
+    the guard's own job, on every pull request, and in the containerised scripts
+    suite, on every pull request touching a router-prefixed path. A wiring
+    change lands in ``.github/`` or ``taskfiles/``, and neither sits under a
+    router prefix, so on the pull request making that change only the first
+    channel is live — and that channel is the wiring being edited.
+
+    A retirement that leaves this module running, and its failure counting,
+    therefore fails in the run that introduces it. One that removes either
+    property does not: a deleted job or step, a ``continue-on-error`` around the
+    red these assertions produce, a target repointed at another module. Those
+    are left to review. Widening the router filters so that a wiring diff routes
+    here is out of scope.
     """
 
     def test_workflow_runs_the_guard_unconditionally(self) -> None:
@@ -1043,42 +1161,120 @@ class TestGuardWiring:
             "reported by a job that still passes"
         )
 
-    def test_workflow_job_is_neither_gated_nor_forgiven(self) -> None:
-        """The job holding the guard carries no ``if:`` and no ``continue-on-error``.
+    def test_workflow_job_is_neither_gated_nor_forgiven_nor_sequenced(self) -> None:
+        """The job holding the guard carries no ``if:``, ``continue-on-error`` or ``needs:``.
 
         The step-level pins above are worth nothing while the job around them
         can be skipped or forgiven wholesale — one key on the job retires every
         step it holds, this guard included, and costs less to write than either
         step-level equivalent.
+
+        ``needs:`` is the third, and the one an unsequenced job exists to do
+        without. A guard sequenced behind a test job never starts when that job
+        reds, so an ordinary test failure suppresses the one signal meant to
+        survive it.
         """
+        assert GUARD_JOB_FORBIDDEN_KEYS, "the forbidden job-key list is empty, which leaves this check vacuous"
         job = _guard_job()
-        gates = [key for key in ("if", GUARD_STEP_TOLERANCE_KEY) if key in job]
+        gates = [key for key in GUARD_JOB_FORBIDDEN_KEYS if key in job]
         assert not gates, (
             f"{WORKFLOW_PATH} job {GUARD_JOB} carries {gates}; the guard runs on every pull request only "
-            "while the job carrying it does, and counts only while that job's conclusion follows from it"
+            "while the job carrying it starts unconditionally, and counts only while that job's conclusion "
+            "follows from it"
         )
 
-    def test_workflow_runs_the_guard_between_uv_install_and_script_tests(self) -> None:
-        """The guard step sits after the uv install and before the script tests.
+    def test_workflow_runs_the_guard_after_the_uv_install_and_beside_no_test_step(self) -> None:
+        """The guard step sits after the uv install, in a job running no test step.
 
         The lower bound is mechanical: the uv install appends to
         ``$GITHUB_PATH``, which affects only subsequent steps, so a guard placed
-        earlier finds no ``uv`` for its ``deps: [setup]`` venv build. The upper
-        bound is the point of the guard: after the script tests, an ordinary
-        script-test failure would suppress it.
+        earlier finds no ``uv`` for its ``deps: [setup]`` venv build.
+
+        The upper bound is a separation rather than an order: the script tests
+        run in another job, so no step index compares them, and what is asserted
+        instead is that they are not in this one. Placed here ahead of the
+        guard, their failure would end the job before the guard reported, which
+        is the suppression a job of the guard's own exists to rule out.
         """
         steps = _guard_job_steps()
         guard_index = _guard_step_index(steps)
         uv_index = _sole_step_index(steps, UV_INSTALL_STEP_NAME)
-        script_index = _sole_step_index(steps, SCRIPT_TESTS_STEP_NAME)
         assert uv_index < guard_index, (
             f"{WORKFLOW_PATH} job {GUARD_JOB} runs {GUARD_STEP_NAME!r} at step {guard_index}, before "
             f"{UV_INSTALL_STEP_NAME!r} at step {uv_index}; uv is on $PATH only for steps after its install"
         )
-        assert guard_index < script_index, (
-            f"{WORKFLOW_PATH} job {GUARD_JOB} runs {GUARD_STEP_NAME!r} at step {guard_index}, after "
-            f"{SCRIPT_TESTS_STEP_NAME!r} at step {script_index}; a script-test failure would then suppress "
-            "the one step that is meant to run unconditionally"
+        script_indexes = [index for index, step in enumerate(steps) if step.get("name") == SCRIPT_TESTS_STEP_NAME]
+        assert not script_indexes, (
+            f"{WORKFLOW_PATH} job {GUARD_JOB} runs {SCRIPT_TESTS_STEP_NAME!r} at step(s) {script_indexes}; the "
+            "guard holds a job of its own so that no test failure can end the run before it reports, and a "
+            "test step sharing that job gives the suppression back"
+        )
+
+    def test_workflow_triggers_the_guard_on_every_pull_request(self) -> None:
+        """The workflow is triggered by pull requests, and by no path filter.
+
+        A ``paths`` or ``paths-ignore`` filter skips the whole run for a diff
+        touching nothing it lists, which retires the guard on exactly the pull
+        requests it exists for and reads as an ordinary optimisation. The
+        step-level and job-level pins above sit underneath it and would all
+        still pass.
+
+        The ``pull_request`` trigger is asserted first because without it the
+        filter check has no subject: a workflow that no longer runs on pull
+        requests carries no path filter either, and would pass a check written
+        only in the negative.
+        """
+        assert FORBIDDEN_TRIGGER_FILTER_KEYS, "the forbidden-filter list is empty, which leaves this check vacuous"
+        workflow = _load_yaml_mapping(WORKFLOW_PATH)
+        triggers = workflow.get(WORKFLOW_TRIGGER_KEY)
+        assert isinstance(triggers, dict) and triggers, (
+            f"{WORKFLOW_PATH} declares no trigger mapping under the `on:` key, so nothing here says when the guard runs"
+        )
+        assert GUARD_TRIGGER_EVENT in triggers, (
+            f"{WORKFLOW_PATH} triggers on {sorted(str(event) for event in triggers)}, which omits "
+            f"{GUARD_TRIGGER_EVENT!r}; the guard's whole claim is that it runs on every pull request"
+        )
+        filtered = sorted(
+            f"{event}.{key}"
+            for event, settings in triggers.items()
+            if isinstance(settings, dict)
+            for key in FORBIDDEN_TRIGGER_FILTER_KEYS
+            if key in settings
+        )
+        assert not filtered, (
+            f"{WORKFLOW_PATH} filters its triggers by {filtered}; a path filter skips the whole run for a "
+            "diff it does not list, so the guard would stop reporting on the changes it exists to report on"
+        )
+
+    def test_workflow_uploads_the_junit_the_target_writes(self) -> None:
+        """The upload path is read off the taskfile rather than restated beside it.
+
+        The upload carries ``if-no-files-found: ignore``, so a path that drifts
+        from the one the target writes uploads nothing and still reports
+        success. Neither end fails on its own, and the junit is what the guard
+        leaves behind to read when it reds.
+        """
+        destinations = _junit_destinations(_routing_target())
+        assert len(destinations) == 1, (
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} writes junit to {sorted(destinations)}, not to "
+            "exactly one path; the upload below can only be tied to a single destination"
+        )
+        expected = next(iter(destinations))
+        steps = _guard_job_steps()
+        upload = steps[_sole_step_index(steps, JUNIT_UPLOAD_STEP_NAME)]
+        uses = str(upload.get("uses", ""))
+        assert uses.startswith(UPLOAD_ACTION_PREFIX), (
+            f"{WORKFLOW_PATH} step {JUNIT_UPLOAD_STEP_NAME!r} uses {uses!r}, not a {UPLOAD_ACTION_PREFIX} "
+            "action; the step named as the junit upload has to be one"
+        )
+        settings = upload.get("with")
+        assert isinstance(settings, dict), (
+            f"{WORKFLOW_PATH} step {JUNIT_UPLOAD_STEP_NAME!r} declares no `with:` mapping, so it names no path to upload"
+        )
+        assert settings.get("path") == expected, (
+            f"{WORKFLOW_PATH} step {JUNIT_UPLOAD_STEP_NAME!r} uploads {settings.get('path')!r} while "
+            f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} writes {expected!r}; the step ignores a missing "
+            "file, so the drift uploads nothing and reports success"
         )
 
     def test_workflow_caches_uv_packages_before_the_guard(self) -> None:
@@ -1145,7 +1341,7 @@ class TestGuardWiring:
         )
 
     def test_routing_target_is_part_of_the_full_suite(self) -> None:
-        """The aggregate target invokes the routing target, first.
+        """The aggregate invokes the routing target first, and declares only its one dependency.
 
         The guard *module* is already collected by the containerised scripts
         suite. What needs aggregating is the *target* — its host-side venv
@@ -1156,6 +1352,13 @@ class TestGuardWiring:
         runs ``cmds`` sequentially and stops at the first failure, so any target
         listed ahead of the guard suppresses it exactly as a preceding CI step
         would.
+
+        ``deps:`` is a second channel the command index says nothing about.
+        go-task completes every dependency before ``cmds[0]``, so a target added
+        there runs — and can fail — ahead of the guard while ``positions == [0]``
+        stays true. The whole list is pinned rather than screened for members
+        that run tests: what suppresses the guard is a dependency that *fails*,
+        and a target's name does not say whether it can.
         """
         tasks = _declared_tasks()
         assert AGGREGATE_TASK_NAME in tasks, f"{TASKFILE_PATH} declares no {AGGREGATE_TASK_NAME!r} target"
@@ -1176,6 +1379,12 @@ class TestGuardWiring:
             f"{TASKFILE_PATH} target {AGGREGATE_TASK_NAME} runs {ROUTING_TASK_NAME!r} at command index "
             f"{positions}, not [0]; anything ahead of it that fails ends the aggregate run before the guard "
             "— which is the one target here that is meant to report on every change"
+        )
+        deps = aggregate.get("deps")
+        assert deps == [AGGREGATE_DEPENDENCY], (
+            f"{TASKFILE_PATH} target {AGGREGATE_TASK_NAME} declares deps {deps}, not "
+            f"[{AGGREGATE_DEPENDENCY!r}]; go-task completes deps before cmds[0], so anything added here runs "
+            f"— and can fail — ahead of {ROUTING_TASK_NAME!r} while its command index stays 0"
         )
 
     def test_routing_target_carries_no_container_or_tolerance_tokens(self) -> None:
@@ -1208,8 +1417,10 @@ class TestGuardWiring:
         above sees none of them: ``ignore_error`` reports success for a target
         whose pytest run failed, a satisfied ``status`` makes go-task skip the
         target outright — which is how ``setup`` skips a venv it already built —
-        and ``platforms`` limits it to hosts that match, while CI and the
-        developers running the aggregate suite are not the same platform. Read
+        ``platforms`` limits it to hosts that match, while CI and the developers
+        running the aggregate suite are not the same platform, and ``sources``
+        hands the target to go-task's checksum comparison, which reports it up
+        to date and runs nothing once its listed sources stop changing. Read
         off the target as written, since ``ignore_error`` also attaches to an
         individual ``cmd:`` mapping, and a scan over the string commands drops
         every mapping entry.
@@ -1227,6 +1438,34 @@ class TestGuardWiring:
         assert not per_command, (
             f"{TASKFILE_PATH} target {ROUTING_TASK_NAME} carries {per_command} on a command mapping; that "
             "swallows the same exit the target-level key would, one command at a time"
+        )
+
+    def test_per_command_scan_reads_the_mapping_form(self) -> None:
+        """``_command_entries`` surfaces a key the string commands drop.
+
+        The per-command half of the scan above is only worth its line while the
+        helper it reads keeps the mapping entries. The routing target's ``cmds``
+        is a single folded string, so that half meets no mapping on the real
+        target and passes identically with ``_command_strings`` substituted —
+        which is the substitution this drives out, on a literal rather than on
+        whatever shape the target happens to have.
+        """
+        assert FORBIDDEN_ROUTING_TARGET_KEYS, "the forbidden-key list is empty, which leaves this scan vacuous"
+        command = f"{ROUTING_TASK_RUNNER} {GUARD_MODULE}"
+        target = {"cmds": [command, TOLERATED_COMMAND_ENTRY]}
+        assert _command_strings(target) == (command,), (
+            "_command_strings kept the mapping entry, so the two helpers no longer differ and the scan's "
+            "reliance on _command_entries stops being load-bearing"
+        )
+        entries = _command_entries(target)
+        surfaced = sorted({key for entry in entries if isinstance(entry, dict) for key in FORBIDDEN_ROUTING_TARGET_KEYS if key in entry})
+        assert surfaced == sorted(set(TOLERATED_COMMAND_ENTRY) & set(FORBIDDEN_ROUTING_TARGET_KEYS)), (
+            f"_command_entries surfaced {surfaced} from a cmds mapping carrying {sorted(TOLERATED_COMMAND_ENTRY)}; "
+            "a scan reading it would then miss an exit swallowed one command at a time"
+        )
+        assert surfaced, (
+            f"the synthetic entry {TOLERATED_COMMAND_ENTRY!r} carries none of {list(FORBIDDEN_ROUTING_TARGET_KEYS)}, "
+            "so the comparison above holds for a helper that drops every mapping too"
         )
 
     def test_routing_target_junit_artifact_is_its_own(self) -> None:

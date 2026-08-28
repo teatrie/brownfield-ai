@@ -8,15 +8,27 @@
 - **uv** (Optional): Astral's Rust-based Python package manager.
 Used by `task test:setup` to create the host `.venv/` with Python
 3.12 for host-run tests — `test:skills`, `test:container-integration`
-and `test:routing`, the three exceptions that cannot or must not run in a
-container per [CLAUDE.md](../CLAUDE.md) §11. Only
-developers who run the test suite locally need `uv`. CI installs
+and `test:routing`, the three host-side exceptions listed in
+[CLAUDE.md](../CLAUDE.md) §11. The first two cannot run in a container;
+`test:routing` is host-side by cost — a per-PR cold `pytest-cli` image build
+was rejected — and its guard module is additionally collected in-container.
+Only developers who run the test suite locally need `uv`. CI installs
 it explicitly via `.github/workflows/test.yml` (official Astral curl installer)
 and restores `~/.cache/uv` from an `actions/cache` step keyed on the three
-requirements files, so the `test:routing` step does not pay a cold resolve on
+requirements files, so the guard does not pay a cold resolve on
 every pull request. The cached path is the uv package cache and never `.venv`
 itself: a virtualenv records absolute interpreter paths and does not survive
-relocation.
+relocation. In that workflow the guard has its own job, `routing-coverage` —
+the first of the file's four jobs, carrying no `needs:`, no `if:` and no
+`continue-on-error:` — which checks out, installs Task and uv, restores the uv
+cache, runs `task test:routing`, and uploads `tmp/junit_routing.xml`. The
+separation is the point: neither the guard's signal nor the other suites' can
+suppress the other, in either direction. The cost is that the walk is paid
+twice: `routing-coverage` runs it host-side on every pull request, and the
+containerised scripts suite runs it again whenever the routers fan `tests/ci/`
+into that suite. Each run spawns a router subprocess per tracked path under a
+router prefix, for both routers, plus a nested collection subprocess per
+distinct announced target.
 Install locally via `task setup:env` (offers brew install on
 macOS) or manually: `brew install uv` (macOS) / `pip install uv`
 (any platform) / `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -46,24 +58,31 @@ PreToolUse hooks block direct Docker access. Layer 2: Host-side gate script
 git-tracking. Layer 3: Container entrypoint validates a time-limited gate
 artifact. Every containerised taskfile task that runs Python through the
 `pytest-cli` / `python-cli` entrypoint routes through the gate
-automatically. The exception is structural rather than a single target:
-any path that overrides the entrypoint bypasses the gate, which
+automatically. The exceptions are structural rather than a single target, and
+there are two independent ones: a path that never invokes
+`docker/shared/python-security-gate.sh` bypasses Layer 2, and a path that
+overrides the entrypoint bypasses Layer 3. Neither implies the other — an
+unmodified entrypoint does not establish that the host-side gate ran.
 `test:dashboard` and the dashboard branches of both `ci/test_staged.sh`
-and `ci/test_changed.sh` all do. The host-side targets are outside
-its scope by construction, because the gate exists to validate paths and
-flags before Python runs *in a container*: `test:container-integration`
+and `ci/test_changed.sh` override the entrypoint; `test:dashboard` also omits
+the gate call, so both bypasses co-occur there. The host-side targets are
+outside the gate's scope by construction, because the gate exists to validate
+paths and flags before Python runs *in a container*: `test:container-integration`
 calls it anyway, since it launches real containers; `test:skills` and
 `test:routing` do not. `test:routing` follows the `test:skills` shape —
 `.venv/bin/pytest` invoked directly — and is safe to leave ungated because
 its host-side execution takes no caller input at all: it threads no
 `{{.CLI_ARGS}}`, which `tests/ci/test_router_coverage.py` asserts, and its
-pytest argument is a fixed module literal by construction (not separately
-pinned), so there is no agent-supplied path or flag for a gate to validate.
+pytest argument is a fixed module literal by construction, so there is no
+agent-supplied path or flag for a gate to validate.
 That guard module is also collected in-container, since both routers fan
 `tests/ci/` into the containerised scripts suite, where it spawns nested
 collection subprocesses on router-derived paths; those inputs are repo
-content rather than agent input, and that execution is governed by the
-`pytest-cli` entrypoint like any other containerised suite. See
+content rather than agent input, and the nested subprocesses are governed by
+the container boundary rather than by the entrypoint —
+`docker/shared/python-gate-entrypoint.sh` validates the initial argv only
+(every check keys off `$1`) and then `exec`s the command, so it does not
+observe processes the suite spawns afterwards. See
 [docs/container_security.md](container_security.md) for the full security
 model, deny rules, Docker build auditing, and contributor onboarding.
 - **CLI Invocation Discipline**: Many `task` aliases (`ledger:*`,
