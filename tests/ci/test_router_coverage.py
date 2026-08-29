@@ -27,10 +27,9 @@ spelled.
 
 The floor's cost is unconditional: *any* run of this module that reaches fewer
 cases than the walk holds ends at ``UNRUN_WALK_EXIT``, whatever narrowed it and
-whether or not it was deliberate. A ``-k``, an ``-x`` or a ``--lf`` against
-this module ends there, and so does
-``task test:scripts -- <pytest arguments>``, whose command threads them and
-names ``tests/ci/``. ``task test:routing`` runs the whole module.
+whether or not it was deliberate. A ``-k`` against this module ends there, and
+so does ``task test:scripts -- <pytest arguments>``, whose command threads it
+and names ``tests/ci/``. ``task test:routing`` runs the whole module.
 """
 
 import atexit
@@ -351,10 +350,10 @@ ROOT_TASKFILE_PATH = "Taskfile.yml"
 #: straight past it. ``taskfiles/test.yml`` declares ``PYTHONPATH`` there; the
 #: root file declares nothing at all.
 #: The values are pinned as well as the keys, because a key admitted with its
-#: value left free is not closed: ``PYTHONPATH`` is the path the guard's own
-#: ``helpers.*`` imports resolve on, and a directory prepended to it is searched
-#: before the rest of it. No exploit through it is claimed as measured; what is
-#: claimed is that the value was unconstrained.
+#: value left free is not closed: ``PYTHONPATH`` is an interpreter-level module
+#: search path handed to every target the file declares, and a directory
+#: prepended to it is searched before the rest of it. No exploit through it is
+#: claimed as measured; what is claimed is that the value was unconstrained.
 #: What is measured is that a ``PYTEST_ADDOPTS`` present in the environment the
 #: guard's command inherits retires the run — a collection count in place of
 #: any pass or fail count, no assertion evaluated, exit 0 — and that a
@@ -460,13 +459,13 @@ TEST_INVOCATION_PATTERNS: tuple[re.Pattern[str], ...] = (
 JUNIT_UPLOAD_STEP_NAME = "Publish Routing Coverage Guard Results"
 UPLOAD_ACTION_PREFIX = "actions/upload-artifact@"
 
-#: The two keys the junit upload's value rests on, and which the docstrings
-#: around it state as fact. ``if: always()`` is what makes the upload fire on
-#: the run where the guard red — the only run whose artifact is worth anything,
-#: since a step following a failed one is otherwise skipped and the per-case
-#: list of unrouted paths is lost to a truncated log. ``if-no-files-found:
-#: ignore`` is what keeps a venv build that fails ahead of pytest from turning a
-#: legitimately absent file into a second, misleading complaint.
+#: The two keys the junit upload's value rests on. ``if: always()`` is what
+#: makes the upload fire on the run where the guard red — the only run whose
+#: artifact is worth anything, since a step following a failed one is otherwise
+#: skipped and the per-case list of unrouted paths is lost to a truncated log.
+#: ``if-no-files-found: ignore`` is what keeps a venv build that fails ahead of
+#: pytest from turning a legitimately absent file into a second, misleading
+#: complaint.
 JUNIT_UPLOAD_CONDITION = "always()"
 JUNIT_MISSING_FILE_KEY = "if-no-files-found"
 JUNIT_MISSING_FILE_POLICY = "ignore"
@@ -755,6 +754,12 @@ AGGREGATE_SITES: tuple[AggregateSite, ...] = (
     AggregateSite(TASKFILE_PATH, AGGREGATE_TASK_NAME, ROUTING_TASK_NAME, [AGGREGATE_DEPENDENCY]),
     AggregateSite(ROOT_TASKFILE_PATH, ROOT_AGGREGATE_TASK_NAME, ROOT_ROUTING_ENTRY_NAME, None),
 )
+
+#: The parametrize argument the aggregate-site cases bind. Named rather than
+#: spelled twice, because the walk-case predicate's negative case is driven on
+#: this parametrize: a literal there would be a hand-copy that keeps passing
+#: after the parametrize it claims to mirror is renamed.
+AGGREGATE_SITE_PARAM = "site"
 
 #: Directory holding the included taskfiles, and the suffixes an included one
 #: may carry. Both are globbed for the reason ``WORKFLOW_SUFFIXES`` lists both:
@@ -1220,12 +1225,31 @@ ROUTER_CASE_PARAM = "case"
 UNRUN_WALK_EXIT = 70
 
 
+def _is_walk_case(callspec: object) -> bool:
+    """
+    Decide whether one node's ``callspec`` binds a walk case.
+
+    Named rather than written inline in the fixture below, so that the
+    discriminator the floor's count rests on has a subject an assertion can
+    reach. ``TestWalkCasePredicate`` is what reaches it, and why nothing else
+    in this module does is recorded there.
+
+    Args:
+        callspec: The ``callspec`` pytest hangs on a parametrized node, or
+            ``None`` for a node it did not parametrize.
+
+    Returns:
+        Whether the node is one case of the walk.
+    """
+    params = getattr(callspec, "params", None)
+    return isinstance(params, dict) and isinstance(params.get(ROUTER_CASE_PARAM), RouterCase)
+
+
 @pytest.fixture(autouse=True)
 def _count_executed_router_case(request: pytest.FixtureRequest) -> None:
     """Record that one walk case is about to run, for the floor below to read."""
     global EXECUTED_ROUTER_CASES
-    callspec = getattr(request.node, "callspec", None)
-    if callspec is not None and isinstance(callspec.params.get(ROUTER_CASE_PARAM), RouterCase):
+    if _is_walk_case(getattr(request.node, "callspec", None)):
         EXECUTED_ROUTER_CASES += 1
 
 
@@ -1237,8 +1261,8 @@ def exit_when_the_walk_did_not_run() -> None:
     including one that evaluated no assertion at all and would otherwise exit 0.
 
     What it observes is the count, and only the count — never a cause. A
-    narrowing is one way to leave the count short; a collection error in a
-    sibling ``tests/ci/`` module is another, since pytest abandons the session
+    narrowing is one way to leave the count short; a collection error in any
+    module the session collects is another, since pytest abandons the session
     on one; so is a failing session-scoped fixture, because the counter is
     function-scoped and ``session_route`` is built ahead of the first case that
     would increment it. So is ``-x`` after a genuine routing hole, and that one
@@ -1381,10 +1405,8 @@ class TestRouterCoverage:
     def test_registry_cites_only_enumerated_todo_ids(self) -> None:
         """Every exemption cites an enumerated id, and every enumerated id is cited.
 
-        The reverse direction carries its own defect: an id admitted to the set
-        but cited by no exemption is a landing site a typo can hit. A misspelt
-        ``todo_id`` that happens to land on it satisfies the forward check, and
-        the exemption then reads as tracked under an id that tracks nothing.
+        Why the reverse direction is asserted alongside the forward one is
+        recorded at ``ENUMERATED_TODO_IDS``.
         """
         assert EXEMPTIONS, "the registry is empty, which leaves this scan vacuous"
         assert ENUMERATED_TODO_IDS, "the enumerated-id set is empty, which leaves this scan vacuous"
@@ -1404,12 +1426,9 @@ class TestRouterCoverage:
     def test_pinned_path_routing_outcome_is_unchanged(self, routing_probe: RoutingProbe) -> None:
         """Each router's announcement for the pinned path is asserted, not merely exempted.
 
-        The pair is a registered hole in both routers, and the registry records
-        only that it is one. The two routers arrive there by different branches
-        and produce different shapes — a self-target that collects nothing on one
-        side, no target at all on the other — and nothing else asserts either, so
-        a change from one wrong outcome to another would leave the hole set
-        balanced and pass.
+        Why the pair's shape is pinned as well as its existence is recorded at
+        ``PINNED_OUTCOME_PATH``, and the shape each router produces at
+        ``PINNED_OUTCOME_TARGETS``.
         """
         assert frozenset(PINNED_OUTCOME_TARGETS) == frozenset(TEST_ROUTERS), (
             f"the pinned outcomes cover {sorted(PINNED_OUTCOME_TARGETS)} while the routers are "
@@ -1431,11 +1450,8 @@ class TestRouterCoverage:
     def test_registry_edits_route_back_into_this_suite(self, routing_probe: RoutingProbe) -> None:
         """A changed registry module reaches the helpers suite and this one, in both routers.
 
-        The registry is this guard's data, so an edit to it has to re-run the
-        guard. That holds only while it sits under ``tests/helpers/``, whose
-        fan-out reaches ``tests/ci/`` as well. Under ``tests/ci/`` it would route
-        to itself and collect nothing, and under any other prefix it would route
-        nowhere — either way the guard would never see its own data change.
+        Why the registry's location is what makes that hold, and why the
+        fan-out is pinned, is recorded at ``REGISTRY_MODULE``.
         """
         assert REGISTRY_FANOUT_TARGETS, "the pinned fan-out is empty, which leaves this check vacuous"
         registry_source = router_coverage_registry.__file__
@@ -1620,9 +1636,9 @@ class TestProbeHealthChecks:
 
         Withholding the gate shadow reproduces the death on demand: both
         routers invoke the security gate by a relative path *before* the
-        announcement, so an absent one kills the router under ``set -e``. The
-        sample must route a target, since both routers return early on an empty
-        one and never reach the gate at all.
+        announcement, so an absent one kills the router under ``set -e``. Why
+        the sample has to route a target is recorded at
+        ``ROUTER_HEALTH_SAMPLE``.
         """
         probe = RoutingProbe(route_variant(shadow_security_gate=False), collect_target)
         for router in TEST_ROUTERS:
@@ -1632,9 +1648,9 @@ class TestProbeHealthChecks:
     def test_collector_exit_outside_the_classified_pair_fails(self) -> None:
         """An unclassifiable collector exit fails, rather than being read as either verdict.
 
-        Read as collected it excuses a hole; read as empty it invents one. The
-        injected collector is the only way to produce such an exit, since the
-        real one is a pytest collection run.
+        What each reading of such an exit costs is recorded at
+        ``COLLECTED_EXIT``. The injected collector is the only way to produce
+        such an exit, since the real one is a pytest collection run.
 
         The route slot is filled by a callable that fails if it is ever called,
         so the assertion covers the collector alone and no workspace is built to
@@ -1831,6 +1847,53 @@ class TestExecutionFloorThreshold:
         assert statuses == [UNRUN_WALK_EXIT], (
             f"with the whole walk run the floor ended the process with {statuses[1:]}; a threshold above the "
             "walk reds every complete run, this one included"
+        )
+
+
+class NodeCallspec(NamedTuple):
+    """A parametrized node's ``callspec``, as the walk-case predicate reads it.
+
+    pytest's own object carries far more than this. Standing in for it is what
+    lets the predicate be driven on a chosen parametrize rather than on
+    whichever one pytest happens to be executing.
+    """
+
+    #: Parametrize argument names to the values bound for one case.
+    params: dict[str, object]
+
+
+class TestWalkCasePredicate:
+    """The counter's discriminator selects the walk, and no other parametrize.
+
+    Its twin — the floor's threshold, which reads the count this predicate
+    keeps — is pinned by ``TestExecutionFloorThreshold``. This one is observed
+    by nothing else here: weakened to ``callspec is not None`` the counter
+    picks up the ``arguments`` and ``site`` parametrizations too, and every
+    other test in this module stays green. The parent run then reaches the
+    floor on the walk plus that slack, and both narrowed children drive the
+    count to zero either way, so neither observes the difference. The slack
+    grows with every non-walk parametrize added.
+
+    Driven on stand-in callspecs rather than in a third child process, for the
+    reason ``TestExecutionFloorThreshold`` gives.
+    """
+
+    def test_only_a_walk_parameter_is_counted(self) -> None:
+        """A walk case counts; an aggregate-site case and an unparametrized node do not."""
+        assert ROUTER_CASES, "the walk is empty, which leaves the positive case below vacuous"
+        assert AGGREGATE_SITES, "no aggregate sites are pinned, which leaves the negative case below vacuous"
+        assert _is_walk_case(NodeCallspec({ROUTER_CASE_PARAM: ROUTER_CASES[0]})), (
+            f"a node binding {ROUTER_CASE_PARAM!r} to a {RouterCase.__name__} does not count as a walk case, "
+            "so the count stays at zero through the whole walk and the floor reds every complete run"
+        )
+        assert not _is_walk_case(NodeCallspec({AGGREGATE_SITE_PARAM: AGGREGATE_SITES[0]})), (
+            f"a node binding {AGGREGATE_SITE_PARAM!r} counts as a walk case; the floor's count then takes in "
+            "this module's other parametrizations, so it stops standing on the walk and the slack grows with "
+            "every one added"
+        )
+        assert not _is_walk_case(None), (
+            "a node pytest did not parametrize counts as a walk case; the wiring pins here are such nodes, so "
+            "the floor's count would take in cases that assert nothing about routing"
         )
 
 
@@ -2224,13 +2287,16 @@ class TestGuardWiring:
     a repointed ``includes:`` — so the pins below can be read off a target the
     CI step no longer reaches. ``deps: [setup]`` is pinned by name, while
     ``setup`` is what builds the ``.venv/bin/pytest`` this guard runs under and
-    its commands are unpinned, as are the ``run:`` bodies of the two install
-    steps that put ``task`` and ``uv`` on the runner. ``tests/conftest.py``
+    its commands are unpinned beyond the ``-r`` requirements files
+    ``_setup_requirements_files`` reads off them for the cache-key check —
+    nothing pins that the target actually produces a working
+    ``.venv/bin/pytest``. The ``run:`` bodies of the two install steps that put
+    ``task`` and ``uv`` on the runner are unpinned too. ``tests/conftest.py``
     configures every session this module runs in and no pin here reads it; the
     execution floor observes the effect of one hook it can carry, not the file.
     Every one of them takes an edit to the guard's own wiring, and every file
     such an edit lands in routes to no test in either router, so the only job
-    that would run on the diff is the one being retired. The control that does
+    that would notice the diff is the one being retired. The control that does
     cover them is human review of that diff plus branch protection on the branch
     it lands in, and nothing here is claimed to close them.
     A measured set, not a closed one: these are the vectors review has surfaced,
@@ -2240,12 +2306,18 @@ class TestGuardWiring:
     two workspace builders' stub sets rather than the rest of their layout, but
     that fixture is not on this guard's execution path — the walk routes through
     ``session_route``, which the ``route_variant`` factory builds on
-    ``build_router_workspace`` — and a divergence in the rest of the layout reds
+    ``build_router_workspace`` — and the layout divergences that would change
+    what the routers announce red
     ``test_registry_is_exactly_the_measured_hole_set`` in one direction or the
     other: a lost ``tests/`` symlink makes every ``[ -f ]`` probe miss, so pairs
     become holes that are not exempt, while a gained file makes a registered
     hole stop being one. It is an incomplete parity assertion, not a retirement
     vector.
+
+    Convention for the cases below: record a pin's rationale once, beside the
+    constant the case reads, and point at it from the docstring rather than
+    restating it. A rationale kept in two places drifts, and the constant is
+    the copy the failure message is written next to.
     """
 
     def test_workflow_runs_the_guard_unconditionally(self) -> None:
@@ -2333,21 +2405,13 @@ class TestGuardWiring:
         step it holds, this guard included, and costs less to write than either
         step-level equivalent.
 
-        Asserted as the key set rather than as the absence of three named keys.
-        Those three are checked afterwards, for the message: each has a
-        specific retirement worth naming. But the set is what closes the class,
-        and it closes members no list here enumerates — a ``strategy:``
-        resolving to an empty matrix, which runs the job zero times, and an
-        ``env:``, which reaches pytest by the route measured above.
+        Asserted as the key set rather than as the absence of three named keys,
+        which are checked afterwards for the message. What the set closes that
+        the list does not is recorded at ``GUARD_JOB_KEYS``; what each of the
+        three retires, at ``GUARD_JOB_FORBIDDEN_KEYS``.
 
-        ``needs:`` is the one an unsequenced job exists to do without. A guard
-        sequenced behind a test job never starts when that job reds, so an
-        ordinary test failure suppresses the one signal meant to survive it.
-
-        The runner label is asserted alongside the key set, because admitting a
-        key is not the same as closing it: ``runs-on`` is the one value in a
-        three-key job that nothing else here reads. What an unprovisioned label
-        does to the job is not asserted — only that the label is the pinned one.
+        The runner label is asserted alongside the key set; why that value
+        needs a pin of its own is recorded at ``GUARD_JOB_RUNNER``.
         """
         assert GUARD_JOB_KEYS, "the pinned job-key set is empty, which would admit any job at all"
         assert GUARD_JOB_FORBIDDEN_KEYS, "the forbidden job-key list is empty, which leaves the check below vacuous"
@@ -2393,11 +2457,10 @@ class TestGuardWiring:
     def test_workflow_declares_no_ambient_environment(self) -> None:
         """The workflow hands the guard's job no environment from above it.
 
-        GitHub Actions defines a top-level ``env:`` as a map of variables
-        available to the steps of all jobs in the workflow, so one declared
-        there reaches the guard's step whatever the job and the step themselves
-        declare — two levels above the step-key pin and one above the job-key
-        pin, both of which would stay green.
+        A top-level ``env:`` reaches the guard's step whatever the job and the
+        step themselves declare — two levels above the step-key pin and one
+        above the job-key pin, both of which would stay green. The scope GitHub
+        Actions gives that key is recorded at ``AMBIENT_ENV_KEY``.
 
         What it buys is measured; see ``GUARD_STEP_KEYS``.
         """
@@ -2411,12 +2474,8 @@ class TestGuardWiring:
     def test_workflow_guard_job_runs_only_the_actions_it_needs(self) -> None:
         """Every step of the guard's job that runs an action runs the pinned one.
 
-        The scan that rules out a second test run in this job reads ``run:``
-        text, so it is blind to the ``uses:`` axis by construction — a step
-        starting a test run through a composite action matches none of its
-        patterns, and ``ci.github-actions.md`` §1 actively pushes this file
-        towards composite steps. This pins the other axis: which action each
-        step that runs one may run.
+        Which axis this closes, and why the ``run:`` scan cannot see it, is
+        recorded at ``GUARD_JOB_STEP_ACTIONS``.
 
         The checkout is the reason it is a whitelist rather than a scan. It is
         the job's unnamed first step, and no other assertion in this class reads
@@ -2482,18 +2541,15 @@ class TestGuardWiring:
     def test_workflow_runs_no_test_beside_the_guard(self) -> None:
         """The guard's job holds exactly its own steps, and no other one starts a test run.
 
-        Steps within a job run in sequence and a failing one ends the job, so a
-        test step ahead of the guard suppresses it — which is the outcome a job
-        of the guard's own exists to rule out. Naming one forbidden step covers
-        the test step that happened to be named: adding a package, dashboard or
-        skills step under any other name reinstates the suppression with every
-        other pin in this class green.
+        What a step running tests ahead of the guard does to it, and why the
+        scan below covers the property rather than a forbidden step name, is
+        recorded at ``TEST_INVOCATION_PATTERNS``.
 
-        So the property is asserted twice, in the two directions a step can
-        arrive by. The ordered step-name list is a whitelist over the job, so
-        *any* added step fails whatever it runs. The command scan covers the
-        other direction, where a test invocation is appended to a step already
-        on the list — which the name list alone would not see.
+        The property is asserted twice, in the two directions a step can arrive
+        by. The ordered step-name list is a whitelist over the job, so *any*
+        added step fails whatever it runs. The command scan covers the other
+        direction, where a test invocation is appended to a step already on the
+        list — which the name list alone would not see.
         """
         assert GUARD_JOB_STEP_NAMES, "the pinned step-name list is empty, which leaves this check vacuous"
         assert TEST_INVOCATION_PATTERNS, "the test-invocation list is empty, which leaves the scan below vacuous"
@@ -2521,14 +2577,10 @@ class TestGuardWiring:
     def test_workflow_triggers_the_guard_on_every_pull_request(self) -> None:
         """The workflow is triggered by pull requests, and by none of the filters measured to narrow that.
 
-        A ``paths`` or ``paths-ignore`` filter skips the whole run for a diff
-        touching nothing it lists, which retires the guard on exactly the pull
-        requests it exists for and reads as an ordinary optimisation. ``types``
-        is the same shape one key across — the ``pull_request`` default is
-        ``[opened, synchronize, reopened]``, so narrowing it leaves the trigger
-        declared and the run absent from the pushes that carry the change — and
-        ``branches-ignore`` narrows by base branch. The step-level and job-level
-        pins above sit underneath all of them and would still pass.
+        Which trigger-level filters are measured to skip a run the guard has to
+        report on, and how each of them does it, is recorded at
+        ``FORBIDDEN_TRIGGER_FILTER_KEYS``. The step-level and job-level pins
+        above sit underneath all of them and would still pass.
 
         ``branches`` cannot be forbidden the way those four are — it is
         declared, and it is what scopes the run to the branch the guard reports
@@ -2537,12 +2589,9 @@ class TestGuardWiring:
         exactly the pinned one. Why equality rather than membership is recorded
         at ``GUARD_TRIGGER_BRANCHES``.
 
-        An absent ``branches`` is not asserted into existence: dropping it
-        widens the trigger to pull requests into every branch, which is a
-        superset of what is claimed rather than a narrowing of it. The *events*
-        are asserted into existence, though — deleting ``on.push`` retires the
-        post-merge run outright, and a check that skipped an absent event would
-        pass straight through the deletion.
+        Why an absent ``branches`` is not asserted into existence is recorded
+        at ``GUARD_TRIGGER_BASE_BRANCH``; why both events are, at
+        ``BASE_BRANCH_SCOPED_EVENTS``.
 
         The ``pull_request`` trigger is asserted first because without it the
         filter check has no subject: a workflow that no longer runs on pull
@@ -2601,12 +2650,8 @@ class TestGuardWiring:
         success. Neither end fails on its own, and the junit is what the guard
         leaves behind to read when it reds.
 
-        Both of those keys are asserted rather than described. ``if: always()``
-        is what makes the upload run at all on the run where the guard red —
-        without it the step is skipped by the failed step ahead of it, and the
-        per-case list of unrouted paths, the whole diagnostic value of a red
-        guard, exists only in a truncated log. ``if-no-files-found: ignore`` is
-        the premise of the paragraph above.
+        Both of those keys are asserted rather than described; what each of
+        them buys is recorded at ``JUNIT_UPLOAD_CONDITION``.
         """
         destinations = _junit_destinations(_routing_target())
         assert len(destinations) == 1, (
@@ -2651,15 +2696,11 @@ class TestGuardWiring:
         than rebuilding.
 
         The key check runs over every job restoring that cache in every scanned
-        workflow, not only the guard's job in this one. The identical eight-line
-        step, with the identical three-file key, is duplicated across jobs; a
-        check scoped to one of them lets a requirements file added later update
-        ``REQUIREMENTS_FILES`` and that job's key while every sibling goes on
-        serving a cache the dependency change invalidated. The files are globbed
-        on the same argument the toolchain parity check globs them on: which
-        workflow a copy of the step sits in is not part of the property. The
-        ordering assertion stays scoped to the guard's job, because that is the
-        only job whose step order this guard has anything to say about.
+        workflow, not only the guard's job in this one; why it reads the
+        globbed set rather than the guard's file alone is recorded at
+        ``WORKFLOW_SCAN_PATHS``. The ordering assertion stays scoped to the
+        guard's job, because that is the only job whose step order this guard
+        has anything to say about.
         """
         installed = _setup_requirements_files()
         assert frozenset(REQUIREMENTS_FILES) == frozenset(installed), (
@@ -2701,12 +2742,8 @@ class TestGuardWiring:
         that stops matching the artifact it names, fails the job it sits in
         rather than the one that drifted away from it.
 
-        Some copies carry a comment telling the author to keep the pair in sync
-        with the others and some carry none, so that instruction is not what
-        this stands on. It stands on the values: every copy installs the same
-        artifact and verifies it against the same checksum, which makes two
-        copies disagreeing a drift whichever one moved and whether or not either
-        is commented.
+        Why the check stands on the values rather than on the sync comments
+        some copies carry is recorded at ``WORKFLOW_SCAN_PATHS``.
 
         The files are globbed rather than listed, so a workflow added later is
         compared too; the workflow the guard runs in is asserted to be among
@@ -2755,22 +2792,15 @@ class TestGuardWiring:
         no ``.venv`` exists until something creates one; without it the target
         fails on a fresh runner for a reason that has nothing to do with routing.
 
-        The pytest argument is pinned alongside the runner because the runner
-        alone says only *how* the target runs, not *what*: ``taskfiles/`` sits
-        under no router prefix, so a target repointed at some other module
-        passes every diff-scoped job while this guard stops running.
+        Why the pytest argument is pinned alongside the runner is recorded at
+        ``GUARD_MODULE_ARGUMENT``.
 
-        Every token of the command is pinned as well, against a whitelist. The
-        forbidden-expression scan below closes the shapes somebody named, and a
-        deselecting pytest flag written as a plain literal — ``-k``, ``-m``,
-        ``--deselect``, ``--collect-only`` — retires the guard exactly as
-        ``{{.CLI_ARGS}}`` does while matching none of them.
+        Every token of the command is pinned as well, against a whitelist. What
+        that whitelist closes that the forbidden-expression scan below does not
+        is recorded at ``ROUTING_COMMAND_TOKENS``.
 
-        ``deps:`` is pinned as the whole list, for the reason the aggregate's
-        is: go-task completes every dependency before ``cmds[0]``, so a target
-        added here runs — and can fail — before pytest starts, and membership
-        alone would let ``[setup, purge-envs]`` abort the run with this and
-        every other wiring pin green.
+        ``deps:`` is pinned as the whole list, for the reason recorded at
+        ``AGGREGATE_DEPENDENCY``.
         """
         target = _routing_target()
         commands = _command_texts(target)
@@ -2799,7 +2829,7 @@ class TestGuardWiring:
             "runs — and can fail — before pytest starts, with every wiring pin in this class still green"
         )
 
-    @pytest.mark.parametrize("site", AGGREGATE_SITES, ids=[f"{site.taskfile}:{site.aggregate}" for site in AGGREGATE_SITES])
+    @pytest.mark.parametrize(AGGREGATE_SITE_PARAM, AGGREGATE_SITES, ids=[f"{site.taskfile}:{site.aggregate}" for site in AGGREGATE_SITES])
     def test_routing_target_is_part_of_the_full_suite(self, site: AggregateSite) -> None:
         """Each aggregate that runs the guard runs it first, and declares only the deps it may.
 
@@ -2813,18 +2843,11 @@ class TestGuardWiring:
         listed ahead of the guard suppresses it exactly as a preceding CI step
         would.
 
-        ``deps:`` is a second channel the command index says nothing about.
-        go-task completes every dependency before ``cmds[0]``, so a target added
-        there runs — and can fail — ahead of the guard while ``positions == [0]``
-        stays true. The whole list is pinned rather than screened for members
-        that run tests: what suppresses the guard is a dependency that *fails*,
-        and a target's name does not say whether it can.
+        ``deps:`` is a second channel the command index says nothing about; why
+        it is pinned as the whole list is recorded at ``AGGREGATE_DEPENDENCY``.
 
-        Run per site, because both ratchets apply wherever the guard is
-        aggregated. An aggregate that restates the argument in a comment and
-        carries neither can be demoted or emptied with every other pin here
-        green, and since no router prefix covers either taskfile, nothing else
-        runs on the change that does it.
+        Run per site; why both ratchets apply wherever the guard is aggregated
+        is recorded at ``AGGREGATE_SITES``.
         """
         tasks = _declared_tasks(site.taskfile)
         assert site.aggregate in tasks, f"{site.taskfile} declares no {site.aggregate!r} target"
@@ -2914,17 +2937,13 @@ class TestGuardWiring:
         than observed; see ``TASKFILE_ENV``.
 
         Whitelisted rather than forbidden, because ``taskfiles/test.yml``
-        legitimately declares one. Keys *and values*: a key admitted with its
-        value left free is not closed, and the one key admitted here is
-        ``PYTHONPATH``, which is the path the guard's own ``helpers.*`` imports
-        resolve on — a directory prepended to it is searched before the rest of
-        it. No exploit through that is claimed as measured; what is claimed is
-        that the value was unconstrained. The two mappings are read
-        straight off the two files and are a single entry wide between them, so
-        an addition to either has to be argued for rather than merged.
-        ``dotenv:`` takes no whitelist of that kind — it names a file whose keys
-        appear nowhere in the taskfile — so it is forbidden outright at this
-        level.
+        legitimately declares one. Keys *and values*: why the one key admitted
+        here is pinned by value rather than by key alone is recorded there too.
+        The two mappings are read straight off the two files and are a single
+        entry wide between them, so an addition to either has to be argued for
+        rather than merged. ``dotenv:`` takes no whitelist of that kind — it
+        names a file whose keys appear nowhere in the taskfile — so it is
+        forbidden outright at this level.
         """
         assert TASKFILE_ENV, "no taskfile environments are pinned, which leaves this check vacuous"
         for relative, expected in sorted(TASKFILE_ENV.items()):
@@ -2959,10 +2978,8 @@ class TestGuardWiring:
         channel the guard runs in and the set of options that quietly narrow a
         run is not one this module can enumerate.
 
-        Asserted in a case body rather than at import, unlike the scan: an
-        option added for a good reason should red as a failing case naming the
-        file, not as a collection error that takes every module in the directory
-        with it.
+        Why it is asserted in a case body rather than at import, unlike the
+        scan, is recorded at ``PYTEST_INI_ADDOPTS``.
 
         ``collect_target`` already rests on this file's ``norecursedirs``, so it
         is a file the guard reads and would otherwise leave unpinned.
@@ -3042,11 +3059,9 @@ class TestGuardWiring:
         introduced into a target that runs host-side under the venv, and the
         or-true suffix an implementer reaches for when the guard reds.
 
-        Read through ``_command_texts``, not off the string commands. A scan
-        over the strings alone drops every mapping entry — the same fail-open
-        shape the per-command key scan below exists to close — so a ``cmds:``
-        mapping carrying ``docker``, a template expression or an ``|| true``
-        suffix would be invisible to exactly the scan written to see it.
+        Read through ``_command_texts``, not off the string commands; what a
+        scan over the strings alone would miss is recorded at
+        ``COMMAND_TEXT_KEYS``.
         """
         assert FORBIDDEN_ROUTING_PATTERNS, "the forbidden-expression list is empty, which leaves this scan vacuous"
         commands = _joined_commands(_routing_target())
@@ -3065,9 +3080,7 @@ class TestGuardWiring:
     def test_routing_target_can_be_neither_skipped_nor_forgiven(self) -> None:
         """The target declares only the keys it needs, and every command it holds is a plain string.
 
-        Two assertions close the target's whole surface, and the named list
-        beneath them is the diagnostic rather than the closure — the shape
-        ``GUARD_JOB_FORBIDDEN_KEYS`` has beneath ``GUARD_JOB_KEYS``.
+        Two assertions close the target's whole surface.
 
         The key set closes go-task's target schema by equality. That schema is
         large and not one a reader here can enumerate, so the six named below

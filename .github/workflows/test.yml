@@ -16,10 +16,9 @@ jobs:
   # reporting, and a red guard cannot stop those suites from running.
   routing-coverage:
     runs-on: ubuntu-latest
-    # An aggregate ceiling under the per-unit ones the guard already carries.
     # Without it the job is bounded only by GitHub's 360-minute default, so a
-    # wedge anywhere outside those ceilings burns six hours of runner time
-    # before reporting.
+    # wedge outside the per-unit ceilings the guard already carries burns six
+    # hours of runner time before reporting.
     timeout-minutes: 30
     steps:
       # No `fetch-depth:`: the guard reads the index via `git ls-files` and runs

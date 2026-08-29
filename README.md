@@ -255,9 +255,8 @@ If you plan to run the test suite locally via `task test:setup` /
 `task test:staged`, the setup script will offer to install
 **[uv](https://docs.astral.sh/uv/)** via Homebrew. `uv` is Astral's
 Rust-based Python package manager — it provisions Python 3.12 and
-creates the `.venv/` used by host-run tests (notably
-`test:skills:staged`, which cannot run inside a container because
-`claude -p` headless mode requires host OAuth credentials per
+creates the `.venv/` used by host-run tests (the host-side
+exceptions are listed with their reasons in
 [CLAUDE.md](CLAUDE.md) §11). If you only consume this repo's
 skills and prompts without running the test suite locally, you
 can skip this tool.

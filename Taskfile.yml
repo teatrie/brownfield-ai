@@ -61,7 +61,8 @@ tasks:
     # cmds are sequential and stop at the first failure, so test:routing holds
     # index 0 — any suite ahead of it would suppress the one guard here that is
     # meant to report on every change. uv is already a prerequisite of this
-    # aggregate via test:skills, so the position adds no new tool requirement.
+    # aggregate via test:skills, so the position adds no new tool requirement —
+    # though without uv the aggregate fails before any suite runs.
     cmds:
       - task: test:routing
       - task: test:brownfield_ai

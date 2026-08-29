@@ -39,9 +39,10 @@ exit **70** whenever fewer cases run than the walk holds, and it observes the
 count rather than the cause — so *any* partial selection of the module trips
 it, deliberate ones included. `task test:routing` threads no arguments and is
 unaffected. `task test:scripts` does thread `{{.CLI_ARGS}}`, into a pytest
-command that names `tests/ci/` first, so `task test:scripts -- -k <expr>`,
-`-- -x` and `-- --lf` each end at 70 rather than at pytest's own status. This
-is local-developer only: CI passes no such arguments on the scripts leg. The
+command that names `tests/ci/` first, so a filter that narrows collection
+(`task test:scripts -- -k <expr>`, `-- --lf`) ends at 70 rather than at
+pytest's own status. This is local-developer only: CI passes no such
+arguments on the scripts leg. The
 two ways out are to run the module whole, or to keep it out of collection
 entirely (`-- --ignore=tests/ci/test_router_coverage.py`), which registers no
 floor because nothing imports the module — and which is the filtered run
@@ -81,9 +82,11 @@ there are two independent ones: a path that never invokes
 `docker/shared/python-security-gate.sh` bypasses Layer 2, and a path that
 overrides the entrypoint bypasses Layer 3. Neither implies the other — an
 unmodified entrypoint does not establish that the host-side gate ran.
-`test:dashboard` and the dashboard branches of both `ci/test_staged.sh`
-and `ci/test_changed.sh` override the entrypoint, and none of the three
-invokes the host-side gate, so both bypasses co-occur at all three sites.
+`test:dashboard`, the dashboard branches of both `ci/test_staged.sh`
+and `ci/test_changed.sh`, and the `sh:python-cli` and `sh:pytest-cli` shell
+tasks override the entrypoint, and none of them invokes the host-side gate,
+so both bypasses co-occur there. The Layer 1 hook denies the two shell tasks
+by name, which covers agent tool calls but not a human at a terminal.
 They come apart at `task run:adhoc`, the sanctioned ad-hoc Python path of
 [CLAUDE.md](../CLAUDE.md) §11: it enters through the unmodified `python-cli`
 entrypoint, so Layer 3 still validates the gate artifact, but it never invokes
