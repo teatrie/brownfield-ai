@@ -26,9 +26,9 @@ separation is the point: neither the guard's signal nor the other suites' can
 suppress the other, in either direction. The local aggregates buy no such
 separation: `task test:all` and the root `task test` both run the guard as
 their first command, so masking there is one-directional by design and
-accepted — nothing ahead of the guard can suppress it, and in exchange a red
-guard, or a failure of the host-`uv` `setup` dep it carries, stops the
-aggregate before the suites behind it run. The cost is that the walk is paid
+accepted — in exchange a red guard, or a failure of the host-`uv` `setup` dep
+it carries, stops the aggregate before the suites behind it run. The cost is
+that the walk is paid
 twice: `routing-coverage` runs it host-side on every pull request, and the
 containerised scripts suite runs it again whenever the routers fan `tests/ci/`
 into that suite. Each run spawns a router subprocess per tracked path under a
@@ -62,9 +62,10 @@ execution in `python-cli` and `pytest-cli` containers. Layer 1: Claude Code
 PreToolUse hooks block direct Docker access. Layer 2: Host-side gate script
 (`docker/shared/python-security-gate.sh`) validates paths, flags, and
 git-tracking. Layer 3: Container entrypoint validates a time-limited gate
-artifact. Every containerised taskfile task that runs Python through the
-`pytest-cli` / `python-cli` entrypoint routes through the gate
-automatically. The exceptions are structural rather than a single target, and
+artifact. Taskfile tasks that invoke
+`docker/shared/python-security-gate.sh` before entering the container route
+through the gate, and that is most of the Python container tasks. The
+exceptions are structural rather than a single target, and
 there are two independent ones: a path that never invokes
 `docker/shared/python-security-gate.sh` bypasses Layer 2, and a path that
 overrides the entrypoint bypasses Layer 3. Neither implies the other — an
@@ -72,6 +73,12 @@ unmodified entrypoint does not establish that the host-side gate ran.
 `test:dashboard` and the dashboard branches of both `ci/test_staged.sh`
 and `ci/test_changed.sh` override the entrypoint, and none of the three
 invokes the host-side gate, so both bypasses co-occur at all three sites.
+They come apart at `task run:adhoc`, the sanctioned ad-hoc Python path of
+[CLAUDE.md](../CLAUDE.md) §11: it enters through the unmodified `python-cli`
+entrypoint, so Layer 3 still validates the gate artifact, but it never invokes
+`docker/shared/python-security-gate.sh` — it writes the artifact itself and
+substitutes three inline `preconditions:` for the script's path and flag
+validation.
 The host-side targets are outside the gate's scope by construction, because
 the gate exists to validate paths and flags before Python runs *in a
 container*: `test:container-integration`

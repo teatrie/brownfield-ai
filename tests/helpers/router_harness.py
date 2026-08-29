@@ -223,6 +223,14 @@ ROUTER_TIMEOUT_SECONDS = 180
 #: module scanning its own source for a literal it also declares always matches
 #: itself — which is also why this module is outside the scan that reads the
 #: list; see ``CONTAINER_DETECTION_SCAN_SOURCES`` in the guard.
+#: A measured set, not a closed one: these are the expressions this repository's
+#: own container detection is written with, and a skip keyed on anything else
+#: carries nothing here to match. Known uncovered members: ``/run/.containerenv``,
+#: which identifies a Podman container; a predicate on ``CI`` or
+#: ``GITHUB_ACTIONS``, which reaches the same skip without naming a container at
+#: all; a hostname read compared against a container's; and a read of the
+#: process mount table. The paragraph above states the property the list serves,
+#: which is not the same as the reach of the list.
 CONTAINER_DETECTION_TOKENS: tuple[str, ...] = (
     "/.dockerenv",
     "INSIDE_CONTAINER",
