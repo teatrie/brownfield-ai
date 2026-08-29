@@ -153,6 +153,11 @@ KNOWN_ROUTER_DIVERGENCE: frozenset[str] = frozenset({"docker/agent-cli/"})
 #: holds them, so this pin fails only when an alternative is *dropped* and the
 #: dot-prefixed alternatives are left to the per-alternative coverage check.
 #: Adding a ``.claude/`` path here would collapse the two into one check.
+#: ``tests/agents/`` is listed because it is the one prefix no behavioural
+#: assertion below reaches: the parity contract is driven through
+#: ``.claude/agents/``, and nothing routes a path under ``tests/agents/``
+#: itself, so dropping that prefix from a router would un-route every test
+#: under it with no other check to notice.
 UNIVERSE_SENTINELS: tuple[str, ...] = (
     "ci/test_staged.sh",
     "ci/test_changed.sh",
@@ -160,6 +165,7 @@ UNIVERSE_SENTINELS: tuple[str, ...] = (
     "tests/ci/conftest.py",
     "tests/helpers/router_harness.py",
     "docker/shared/python-security-gate.sh",
+    "tests/agents/test_variant_parity.py",
 )
 
 #: A tracked path that *contains* a ``CHANGED_SCRIPTS`` alternative without
@@ -202,11 +208,14 @@ ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 TRACKED_PATHS_TIMEOUT_SECONDS = 60
 
 #: Container-detection expressions the routing-coverage guard and the fixtures
-#: it consumes must not carry. In-container execution of that guard is certain —
-#: both routers route ``tests/ci/`` into ``pytest-cli`` — so a skip keyed on one
-#: of these would silence it exactly where it is most needed. The list lives
-#: here rather than beside the scan that reads it: a module scanning its own
-#: source for a literal it also declares always matches itself.
+#: it consumes must not carry. Both routers route ``tests/ci/`` into
+#: ``pytest-cli``, and they reach it on a pull request changing a non-test
+#: module under ``tests/helpers/`` or a test module under ``tests/ci/``, so a
+#: skip keyed on one of these would silence the guard in the containerised
+#: channel. The list lives here rather than beside the scan that reads it: a
+#: module scanning its own source for a literal it also declares always matches
+#: itself — which is also why this module is outside the scan that reads the
+#: list; see ``CONTAINER_DETECTION_SCAN_SOURCES`` in the guard.
 CONTAINER_DETECTION_TOKENS: tuple[str, ...] = (
     "/.dockerenv",
     "INSIDE_CONTAINER",
@@ -590,11 +599,20 @@ def tracked_paths() -> tuple[str, ...]:
     the same constant the call runs in so the two cannot drift. Both routers fan
     a changed module under ``tests/helpers/`` into ``tests/ci/``, which runs in
     ``pytest-cli`` as ``--user agent`` against a read-only bind mount of the
-    repository. That user is a system account created in the image, so on a
-    Linux runner it does not own the mounted tree, and git's ownership check
-    refuses to read the repository at all — exit 128 before a single path is
-    listed, taking every caller of this function with it. Where the uid already
-    matches, the option changes nothing.
+    repository.
+
+    The failure this guards against is reasoned rather than observed: ``agent``
+    is a system account the image creates with ``useradd -r``, so nothing ties
+    its uid to the uid owning the mounted tree on a Linux runner, and git's
+    ownership check refuses to read a repository owned by another user — exit
+    128 before a single path is listed, taking every caller of this function
+    with it. It has not been reproduced here, and has never run on a Linux
+    runner: Docker Desktop remaps bind-mount ownership, so on this host the
+    mounted tree already reports the container uid as its owner and the check
+    passes whatever the image does. What is confirmed is that the option is
+    accepted where it is set — ``git help config`` §SCOPES counts ``-c`` as
+    protected command scope, which is the scope ``safe.directory`` requires.
+    Where the uid already matches, the option changes nothing.
 
     Returns:
         Repository-relative tracked paths, in ``git ls-files`` order.

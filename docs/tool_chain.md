@@ -19,9 +19,9 @@ requirements files, so the guard does not pay a cold resolve on
 every pull request. The cached path is the uv package cache and never `.venv`
 itself: a virtualenv records absolute interpreter paths and does not survive
 relocation. In that workflow the guard has its own job, `routing-coverage` —
-the first of the file's four jobs, carrying no `needs:`, no `if:` and no
-`continue-on-error:` — which checks out, installs Task and uv, restores the uv
-cache, runs `task test:routing`, and uploads `tmp/junit_routing.xml`. The
+carrying no `needs:`, no `if:` and no `continue-on-error:` — which checks out,
+installs Task and uv, restores the uv cache, runs `task test:routing`, and
+uploads `tmp/junit_routing.xml`. The
 separation is the point: neither the guard's signal nor the other suites' can
 suppress the other, in either direction. The cost is that the walk is paid
 twice: `routing-coverage` runs it host-side on every pull request, and the
@@ -64,10 +64,11 @@ there are two independent ones: a path that never invokes
 overrides the entrypoint bypasses Layer 3. Neither implies the other — an
 unmodified entrypoint does not establish that the host-side gate ran.
 `test:dashboard` and the dashboard branches of both `ci/test_staged.sh`
-and `ci/test_changed.sh` override the entrypoint; `test:dashboard` also omits
-the gate call, so both bypasses co-occur there. The host-side targets are
-outside the gate's scope by construction, because the gate exists to validate
-paths and flags before Python runs *in a container*: `test:container-integration`
+and `ci/test_changed.sh` override the entrypoint, and none of the three
+invokes the host-side gate, so both bypasses co-occur at all three sites.
+The host-side targets are outside the gate's scope by construction, because
+the gate exists to validate paths and flags before Python runs *in a
+container*: `test:container-integration`
 calls it anyway, since it launches real containers; `test:skills` and
 `test:routing` do not. `test:routing` follows the `test:skills` shape —
 `.venv/bin/pytest` invoked directly — and is safe to leave ungated because
