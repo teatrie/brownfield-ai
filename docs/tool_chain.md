@@ -23,12 +23,18 @@ carrying no `needs:`, no `if:` and no `continue-on-error:` — which checks out,
 installs Task and uv, restores the uv cache, runs `task test:routing`, and
 uploads `tmp/junit_routing.xml`. The
 separation is the point: neither the guard's signal nor the other suites' can
-suppress the other, in either direction. The cost is that the walk is paid
+suppress the other, in either direction. The local aggregates buy no such
+separation: `task test:all` and the root `task test` both run the guard as
+their first command, so masking there is one-directional by design and
+accepted — nothing ahead of the guard can suppress it, and in exchange a red
+guard, or a failure of the host-`uv` `setup` dep it carries, stops the
+aggregate before the suites behind it run. The cost is that the walk is paid
 twice: `routing-coverage` runs it host-side on every pull request, and the
 containerised scripts suite runs it again whenever the routers fan `tests/ci/`
 into that suite. Each run spawns a router subprocess per tracked path under a
-router prefix, for both routers, plus a nested collection subprocess per
-distinct announced target.
+router prefix, for both routers at the `scripts` router target — the only
+target the guard covers — plus a nested collection subprocess per distinct
+announced target.
 Install locally via `task setup:env` (offers brew install on
 macOS) or manually: `brew install uv` (macOS) / `pip install uv`
 (any platform) / `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -81,9 +87,9 @@ That guard module is also collected in-container, since both routers fan
 collection subprocesses on router-derived paths; those inputs are repo
 content rather than agent input, and the nested subprocesses are governed by
 the container boundary rather than by the entrypoint —
-`docker/shared/python-gate-entrypoint.sh` validates the initial argv only
-(every check keys off `$1`) and then `exec`s the command, so it does not
-observe processes the suite spawns afterwards. See
+`docker/shared/python-gate-entrypoint.sh` validates the initial argv only and
+then `exec`s the command, so it does not observe processes the suite spawns
+afterwards. See
 [docs/container_security.md](container_security.md) for the full security
 model, deny rules, Docker build auditing, and contributor onboarding.
 - **CLI Invocation Discipline**: Many `task` aliases (`ledger:*`,

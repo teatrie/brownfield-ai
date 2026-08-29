@@ -170,6 +170,34 @@ WORKFLOW_PATH = ".github/workflows/test.yml"
 TASKFILE_PATH = "taskfiles/test.yml"
 ROOT_TASKFILE_PATH = "Taskfile.yml"
 
+#: The file-level ``env:`` keys each wiring taskfile declares, as a whitelist
+#: per file. A file-level ``env:`` is the file's own declaration of variables
+#: for every target it holds — one scope above the target ``env:`` the
+#: forbidden-key scan reads, and two above the per-command one, so both of
+#: those scans look straight past it. ``taskfiles/test.yml`` declares
+#: ``PYTHONPATH`` there; the root file declares nothing at all.
+#: What is measured is that a ``PYTEST_ADDOPTS`` present in the environment the
+#: guard's command inherits retires the run — a collection count in place of
+#: any pass or fail count, no assertion evaluated, exit 0 — and that a
+#: target-level ``env:`` populates that environment. That the file level
+#: populates it too is **inferred** from it being the same mechanism one scope
+#: out, not observed here.
+TASKFILE_ENV_KEYS: dict[str, frozenset[str]] = {
+    TASKFILE_PATH: frozenset({"PYTHONPATH"}),
+    ROOT_TASKFILE_PATH: frozenset(),
+}
+
+#: The two keys that put variables into a target's environment. ``env`` names
+#: them in the file, so it is closed by whitelisting the names; ``dotenv`` names
+#: a file whose contents nothing here reads, so it cannot be whitelisted by key
+#: at all and is forbidden outright at the file level of both wiring taskfiles.
+#: ``AMBIENT_ENV_KEY`` is read on the workflow side too, where GitHub Actions
+#: defines a top-level ``env:`` as a map of variables available to the steps of
+#: *all* jobs in the workflow — the guard's job included. There is no workflow
+#: equivalent of ``dotenv``, so only the one key is read there.
+AMBIENT_ENV_KEY = "env"
+AMBIENT_DOTENV_KEY = "dotenv"
+
 #: The workflow job the guard step belongs to: a job of its own, holding only
 #: the checkout, toolchain and cache steps the guard needs. Every step lookup
 #: below is scoped by this key rather than searched file-wide, because the
@@ -193,11 +221,29 @@ GUARD_STEP_COMMAND = "task test:routing"
 #: in still reports success.
 GUARD_STEP_TOLERANCE_KEY = "continue-on-error"
 
-#: Job-level keys that retire every step the guard's job holds. ``if`` skips
-#: them, ``continue-on-error`` forgives their failures, and ``needs`` sequences
-#: the job behind another one — a guard sequenced behind a test job never starts
-#: when that job reds, so an ordinary test failure suppresses the one signal
-#: meant to survive it.
+#: Every key the guard step declares, as a whitelist. ``if`` and
+#: ``continue-on-error`` are pinned individually below as well, because each
+#: has a specific retirement worth naming in a failure; this closes the rest of
+#: the step's key space by equality, so a key nobody enumerated reds too. The
+#: one that matters most is ``env``: measured on this repository, a
+#: ``PYTEST_ADDOPTS=--collect-only`` present in the environment
+#: ``task test:routing`` inherits reaches pytest through go-task, and the run
+#: then printed a collection count in place of any pass or fail count,
+#: evaluated no assertion and still exited 0. A step-level ``env:`` is one of
+#: the ways to put it there.
+GUARD_STEP_KEYS: frozenset[str] = frozenset({"name", "run"})
+
+#: Three job-level keys that retire every step the guard's job holds, named for
+#: the diagnostic rather than for the closure: ``GUARD_JOB_KEYS`` below is what
+#: closes the job's key space, by equality, and it covers these three together
+#: with the ones nobody enumerated — a ``strategy:`` resolving to an empty
+#: matrix, which runs the job zero times, and an ``env:``, which reaches pytest
+#: by the route measured above. These three stay listed so that a failure names
+#: the specific retirement rather than only reporting an unexpected key.
+#: ``if`` skips every step, ``continue-on-error`` forgives their failures, and
+#: ``needs`` sequences the job behind another one — a guard sequenced behind a
+#: test job never starts when that job reds, so an ordinary test failure
+#: suppresses the one signal meant to survive it.
 GUARD_JOB_FORBIDDEN_KEYS: tuple[str, ...] = ("if", GUARD_STEP_TOLERANCE_KEY, "needs")
 
 #: The step the guard must follow, because the uv install appends to
@@ -219,6 +265,10 @@ UV_CACHE_STEP_NAME = "Cache uv packages"
 #: Held to the three shapes this repository's workflows use to start tests, not
 #: claimed exhaustive: the ordered step-name pin below is what closes the
 #: direction an unlisted shape would come in by.
+#: Known limit: these are matched against ``run:`` text only, so a step that
+#: starts a test run through an action carries nothing for them to match at
+#: all; ``GUARD_JOB_STEP_ACTIONS`` closes that axis instead, by pinning which
+#: action each step of the job may run.
 TEST_INVOCATION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<!\S)task\s+test:"),
     re.compile(r"(?<!\S)\S*ci/test_\w+\.sh(?!\S)"),
@@ -266,12 +316,61 @@ GUARD_JOB_STEP_NAMES: tuple[str | None, ...] = (
 GUARD_JOB_TIMEOUT_KEY = "timeout-minutes"
 GUARD_JOB_TIMEOUT_CEILING = 60
 
-#: Workflow files the toolchain-parity scan reads. Every ``Install Task`` step
-#: in them carries a comment instructing the author to keep the version and the
-#: checksum in sync across every copy of it, in both files; that instruction is
-#: what this scan stands behind. ``Install uv`` carries the same instruction,
-#: scoped to one file, and is pinned the same way.
-TOOLCHAIN_SCAN_PATHS: tuple[str, ...] = (WORKFLOW_PATH, ".github/workflows/ci.yml")
+#: Every key the guard's job declares, as a whitelist. The forbidden-key list
+#: above enumerates three members of GitHub Actions' job schema, which is far
+#: larger than three and not closed by anything a reader here can check;
+#: asserting the key set by equality closes it from the other side, so a
+#: ``strategy:`` resolving to an empty matrix, an ``env:`` reaching pytest
+#: through go-task, and any key nobody has thought of all red without having
+#: been named. The job is the guard's own and holds three keys, so this reds on
+#: edits to the guard's wiring rather than on ordinary workflow maintenance.
+GUARD_JOB_KEYS: frozenset[str] = frozenset({"runs-on", GUARD_JOB_TIMEOUT_KEY, "steps"})
+
+#: The key a job declares in place of ``steps:`` when it calls a reusable
+#: workflow. Such a job holds no steps of its own, so the file-wide scans below
+#: skip it rather than reporting it as a job that declares none.
+#: Known limit: a toolchain install or a uv cache *inside* the called workflow
+#: is then outside both scans, and neither the parity check nor the cache-key
+#: check has anything to say about it.
+REUSABLE_WORKFLOW_KEY = "uses"
+
+#: Directory the scanned workflows live in, and the suffixes GitHub reads there.
+#: Both are listed because a workflow file is picked up under either one, so a
+#: scan written for a single suffix leaves the other unread.
+WORKFLOW_DIR = ".github/workflows"
+WORKFLOW_SUFFIXES: tuple[str, ...] = ("*.yml", "*.yaml")
+
+
+def _workflow_scan_paths() -> tuple[str, ...]:
+    """
+    Enumerate the workflow files the toolchain-parity scan reads.
+
+    Discovered by glob rather than listed. A hand-kept list is a whitelist over
+    the wrong axis: it pins which *files* are compared while the property being
+    checked is that every copy of an install step agrees with every other, so a
+    workflow added later carries its copies outside the comparison entirely.
+
+    Each path is rendered by relativising the file against the repository root
+    rather than by joining the directory to a filename read off it: the result
+    is the same string, and the relativised form cannot disagree with where the
+    file actually is.
+
+    Returns:
+        Repository-relative workflow paths, sorted.
+    """
+    directory = REPO_ROOT / WORKFLOW_DIR
+    found = {path.relative_to(REPO_ROOT).as_posix() for suffix in WORKFLOW_SUFFIXES for path in directory.glob(suffix)}
+    return tuple(sorted(found))
+
+
+#: Workflow files the toolchain-parity scan reads. Each install step below is
+#: duplicated across jobs, and across files, and every copy of one of them
+#: fetches the same artifact and checks it against the same checksum — so two
+#: copies of the same step carrying different values is a drift whichever one
+#: moved. Some copies carry a comment telling the author to keep the pair in
+#: sync with the others and some carry none; the scan stands on the values
+#: rather than on that instruction, which has no mechanism either way.
+TOOLCHAIN_SCAN_PATHS: tuple[str, ...] = _workflow_scan_paths()
 
 #: Step names whose pinned toolchain values must agree across every copy, and
 #: the ``env:`` keys carrying them.
@@ -297,15 +396,52 @@ GUARD_TRIGGER_EVENT = "pull_request"
 #: on none of the pushes that carry the change. ``branches-ignore`` narrows by
 #: base branch. Each costs one line, one level above the ``if:`` the step-level
 #: pin already forbids.
-#: ``branches`` is deliberately absent rather than overlooked: the workflow
-#: scopes both its triggers to ``main``, which is the branch this guard reports
-#: into, and ``branches-ignore`` cannot be declared alongside it.
+#: ``branches`` is absent from this list because it cannot be in it: the
+#: workflow declares it, and it is load-bearing. It is closed by its *value*
+#: instead — see ``GUARD_TRIGGER_BASE_BRANCH``.
 FORBIDDEN_TRIGGER_FILTER_KEYS: tuple[str, ...] = ("paths", "paths-ignore", "types", "branches-ignore")
+
+#: The base branch the guard reports into, and the trigger key scoping a run to
+#: it. Declining to forbid a key is not the same as closing it: editing the
+#: declared ``branches: [main]`` to name a branch that does not exist stops the
+#: whole workflow — and with it the guard's job — on every pull request into
+#: ``main``, for one word, with every other pin in this class green. So the
+#: value is asserted where the key is declared.
+#: An absent ``branches`` widens the trigger rather than narrowing it, so it is
+#: not asserted into existence: a check with no subject is the safe state here,
+#: not a blind one.
+GUARD_TRIGGER_BASE_BRANCH = "main"
+GUARD_TRIGGER_BRANCH_KEY = "branches"
+
+#: The events whose base-branch scoping the guard's claim rests on.
+#: ``pull_request`` carries "on every pull request"; ``push`` is what runs the
+#: guard on ``main`` once one merges. An event added later and scoped to some
+#: other branch retires neither claim, so the value check is held to these two
+#: rather than applied to every event the workflow declares.
+BASE_BRANCH_SCOPED_EVENTS: tuple[str, ...] = (GUARD_TRIGGER_EVENT, "push")
 
 #: The uv package cache the guard's ``deps: [setup]`` venv build restores from.
 #: The package cache, never ``.venv`` itself — a virtualenv is not relocatable.
 CACHE_ACTION_PREFIX = "actions/cache@"
 UV_CACHE_PATH = "~/.cache/uv"
+
+#: The action the guard job's unnamed first step must run.
+CHECKOUT_ACTION_PREFIX = "actions/checkout@"
+
+#: Every step of the guard's job that runs an action, and the action prefix it
+#: must run, as a whitelist keyed by step name. The test-invocation scan reads
+#: ``run:`` text and so cannot see this axis at all: a step starting a
+#: test run through an action — the shape ``ci.github-actions.md`` §1 pushes
+#: this file towards — matches none of its patterns. The ordered name list
+#: closes the direction a *new* step arrives by; this closes the direction
+#: where a step already on that list is repointed at a different action, and it
+#: pins the checkout, which is otherwise the one step in the job whose ``uses:``
+#: nothing reads.
+GUARD_JOB_STEP_ACTIONS: dict[str | None, str] = {
+    None: CHECKOUT_ACTION_PREFIX,
+    UV_CACHE_STEP_NAME: CACHE_ACTION_PREFIX,
+    JUNIT_UPLOAD_STEP_NAME: UPLOAD_ACTION_PREFIX,
+}
 
 #: The requirements files ``task test:setup`` installs from, and therefore the
 #: files the cache key must track: a key that ignores one serves a stale cache
@@ -373,6 +509,44 @@ AGGREGATE_SITES: tuple[AggregateSite, ...] = (
     AggregateSite(ROOT_TASKFILE_PATH, ROOT_AGGREGATE_TASK_NAME, ROOT_ROUTING_ENTRY_NAME, None),
 )
 
+#: Directory holding the included taskfiles, and the suffixes an included one
+#: may carry. Both are globbed for the reason ``WORKFLOW_SUFFIXES`` lists both:
+#: an ``includes:`` entry names an explicit path, so the extension is the
+#: author's choice and a scan written for one of them leaves the other unread.
+TASKFILE_DIR = "taskfiles"
+TASKFILE_SUFFIXES: tuple[str, ...] = ("*.yml", "*.yaml")
+
+
+def _aggregate_scan_paths() -> tuple[str, ...]:
+    """
+    Enumerate the taskfiles the aggregate discovery opens.
+
+    Globbed rather than listed. ``AGGREGATE_SITES`` is a whitelist over
+    aggregates, and a discovery loop that only ever opens the files those sites
+    name moves the whitelist one level out, onto the *files* — so an aggregate
+    running the guard from a third taskfile is outside the comparison entirely
+    rather than caught by it.
+
+    Rendered the way ``_workflow_scan_paths`` renders its own, by relativising
+    each file against the repository root.
+
+    Returns:
+        The root taskfile followed by every included one, sorted.
+    """
+    directory = REPO_ROOT / TASKFILE_DIR
+    included = {path.relative_to(REPO_ROOT).as_posix() for suffix in TASKFILE_SUFFIXES for path in directory.glob(suffix)}
+    return (ROOT_TASKFILE_PATH, *sorted(included))
+
+
+#: Every taskfile the aggregate discovery reads.
+AGGREGATE_SCAN_PATHS: tuple[str, ...] = _aggregate_scan_paths()
+
+#: The command a target runs to reach another target through a shell rather
+#: than through go-task's own ``task:`` key. ``_runs_task`` matches it as a
+#: whole word followed by the target name, so a longer name carrying one of the
+#: pinned entries as a prefix does not read as running it.
+TASK_INVOCATION = "task"
+
 #: A ``cmds:`` entry in the mapping form, used to drive ``_command_entries``
 #: past the shape the routing target has. That target's ``cmds`` is a single
 #: folded string, so every entry of it fails ``isinstance(entry, dict)`` and the
@@ -400,8 +574,8 @@ COMMAND_TEXT_KEYS: tuple[str, ...] = ("cmd", "task", "defer")
 GUARD_MODULE_ARGUMENT = re.compile(rf"(?<!\S){re.escape(GUARD_MODULE)}(?!\S)")
 
 #: Expressions that MUST NOT appear in the routing target's commands. The first
-#: three would put a host-side guard back under the container path it was moved
-#: off. The fourth is the whole go-task template opener rather than the
+#: three would put a target that runs host-side under the venv onto a container
+#: path instead. The fourth is the whole go-task template opener rather than the
 #: ``{{.CLI_ARGS}}`` literal alone: ``{{.CLI_ARGS}}`` lets a caller inject
 #: pytest arguments, and ``{{.ANY_VAR}}`` fed from the target's own ``vars:``
 #: does the same thing with nobody supplying anything — one defect in two
@@ -433,8 +607,10 @@ ROUTING_COMMAND_TOKENS: frozenset[str] = frozenset({
     "--junitxml=tmp/junit_routing.xml",
 })
 
-#: Target-level keys **measured** to retire the guard without touching its
-#: commands. A measured set, not a closed one: go-task's target schema is large
+#: Target-level keys that retire the guard without touching its commands —
+#: five of them measured end to end, and ``dotenv`` measured only as far as the
+#: delivery, as each entry below says.
+#: A measured set, not a closed one: go-task's target schema is large
 #: and several of its keys reach the pytest process by routes a reader would not
 #: predict, so a claim to have enumerated every such key is one this list cannot
 #: support.
@@ -943,12 +1119,12 @@ class TestRouterCoverage:
     def test_guard_sources_carry_no_container_detection(self) -> None:
         """Neither this module nor the conftest behind it branches on being containerised.
 
-        Both routers route ``tests/ci/`` into ``pytest-cli``, and they reach it
-        on a pull request changing a non-test module under ``tests/helpers/`` or
-        a test module under ``tests/ci/`` — not on every pull request under a
-        router prefix. A skip inside that channel would silence the one run that
-        detects an un-routed source there; the repair for a red in-container run
-        is the interpreter resolution in ``collect_target``.
+        Both routers run their announced targets in ``pytest-cli``, and they
+        reach this module on a pull request changing a non-test module under
+        ``tests/helpers/`` or the guard module itself — not on every pull
+        request under a router prefix. A skip inside that channel would silence
+        the one run that detects an un-routed source there; the repair for a red
+        in-container run is the interpreter resolution in ``collect_target``.
 
         ``tests/helpers/router_harness.py`` is on the same import path and is
         not scanned; see ``CONTAINER_DETECTION_SCAN_SOURCES`` for why, and for
@@ -1184,6 +1360,28 @@ def _job_steps(relative: str, name: str, job: dict[str, object]) -> list[dict[st
     return steps
 
 
+def _scanned_job_steps(relative: str, name: str, job: dict[str, object]) -> list[dict[str, object]] | None:
+    """Return one job's steps, or ``None`` for a job that calls a reusable workflow.
+
+    Only the file-wide scans use this. A job declaring ``uses:`` and no
+    ``steps:`` is a reusable-workflow call and holds no steps of its own, so
+    requiring steps of it would red this guard on a job added for reasons
+    unrelated to routing — including in ``ci.yml``, which this module reads only
+    for toolchain parity. A job declaring neither still fails, in ``_job_steps``.
+
+    Args:
+        relative: Workflow file the job was read from.
+        name: Job key.
+        job: The job mapping.
+
+    Returns:
+        The job's steps, or ``None`` where it calls a reusable workflow.
+    """
+    if REUSABLE_WORKFLOW_KEY in job and "steps" not in job:
+        return None
+    return _job_steps(relative, name, job)
+
+
 def _guard_job() -> dict[str, object]:
     """Return the job the guard step belongs to, located by key.
 
@@ -1284,7 +1482,10 @@ def _uv_cache_jobs() -> list[tuple[str, dict[str, object]]]:
     """
     found: list[tuple[str, dict[str, object]]] = []
     for name, job in _workflow_jobs(WORKFLOW_PATH).items():
-        for _, settings in _uv_cache_settings(_job_steps(WORKFLOW_PATH, name, job)):
+        steps = _scanned_job_steps(WORKFLOW_PATH, name, job)
+        if steps is None:
+            continue
+        for _, settings in _uv_cache_settings(steps):
             found.append((name, settings))
     return found
 
@@ -1294,7 +1495,10 @@ def _named_steps(name: str) -> list[tuple[str, str, dict[str, object]]]:
     found: list[tuple[str, str, dict[str, object]]] = []
     for relative in TOOLCHAIN_SCAN_PATHS:
         for job_name, job in _workflow_jobs(relative).items():
-            for step in _job_steps(relative, job_name, job):
+            steps = _scanned_job_steps(relative, job_name, job)
+            if steps is None:
+                continue
+            for step in steps:
                 if step.get("name") == name:
                     found.append((relative, job_name, step))
     return found
@@ -1375,6 +1579,88 @@ def _joined_commands(target: object) -> str:
     return "\n".join(_command_texts(target))
 
 
+def _shorthand_command_entries(target: object) -> tuple[object, ...]:
+    """Return a target's command entries under every shape go-task admits for one.
+
+    ``_command_entries`` reads the mapping form, where the commands live under
+    ``cmds:``. go-task also takes a target written as a bare string or as a bare
+    list, and for either of those ``_command_entries`` returns nothing at all —
+    so a discovery built on it alone reads an aggregate written in shorthand as
+    running nothing.
+
+    Args:
+        target: A target as the taskfile declares it.
+
+    Returns:
+        The target's command entries.
+    """
+    if isinstance(target, str):
+        return (target,)
+    if isinstance(target, list):
+        return tuple(target)
+    return _command_entries(target)
+
+
+def _dependency_entries(target: object) -> tuple[object, ...]:
+    """Return a target's ``deps:`` entries as written, mapping forms included.
+
+    Args:
+        target: A target as the taskfile declares it.
+
+    Returns:
+        The target's dependency entries, empty where it declares none.
+    """
+    if not isinstance(target, dict):
+        return ()
+    deps = target.get("deps")
+    if not isinstance(deps, list):
+        return ()
+    return tuple(deps)
+
+
+def _runs_task(target: object, entry: str) -> bool:
+    """
+    Decide whether one target runs a named task, under every spelling discovered.
+
+    Four shapes reach the same target and only one of them is a ``cmds:``
+    mapping carrying ``task:``: a ``deps:`` entry runs it *before* ``cmds[0]``,
+    a ``deps:`` mapping is the same one key across, and a plain shell command
+    invoking ``task`` runs it without any structure to read. All four are
+    matched here so the discovery is over what a taskfile can express rather
+    than over the one form the pinned sites happen to use.
+
+    Args:
+        target: A target as the taskfile declares it.
+        entry: Task name to look for, with or without a leading ``:``.
+
+    Returns:
+        Whether the target runs that task.
+    """
+    wanted = entry.lstrip(":")
+    invocation = re.compile(rf"(?<!\S){re.escape(TASK_INVOCATION)}\s+:?{re.escape(wanted)}(?!\S)")
+    for dependency in _dependency_entries(target):
+        if isinstance(dependency, str) and dependency.lstrip(":") == wanted:
+            return True
+        named = dependency.get("task") if isinstance(dependency, dict) else None
+        if isinstance(named, str) and named.lstrip(":") == wanted:
+            return True
+    for command in _shorthand_command_entries(target):
+        if isinstance(command, str):
+            if invocation.search(command):
+                return True
+            continue
+        if not isinstance(command, dict):
+            continue
+        named = command.get("task")
+        if isinstance(named, str) and named.lstrip(":") == wanted:
+            return True
+        for key in COMMAND_TEXT_KEYS:
+            text = command.get(key)
+            if isinstance(text, str) and invocation.search(text):
+                return True
+    return False
+
+
 def _junit_destinations(target: object) -> frozenset[str]:
     """Read the junit paths a target writes to."""
     return frozenset(str(match) for command in _command_texts(target) for match in JUNIT_DESTINATION.findall(command))
@@ -1406,9 +1692,7 @@ class TestGuardWiring:
     Their limit is *when* they run, not what they assert. This module runs in
     the guard's own job, on every pull request, and in the containerised scripts
     suite, on every pull request changing a non-test module under
-    ``tests/helpers/`` or a test module under ``tests/ci/`` — those are the only
-    changes either router fans into ``tests/ci/``, so the second channel is far
-    narrower than "a router-prefixed path". A wiring change lands in
+    ``tests/helpers/`` or this module itself. A wiring change lands in
     ``.github/``, ``taskfiles/`` or the root ``Taskfile.yml``, none of which sits
     under a router prefix, so on the pull request making that change only the
     first channel is live — and that channel is the wiring being edited.
@@ -1451,26 +1735,122 @@ class TestGuardWiring:
             "reported by a job that still passes"
         )
 
-    def test_workflow_job_is_neither_gated_nor_forgiven_nor_sequenced(self) -> None:
-        """The job holding the guard carries no ``if:``, ``continue-on-error`` or ``needs:``.
+    def test_workflow_guard_step_declares_only_the_keys_it_needs(self) -> None:
+        """The guard step declares a name and a command, and nothing else.
+
+        The two pins above forbid the two step keys with a named retirement
+        each. Every other key in GitHub Actions' step schema is unforbidden, and
+        one of them — ``env:`` — is a measured retirement: a
+        ``PYTEST_ADDOPTS=--collect-only`` reaching the guard's process makes
+        pytest report a collection count, evaluate no assertion and exit 0.
+        Asserting the key set instead closes that key together with the ones
+        nobody has enumerated, so an addition here has to be argued for rather
+        than merged.
+        """
+        assert GUARD_STEP_KEYS, "the pinned step-key set is empty, which would admit any step at all"
+        steps = _guard_job_steps()
+        guard = steps[_guard_step_index(steps)]
+        declared = frozenset(str(key) for key in guard)
+        assert declared == GUARD_STEP_KEYS, (
+            f"{WORKFLOW_PATH} step {GUARD_STEP_NAME!r} declares {sorted(declared)}, not "
+            f"{sorted(GUARD_STEP_KEYS)}; the guard's step runs one command unconditionally, and a key added "
+            "to it — an `env:` above all, which reaches pytest through go-task — has to be argued for here too"
+        )
+
+    def test_workflow_job_declares_only_the_keys_the_guard_needs(self) -> None:
+        """The job holding the guard declares a runner, a timeout and its steps, and nothing else.
 
         The step-level pins above are worth nothing while the job around them
         can be skipped or forgiven wholesale — one key on the job retires every
         step it holds, this guard included, and costs less to write than either
         step-level equivalent.
 
-        ``needs:`` is the third, and the one an unsequenced job exists to do
-        without. A guard sequenced behind a test job never starts when that job
-        reds, so an ordinary test failure suppresses the one signal meant to
-        survive it.
+        Asserted as the key set rather than as the absence of three named keys.
+        Those three are checked afterwards, for the message: each has a
+        specific retirement worth naming. But the set is what closes the class,
+        and it closes members no list here enumerates — a ``strategy:``
+        resolving to an empty matrix, which runs the job zero times, and an
+        ``env:``, which reaches pytest by the route measured above.
+
+        ``needs:`` is the one an unsequenced job exists to do without. A guard
+        sequenced behind a test job never starts when that job reds, so an
+        ordinary test failure suppresses the one signal meant to survive it.
         """
-        assert GUARD_JOB_FORBIDDEN_KEYS, "the forbidden job-key list is empty, which leaves this check vacuous"
+        assert GUARD_JOB_KEYS, "the pinned job-key set is empty, which would admit any job at all"
+        assert GUARD_JOB_FORBIDDEN_KEYS, "the forbidden job-key list is empty, which leaves the check below vacuous"
         job = _guard_job()
+        declared = frozenset(str(key) for key in job)
+        assert declared == GUARD_JOB_KEYS, (
+            f"{WORKFLOW_PATH} job {GUARD_JOB} declares {sorted(declared)}, not {sorted(GUARD_JOB_KEYS)}; the "
+            "guard holds a job of its own precisely so that its wiring is this short — a key added here can "
+            "skip it, forgive it, sequence it, run it zero times or hand it an environment, and has to be "
+            "argued for rather than merged"
+        )
         gates = [key for key in GUARD_JOB_FORBIDDEN_KEYS if key in job]
         assert not gates, (
             f"{WORKFLOW_PATH} job {GUARD_JOB} carries {gates}; the guard runs on every pull request only "
             "while the job carrying it starts unconditionally, and counts only while that job's conclusion "
             "follows from it"
+        )
+
+    def test_workflow_declares_no_ambient_environment(self) -> None:
+        """The workflow hands the guard's job no environment from above it.
+
+        GitHub Actions defines a top-level ``env:`` as a map of variables
+        available to the steps of all jobs in the workflow, so one declared
+        there reaches the guard's step whatever the job and the step themselves
+        declare — two levels above the step-key pin and one above the job-key
+        pin, both of which would stay green.
+
+        What it buys is measured: a ``PYTEST_ADDOPTS=--collect-only`` present in
+        the environment ``task test:routing`` inherits reaches pytest through
+        go-task, and the run then prints a collection count in place of any pass
+        or fail count, evaluates no assertion and exits 0.
+        """
+        workflow = _load_yaml_mapping(WORKFLOW_PATH)
+        assert AMBIENT_ENV_KEY not in workflow, (
+            f"{WORKFLOW_PATH} declares a top-level `{AMBIENT_ENV_KEY}: {workflow[AMBIENT_ENV_KEY]}`; that "
+            "reaches every step of every job in the file, the guard's included, and a PYTEST_ADDOPTS in it "
+            "retires the guard while the job- and step-level pins above stay green"
+        )
+
+    def test_workflow_guard_job_runs_only_the_actions_it_needs(self) -> None:
+        """Every step of the guard's job that runs an action runs the pinned one.
+
+        The scan that rules out a second test run in this job reads ``run:``
+        text, so it is blind to the ``uses:`` axis by construction — a step
+        starting a test run through a composite action matches none of its
+        patterns, and ``ci.github-actions.md`` §1 actively pushes this file
+        towards composite steps. This pins the other axis: which action each
+        step that runs one may run.
+
+        The checkout is the reason it is a whitelist rather than a scan. It is
+        the job's unnamed first step, and no other assertion in this class reads
+        it, so without this pin its ``uses:`` is the one slot in the job nothing
+        constrains — and whatever is named there runs ahead of every other step
+        in a job the guard depends on.
+        """
+        assert GUARD_JOB_STEP_ACTIONS, "no step actions are pinned, which leaves this check vacuous"
+        found: list[tuple[str | None, str]] = []
+        for step in _guard_job_steps():
+            if "uses" not in step:
+                continue
+            name = step.get("name")
+            found.append((name if isinstance(name, str) else None, str(step["uses"])))
+        declared = sorted((name for name, _ in found), key=str)
+        assert declared == sorted(GUARD_JOB_STEP_ACTIONS, key=str), (
+            f"{WORKFLOW_PATH} job {GUARD_JOB} runs actions at steps {declared}, while "
+            f"{sorted(GUARD_JOB_STEP_ACTIONS, key=str)} are pinned; a step that starts running one is "
+            "invisible to the `run:` scan below, and one that stops is no longer pinned to anything"
+        )
+        wrong = sorted(
+            f"{name!r} uses {uses!r}, not {GUARD_JOB_STEP_ACTIONS[name]!r}"
+            for name, uses in found
+            if not uses.startswith(GUARD_JOB_STEP_ACTIONS[name])
+        )
+        assert not wrong, (
+            f"{WORKFLOW_PATH} job {GUARD_JOB}: " + "; ".join(wrong) + " — the guard's job holds only the "
+            "steps it needs, and each of them is pinned to the action it needs rather than to running one"
         )
 
     def test_workflow_bounds_the_guard_job(self) -> None:
@@ -1559,8 +1939,18 @@ class TestGuardWiring:
         ``branches-ignore`` narrows by base branch. The step-level and job-level
         pins above sit underneath all of them and would still pass.
 
-        ``branches`` is not among them: the workflow scopes its triggers to
-        ``main``, which is the branch the guard reports into.
+        ``branches`` cannot be forbidden the way those four are — it is
+        declared, and it is what scopes the run to the branch the guard reports
+        into — so it is closed by its value instead: wherever one of the two
+        events carrying the guard's claim declares it, ``main`` has to be among
+        the branches it names. Editing that one word to a branch that does not
+        exist stops the workflow on every pull request into ``main``, which is
+        the whole population the guard claims to cover, and every other pin in
+        this class stays green through it.
+
+        An absent ``branches`` is not asserted into existence: dropping it
+        widens the trigger to pull requests into every branch, which is a
+        superset of what is claimed rather than a narrowing of it.
 
         The ``pull_request`` trigger is asserted first because without it the
         filter check has no subject: a workflow that no longer runs on pull
@@ -1568,6 +1958,7 @@ class TestGuardWiring:
         only in the negative.
         """
         assert FORBIDDEN_TRIGGER_FILTER_KEYS, "the forbidden-filter list is empty, which leaves this check vacuous"
+        assert BASE_BRANCH_SCOPED_EVENTS, "no events are base-branch scoped, which leaves the value check below vacuous"
         workflow = _load_yaml_mapping(WORKFLOW_PATH)
         triggers = workflow.get(WORKFLOW_TRIGGER_KEY)
         assert isinstance(triggers, dict) and triggers, (
@@ -1587,6 +1978,20 @@ class TestGuardWiring:
         assert not filtered, (
             f"{WORKFLOW_PATH} filters its triggers by {filtered}; a path filter skips the whole run for a "
             "diff it does not list, so the guard would stop reporting on the changes it exists to report on"
+        )
+        misscoped: list[str] = []
+        for event in BASE_BRANCH_SCOPED_EVENTS:
+            settings = triggers.get(event)
+            if not isinstance(settings, dict) or GUARD_TRIGGER_BRANCH_KEY not in settings:
+                continue
+            declared = settings[GUARD_TRIGGER_BRANCH_KEY]
+            branches = [declared] if isinstance(declared, str) else declared
+            if not isinstance(branches, list) or GUARD_TRIGGER_BASE_BRANCH not in branches:
+                misscoped.append(f"{event}.{GUARD_TRIGGER_BRANCH_KEY} is {declared!r}")
+        assert not misscoped, (
+            f"{WORKFLOW_PATH}: " + "; ".join(misscoped) + f", which does not name {GUARD_TRIGGER_BASE_BRANCH!r}; "
+            "a branch filter that omits the branch the guard reports into stops the whole workflow on every "
+            "pull request into it, and every step- and job-level pin above stays green while it does"
         )
 
     def test_workflow_uploads_the_junit_the_target_writes(self) -> None:
@@ -1691,13 +2096,28 @@ class TestGuardWiring:
         """Every copy of a toolchain install step pins the same version and checksum.
 
         Both install steps are duplicated across jobs, and ``Install Task``
-        across files as well. Each copy carries a comment instructing the author
-        to keep the version and the checksum in sync with the others, which is
-        an instruction with no mechanism of its own: a copy left on an older
-        version, or on a checksum that stops matching the artifact it names,
-        fails the job it sits in rather than the one that drifted away from it.
+        across files as well. A copy left on an older version, or on a checksum
+        that stops matching the artifact it names, fails the job it sits in
+        rather than the one that drifted away from it.
+
+        Some copies carry a comment telling the author to keep the pair in sync
+        with the others and some carry none, so that instruction is not what
+        this stands on. It stands on the values: every copy installs the same
+        artifact and verifies it against the same checksum, which makes two
+        copies disagreeing a drift whichever one moved and whether or not either
+        is commented.
+
+        The files are globbed rather than listed, so a workflow added later is
+        compared too; the workflow the guard runs in is asserted to be among
+        them, because a rename that took it out of the glob would leave the
+        parity check running over the files that are left.
         """
         assert TOOLCHAIN_SCAN_PATHS, "no workflow files are scanned, which leaves this check vacuous"
+        assert WORKFLOW_PATH in TOOLCHAIN_SCAN_PATHS, (
+            f"{WORKFLOW_PATH} is not among the globbed workflows {list(TOOLCHAIN_SCAN_PATHS)}; the guard's own "
+            f"workflow has to be scanned, so either it moved out of {WORKFLOW_DIR}/ or it took a suffix outside "
+            f"{list(WORKFLOW_SUFFIXES)}"
+        )
         assert TOOLCHAIN_STEP_PINS, "no toolchain steps are pinned, which leaves this check vacuous"
         for name, keys in TOOLCHAIN_STEP_PINS:
             found = _named_steps(name)
@@ -1717,7 +2137,8 @@ class TestGuardWiring:
                 assert len(sites) == 1, (
                     f"step {name!r} pins {key} to {len(sites)} different values: "
                     + "; ".join(f"{value!r} in {where}" for value, where in sorted(sites.items()))
-                    + " — the step's own comment says to keep these in sync, and nothing else checks it"
+                    + " — every copy fetches the same artifact and checks it against the same checksum, and "
+                    "nothing but this compares one copy's values against another's"
                 )
 
     def test_routing_target_runs_host_side_under_the_venv(self) -> None:
@@ -1828,39 +2249,102 @@ class TestGuardWiring:
         )
 
     def test_every_aggregate_running_the_guard_carries_the_ratchets(self) -> None:
-        """No aggregate runs the guard without being pinned by the assertions above.
+        """No aggregate anywhere in the taskfiles runs the guard without being pinned above.
 
         The site list is a whitelist, so it can go stale in the direction that
         matters: an aggregate that starts running the guard and is not added to
         it gets neither the position ratchet nor the deps ratchet, and a comment
-        restating the argument beside it enforces nothing. The aggregates are
-        therefore discovered from the taskfiles and compared against the pins
-        rather than taken from them.
+        restating the argument beside it enforces nothing.
+
+        Two axes have to be discovered for that comparison to mean anything, and
+        a whitelist on either one moves the hole rather than closing it. The
+        *files* are globbed, so an aggregate in a third taskfile is compared
+        instead of never being opened. The *shapes* are read through
+        ``_runs_task``, so a ``deps:`` entry — which go-task completes before
+        ``cmds[0]`` — a shell command invoking ``task``, or a target written in
+        go-task's string or list shorthand all count as running the guard, where
+        a scan for a ``cmds:`` mapping carrying ``task:`` sees none of them.
+
+        Every file is checked against every pinned entry name, not only against
+        the one its own site names: the root file refers to the guard as
+        ``test:routing`` and the included file as ``routing``, and a shell
+        command in either file spells it the way the root does.
+
+        Known limits: a taskfile outside ``AGGREGATE_SCAN_PATHS``; a reference
+        built from a variable; and a name that is neither pinned entry, such as
+        an alias. Those are named rather than claimed closed — the comparison is
+        over what this discovery can see.
         """
         assert AGGREGATE_SITES, "no aggregate sites are pinned, which leaves the ratchets above running on nothing"
+        assert AGGREGATE_SCAN_PATHS, "no taskfiles are scanned, which leaves this discovery reading nothing"
+        unscanned = sorted({site.taskfile for site in AGGREGATE_SITES} - set(AGGREGATE_SCAN_PATHS))
+        assert not unscanned, (
+            f"AGGREGATE_SITES pins aggregates in {unscanned}, which the glob {list(AGGREGATE_SCAN_PATHS)} does "
+            f"not reach; a pinned taskfile outside the scan is compared against nothing, so repoint it under "
+            f"{TASKFILE_DIR}/ or add its location to the glob"
+        )
         pinned: dict[tuple[str, str], set[str]] = {}
         for site in AGGREGATE_SITES:
             pinned.setdefault((site.taskfile, site.entry), set()).add(site.aggregate)
-        for (taskfile, entry), expected in sorted(pinned.items()):
-            declared = {
-                str(name)
-                for name, target in _declared_tasks(taskfile).items()
-                if any(isinstance(item, dict) and item.get("task") == entry for item in _command_entries(target))
-            }
-            assert declared == expected, (
-                f"{taskfile} aggregates running {entry!r} are {sorted(declared)}, while AGGREGATE_SITES pins "
-                f"{sorted(expected)}; an aggregate running the guard without the position and deps ratchets "
-                "above can demote or drop it with nothing here to notice — add it to AGGREGATE_SITES"
+        entries = sorted({site.entry for site in AGGREGATE_SITES})
+        for taskfile in AGGREGATE_SCAN_PATHS:
+            tasks = _declared_tasks(taskfile)
+            for entry in entries:
+                expected = pinned.get((taskfile, entry), set())
+                declared = {str(name) for name, target in tasks.items() if _runs_task(target, entry)}
+                assert declared == expected, (
+                    f"{taskfile} targets running {entry!r} are {sorted(declared)}, while AGGREGATE_SITES pins "
+                    f"{sorted(expected)}; a target running the guard without the position and deps ratchets "
+                    "above can demote or drop it with nothing here to notice — add it to AGGREGATE_SITES"
+                )
+
+    def test_wiring_taskfiles_declare_no_ambient_environment(self) -> None:
+        """Neither wiring taskfile hands the guard an environment from the file level.
+
+        The forbidden-key scan below reads the routing target and its command
+        mappings. A file-level ``env:`` sits above both, declared once for every
+        target the file holds, so a ``PYTEST_ADDOPTS`` written there retires the
+        guard with that scan green. The retirement is measured: a
+        ``PYTEST_ADDOPTS=--collect-only`` in the environment the guard's command
+        inherits makes pytest print a collection count in place of any pass or
+        fail count, evaluate no assertion and exit 0. That a file-level ``env:``
+        is one of the ways to put it there is inferred from it being the same
+        mechanism one scope out from the target-level key, which was measured.
+
+        Whitelisted by key rather than forbidden, because ``taskfiles/test.yml``
+        legitimately declares one. The two sets are read straight off the two
+        files and are a single key wide between them, so a key added to either
+        has to be argued for rather than merged. ``dotenv:`` takes no whitelist
+        of that kind — it names a file whose keys appear nowhere in the taskfile
+        — so it is forbidden outright at this level.
+        """
+        assert TASKFILE_ENV_KEYS, "no taskfile environments are pinned, which leaves this check vacuous"
+        for relative, allowed in sorted(TASKFILE_ENV_KEYS.items()):
+            document = _load_yaml_mapping(relative)
+            environment = document.get(AMBIENT_ENV_KEY, {})
+            assert isinstance(environment, dict), (
+                f"{relative} declares a file-level `{AMBIENT_ENV_KEY}:` that did not parse as a mapping "
+                f"({environment!r}), so the keys it exports to every target cannot be read off it"
+            )
+            declared = frozenset(str(key) for key in environment)
+            assert declared == allowed, (
+                f"{relative} declares file-level environment {sorted(declared)}, not {sorted(allowed)}; every "
+                "target in the file runs with it, the guard included, and a PYTEST_ADDOPTS among them retires "
+                "the guard with the target-level scan below still green"
+            )
+            assert AMBIENT_DOTENV_KEY not in document, (
+                f"{relative} declares a file-level `{AMBIENT_DOTENV_KEY}: {document[AMBIENT_DOTENV_KEY]}`; the "
+                "keys it loads are named in that file rather than in this one, so no whitelist here can say "
+                "what it exports to the guard's command"
             )
 
     def test_routing_target_carries_no_container_or_tolerance_tokens(self) -> None:
         """The target neither reaches for a container nor tolerates a non-zero exit.
 
         A drift guard rather than an adversarial boundary — the boundary is the
-        permission surface plus review. What it catches is the accidental
-        reintroduction of the container path this target was deliberately moved
-        off, and the or-true suffix an implementer reaches for when the guard
-        reds.
+        permission surface plus review. What it catches is a container path
+        introduced into a target that runs host-side under the venv, and the
+        or-true suffix an implementer reaches for when the guard reds.
 
         Read through ``_command_texts``, not off the string commands. A scan
         over the strings alone drops every mapping entry — the same fail-open
@@ -1883,12 +2367,13 @@ class TestGuardWiring:
         )
 
     def test_routing_target_can_be_neither_skipped_nor_forgiven(self) -> None:
-        """The target declares none of the keys measured to retire it in place.
+        """The target declares none of the keys this module lists as retiring it in place.
 
         A measured set rather than a closed one: "none of the keys that retire
-        it" is a claim about every key in go-task's target schema, and this list
-        is what has been driven and observed, so it is worded as that and not as
-        closure.
+        it" would be a claim about every key in go-task's target schema, and
+        this list is what has been driven and observed instead. Five of the six
+        are measured end to end; ``dotenv`` is measured only as far as the
+        delivery, as below.
 
         Each retires the guard without touching a command, so the command scan
         above sees none of them. ``ignore_error`` reports success for a target

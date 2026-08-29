@@ -207,10 +207,17 @@ ANNOUNCE_PREFIX = "Running pytest (Docker) with "
 #: run reports nothing at all.
 TRACKED_PATHS_TIMEOUT_SECONDS = 60
 
+#: Liveness ceiling on one router run. Well above the per-run cost rather than
+#: close to it: this is not a performance assertion, it is what stops a router
+#: that wedges from stalling the walk that calls it several hundred times.
+#: Named rather than written inline at the call, like the listing ceiling
+#: above, so the value can be read and cited without opening ``run_router``.
+ROUTER_TIMEOUT_SECONDS = 180
+
 #: Container-detection expressions the routing-coverage guard and the fixtures
-#: it consumes must not carry. Both routers route ``tests/ci/`` into
-#: ``pytest-cli``, and they reach it on a pull request changing a non-test
-#: module under ``tests/helpers/`` or a test module under ``tests/ci/``, so a
+#: it consumes must not carry. Both routers run their announced targets in
+#: ``pytest-cli``, and they reach the guard module on a pull request changing a
+#: non-test module under ``tests/helpers/`` or the guard module itself, so a
 #: skip keyed on one of these would silence the guard in the containerised
 #: channel. The list lives here rather than beside the scan that reads it: a
 #: module scanning its own source for a literal it also declares always matches
@@ -413,7 +420,7 @@ def run_router(
         env=env,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=ROUTER_TIMEOUT_SECONDS,
     )
 
 
