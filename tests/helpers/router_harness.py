@@ -69,6 +69,7 @@ HELPER_MODULES: tuple[str, ...] = (
     "tests/helpers/runners.py",
     "tests/helpers/router_harness.py",
     "tests/helpers/lint_router_harness.py",
+    "tests/helpers/router_coverage_registry.py",
     "tests/helpers/aws_env.py",
 )
 
@@ -316,8 +317,8 @@ exit 0
 
 RouteFn = Callable[..., subprocess.CompletedProcess[str]]
 
-#: Builds a ``RouteFn`` over a fresh workspace whose stub set and security-gate
-#: shadow the caller chooses.
+#: Builds a ``RouteFn`` over a fresh workspace whose security-gate shadow the
+#: caller chooses.
 RouteVariantFn = Callable[..., RouteFn]
 
 #: Executables a router workspace shadows on PATH, and the stub body each gets.
@@ -348,7 +349,6 @@ def build_router_workspace(
     root: Path,
     event_name: str,
     *,
-    stubs: Sequence[tuple[str, str]] = ROUTER_PATH_STUBS,
     shadow_security_gate: bool = True,
 ) -> RouterWorkspace:
     """
@@ -371,7 +371,6 @@ def build_router_workspace(
     Args:
         root: Directory to build under.
         event_name: Value to pin into ``GITHUB_EVENT_NAME`` on every run.
-        stubs: ``(executable name, script body)`` pairs to shadow on PATH.
         shadow_security_gate: Whether to place the security-gate stub.
 
     Returns:
@@ -380,7 +379,7 @@ def build_router_workspace(
     """
     bin_dir = root / "bin"
     bin_dir.mkdir(parents=True)
-    for name, body in stubs:
+    for name, body in ROUTER_PATH_STUBS:
         stub = bin_dir / name
         stub.write_text(body, encoding="utf-8")
         stub.chmod(0o755)

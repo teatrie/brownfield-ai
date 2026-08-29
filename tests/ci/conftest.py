@@ -109,7 +109,7 @@ def route(tmp_path: Path) -> RouteFn:
 @pytest.fixture(scope="session")
 def route_variant(tmp_path_factory: pytest.TempPathFactory) -> router_harness.RouteVariantFn:
     """
-    Build route callables over workspaces whose stubs and gate shadow are chosen.
+    Build route callables over workspaces whose gate shadow is chosen.
 
     Each variant gets its own directory, and the factory is session-scoped, so a
     caller can hold one variant across a whole run instead of paying a fresh
@@ -124,19 +124,14 @@ def route_variant(tmp_path_factory: pytest.TempPathFactory) -> router_harness.Ro
         tmp_path_factory: pytest-provided session-scoped directory factory.
 
     Returns:
-        Callable taking keyword-only ``shadow_security_gate`` and ``stubs``, and
-        returning a route callable shaped like the ``route`` fixture's.
+        Callable taking keyword-only ``shadow_security_gate``, and returning a
+        route callable shaped like the ``route`` fixture's.
     """
 
-    def _variant(
-        *,
-        shadow_security_gate: bool = True,
-        stubs: Sequence[tuple[str, str]] = router_harness.ROUTER_PATH_STUBS,
-    ) -> RouteFn:
+    def _variant(*, shadow_security_gate: bool = True) -> RouteFn:
         space = router_harness.build_router_workspace(
             tmp_path_factory.mktemp("router-workspace"),
             PINNED_EVENT_NAME,
-            stubs=stubs,
             shadow_security_gate=shadow_security_gate,
         )
 

@@ -24,10 +24,18 @@ case, read from an ``atexit`` handler — which stands on how many cases ran
 rather than on what the run was started with, so a narrowing that stops the
 walk ends the process non-zero however it was delivered and whatever it was
 spelled.
+
+The floor's cost is unconditional: *any* run of this module that reaches fewer
+cases than the walk holds ends at ``UNRUN_WALK_EXIT``, whatever narrowed it and
+whether or not it was deliberate. A ``-k``, an ``-x`` or a ``--lf`` against
+this module ends there, and so does
+``task test:scripts -- <pytest arguments>``, whose command threads them and
+names ``tests/ci/``. ``task test:routing`` runs the whole module.
 """
 
 import atexit
 import configparser
+import io
 import os
 import re
 import subprocess
@@ -198,10 +206,12 @@ assert_no_deselecting_option_is_in_effect(
 )
 
 #: The only router target this guard covers, and the three it leaves alone for
-#: two different reasons. ``brownfield_ai`` and ``skills`` reach an un-stubbed
-#: ``ci/resolve_downstream_tests.py``, and the ``skills`` leg runs
-#: ``.venv/bin/pytest`` directly as well, so a walk over either would run them
-#: once per tracked path. ``dashboard`` reaches only ``task`` and
+#: three different reasons. ``brownfield_ai`` reaches an un-stubbed
+#: ``python ci/resolve_downstream_tests.py``, so a walk over it would spawn an
+#: interpreter once per tracked path. ``skills`` reaches ``run_pytest_venv``,
+#: which exits 1 on ``[ ! -f .venv/bin/pytest ]`` — and the synthetic workspace
+#: holds no venv — so a walk over it would report a router defect rather than a
+#: routing decision. ``dashboard`` reaches only ``task`` and
 #: ``docker compose``, both of which the router workspace shadows, so cost is
 #: not what excludes it: its branch delegates rather than announcing, printing
 #: no ``ANNOUNCE_PREFIX`` line for this walk to read a target off, so every path
@@ -478,7 +488,7 @@ GUARD_JOB_STEP_NAMES: tuple[str | None, ...] = (
 
 #: The job's own aggregate liveness ceiling, and the largest value that counts
 #: as one. The guard bounds each router call and each collection probe
-#: individually; a wedge anywhere outside those two ceilings is bounded only by
+#: individually; a wedge anywhere outside those ceilings is bounded only by
 #: the job's, and absent that by GitHub's 360-minute default. Asserted as a
 #: bound rather than as an exact value, so raising it within reason is not a
 #: test edit.
@@ -553,6 +563,10 @@ def _workflow_scan_paths() -> tuple[str, ...]:
 #: cache-key check reads the same set, for the same reason: a cache keyed on
 #: fewer than every requirements file serves a stale one in whichever job keys
 #: it that way, and which file that job sits in is not the property.
+#: Measured membership: the glob resolves to ``.github/workflows/ci.yml`` and
+#: ``.github/workflows/test.yml``, and to nothing else. Recorded rather than
+#: pinned — a workflow added later is meant to be compared, and a pin over the
+#: set would red on the addition instead of reading it.
 WORKFLOW_SCAN_PATHS: tuple[str, ...] = _workflow_scan_paths()
 
 #: Step names whose pinned toolchain values must agree across every copy, and
@@ -775,6 +789,9 @@ def _aggregate_scan_paths() -> tuple[str, ...]:
 
 
 #: Every taskfile the aggregate discovery reads.
+#: Measured membership: the root taskfile plus the sixteen files under
+#: ``taskfiles/``, every one of them ``*.yml``. Recorded rather than pinned, for
+#: the reason ``WORKFLOW_SCAN_PATHS`` records its own.
 AGGREGATE_SCAN_PATHS: tuple[str, ...] = _aggregate_scan_paths()
 
 #: The command a target runs to reach another target through a shell rather
@@ -1219,19 +1236,32 @@ def exit_when_the_walk_did_not_run() -> None:
     Registered with ``atexit`` at import, so it is reached however the run ends,
     including one that evaluated no assertion at all and would otherwise exit 0.
 
-    ``os._exit`` rather than a raised ``SystemExit``: measured, an exception
-    raised out of an exit handler is reported as an ignored one and discarded,
-    leaving the status pytest already chose in place. The streams are flushed
+    What it observes is the count, and only the count — never a cause. A
+    narrowing is one way to leave the count short; a collection error in a
+    sibling ``tests/ci/`` module is another, since pytest abandons the session
+    on one; so is a failing session-scoped fixture, because the counter is
+    function-scoped and ``session_route`` is built ahead of the first case that
+    would increment it. So is ``-x`` after a genuine routing hole, and that one
+    inverts the report: the hole's own exit 1 is replaced by
+    ``UNRUN_WALK_EXIT``, which names a run that did not finish rather than the
+    hole it found. The message below therefore states the count rather than a
+    diagnosis of it.
+
+    ``os._exit`` rather than a raised ``SystemExit``: raising
+    ``SystemExit(UNRUN_WALK_EXIT)`` here instead printed
+    ``Exception ignored in atexit callback ...: SystemExit: 70`` and the process
+    still exited 1. So the exception is reported rather than swallowed, and it
+    does not replace the status already chosen — which is the whole property
+    ``os._exit`` is here for. The streams are flushed
     first because ``os._exit`` skips that, and pytest's own output is
     block-buffered whenever it is piped.
     """
     if EXECUTED_ROUTER_CASES >= len(ROUTER_CASES):
         return
     print(
-        f"{GUARD_MODULE}: {EXECUTED_ROUTER_CASES} of {len(ROUTER_CASES)} routing cases ran. Something narrowed "
-        "this run — a selection flag, a deselection, a collection-only option, an ini, a conftest hook — so the "
-        "guard reached none of the tracked paths it did not run a case for, and a run that asserted nothing "
-        "about them MUST NOT report success. `task test:routing` runs the whole module.",
+        f"{GUARD_MODULE}: {EXECUTED_ROUTER_CASES} of {len(ROUTER_CASES)} routing cases ran, so the guard "
+        "reached none of the tracked paths it did not run a case for, and a run that asserted nothing about "
+        "them MUST NOT report success. `task test:routing` runs the whole module.",
         file=sys.stderr,
     )
     sys.stdout.flush()
@@ -1747,6 +1777,63 @@ class TestOutOfCaseAssertionsAreCalled:
         )
 
 
+class TestExecutionFloorThreshold:
+    """The floor's predicate fires one case short of the walk, and not at it.
+
+    The children above pin the floor's *call site*, and both of them drive the
+    count to zero: ``-k`` selects a case whose name appears in no walk id, and
+    ``--collect-only`` runs nothing. So ``0 >= len(ROUTER_CASES)`` is the only
+    state they observe, and a predicate rewritten to forgive any count above
+    zero — ``> 0`` — passes every one of them while permitting a run that
+    executed a single walk case. That is the deselect-all-but-one narrowing,
+    whose exit-0 behaviour is why the floor stands on the whole walk rather
+    than on any run at all.
+
+    Driven on the module global rather than in a third child process: the
+    threshold is a property of the predicate, and a child would pay a second
+    import of this module and a second ``_build_router_cases()`` to observe one
+    comparison.
+    """
+
+    def test_the_floor_fires_one_case_short_of_the_walk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """One case short of the walk ends the process; the whole walk does not."""
+        module = sys.modules.get(__name__)
+        assert module is not None and getattr(module, "exit_when_the_walk_did_not_run", None) is exit_when_the_walk_did_not_run, (
+            f"{__name__} does not resolve in sys.modules to the module holding the floor, so the count "
+            "patched below is not the one the floor reads and this pin would assert nothing"
+        )
+        assert len(ROUTER_CASES) > 1, (
+            f"the walk holds {len(ROUTER_CASES)} case(s), so one short of it is zero — the same state the "
+            "children above already drive, which leaves the threshold untested here"
+        )
+        statuses: list[int] = []
+        rendered = io.StringIO()
+        monkeypatch.setattr(os, "_exit", statuses.append)
+        # The floor's own stream, held rather than let through: the containerised
+        # scripts suite runs with capture off, where the real thing would print an
+        # unrun-walk banner in the middle of a passing run.
+        monkeypatch.setattr(sys, "stderr", rendered)
+
+        monkeypatch.setattr(module, "EXECUTED_ROUTER_CASES", len(ROUTER_CASES) - 1)
+        exit_when_the_walk_did_not_run()
+        assert statuses == [UNRUN_WALK_EXIT], (
+            f"with {len(ROUTER_CASES) - 1} of {len(ROUTER_CASES)} cases run the floor ended the process with "
+            f"{statuses}, not [{UNRUN_WALK_EXIT}]; a threshold anywhere below the whole walk forgives the "
+            "narrowing that leaves one case running"
+        )
+        assert f"{len(ROUTER_CASES) - 1} of {len(ROUTER_CASES)}" in rendered.getvalue(), (
+            f"the floor ended the process without naming the count it stands on, printing "
+            f"{rendered.getvalue()!r}; the status alone says a run was short, not by how much"
+        )
+
+        monkeypatch.setattr(module, "EXECUTED_ROUTER_CASES", len(ROUTER_CASES))
+        exit_when_the_walk_did_not_run()
+        assert statuses == [UNRUN_WALK_EXIT], (
+            f"with the whole walk run the floor ended the process with {statuses[1:]}; a threshold above the "
+            "walk reds every complete run, this one included"
+        )
+
+
 def _load_yaml_mapping(relative: str) -> dict[object, object]:
     """Parse one wiring file, failing loudly rather than yielding an empty mapping to read nothing off.
 
@@ -2132,25 +2219,33 @@ class TestGuardWiring:
     are left to review. Widening the router filters so that a wiring diff routes
     here is out of scope.
 
-    Five vectors are known, named and left open, all of one shape. The name
-    ``task test:routing`` resolves through a binding nothing here pins — a root
-    target keyed on it, or a repointed ``includes:`` — so the pins below can be
-    read off a target the CI step no longer reaches. ``deps: [setup]`` is pinned
-    by name, while ``setup`` is what builds the ``.venv/bin/pytest`` this guard
-    runs under and its commands are unpinned, as are the ``run:`` bodies of the
-    two install steps that put ``task`` and ``uv`` on the runner.
-    ``tests/conftest.py`` configures every session this module runs in and no
-    pin here reads it; the execution floor observes the effect of one hook it
-    can carry, not the file. And the ``route`` fixture's parity assertion covers
-    the two workspace builders' stub sets rather than the rest of their layout. Every
-    one of them takes an edit to the guard's own wiring, and every file such an
-    edit lands in — the taskfiles, the workflow, ``pytest.ini``,
-    ``tests/conftest.py`` — routes to no test in either router, so the only job
-    that would run on the diff is the one being retired. Closing them from
-    inside the process the edit controls is circular rather than impossible;
-    the control that does cover them is human review of that diff plus branch
-    protection on the branch it lands in, and nothing here is claimed to close
-    them.
+    Four vectors are known, named and left open. The name ``task test:routing``
+    resolves through a binding nothing here pins — a root target keyed on it, or
+    a repointed ``includes:`` — so the pins below can be read off a target the
+    CI step no longer reaches. ``deps: [setup]`` is pinned by name, while
+    ``setup`` is what builds the ``.venv/bin/pytest`` this guard runs under and
+    its commands are unpinned, as are the ``run:`` bodies of the two install
+    steps that put ``task`` and ``uv`` on the runner. ``tests/conftest.py``
+    configures every session this module runs in and no pin here reads it; the
+    execution floor observes the effect of one hook it can carry, not the file.
+    Every one of them takes an edit to the guard's own wiring, and every file
+    such an edit lands in routes to no test in either router, so the only job
+    that would run on the diff is the one being retired. The control that does
+    cover them is human review of that diff plus branch protection on the branch
+    it lands in, and nothing here is claimed to close them.
+    A measured set, not a closed one: these are the vectors review has surfaced,
+    and nothing here enumerates the ones it has not.
+
+    The ``route`` fixture's parity assertion is not among them. It covers the
+    two workspace builders' stub sets rather than the rest of their layout, but
+    that fixture is not on this guard's execution path — the walk routes through
+    ``session_route``, which the ``route_variant`` factory builds on
+    ``build_router_workspace`` — and a divergence in the rest of the layout reds
+    ``test_registry_is_exactly_the_measured_hole_set`` in one direction or the
+    other: a lost ``tests/`` symlink makes every ``[ -f ]`` probe miss, so pairs
+    become holes that are not exempt, while a gained file makes a registered
+    hole stop being one. It is an incomplete parity assertion, not a retirement
+    vector.
     """
 
     def test_workflow_runs_the_guard_unconditionally(self) -> None:
@@ -2207,19 +2302,8 @@ class TestGuardWiring:
         """Every step of the guard's job declares exactly the keys pinned for it.
 
         The pin above closes the guard step's key space and leaves the other
-        five open. The checkout is the one that matters most. It is unnamed, it
-        is pinned to an action by ``GUARD_JOB_STEP_ACTIONS``, and a ``with:``
-        under that same action chooses which tree the job checks out — so a
-        ``ref:`` naming the pull request's base commit leaves the step-name
-        list, the action whitelist and the ``run:``-only invocation scan all
-        satisfied while the walk reads a tree the change is not in. The guard
-        then finds no un-routed source on exactly the pull request that adds
-        one. ``repository:`` and ``sparse-checkout:`` are the same key one value
-        across.
-
-        Closing all six by equality also closes ``working-directory:``,
-        ``shell:`` and a per-step ``continue-on-error:`` on the five steps that
-        admitted them.
+        five open. Which key on which step matters, and what closing all six by
+        equality buys, is recorded at ``GUARD_JOB_STEP_KEYS``.
         """
         assert GUARD_JOB_STEP_KEYS, "no step key sets are pinned, which leaves this check vacuous"
         found: list[tuple[str | None, frozenset[str]]] = []
@@ -2291,22 +2375,11 @@ class TestGuardWiring:
         """The workflow declares a name, a trigger, permissions and jobs, and nothing else.
 
         The job- and step-key pins are worth nothing while the file around them
-        can hand every job a shell, an environment or a concurrency group. This
-        level reaches every step of every job, so one key here sits above both
-        of those pins and both stay green through it — and the schema at this
-        level is not one a reader can enumerate, so it is closed by equality
-        rather than by naming the keys somebody thought of.
-
-        ``defaults`` is the member with a named retirement besides ``env``:
-        GitHub Actions applies a workflow-level ``defaults.run.shell`` to every
-        ``run:`` step of every job, so a shell that prints its script rather
-        than executing it leaves the guard's step declared, its command
-        byte-identical and every pin in this class green while nothing runs.
-        That is read off the workflow schema rather than measured here.
-
-        The trigger key is compared as the boolean ``WORKFLOW_TRIGGER_KEY``
-        rather than as the string ``on``, for the reason recorded beside that
-        constant.
+        can hand every job a shell, an environment or a concurrency group. Why
+        this level is closed by equality, and which of its members carry a named
+        retirement, is recorded at ``WORKFLOW_KEYS``; the trigger key is
+        compared as the boolean ``WORKFLOW_TRIGGER_KEY`` rather than as the
+        string ``on``, for the reason recorded beside that constant.
         """
         assert WORKFLOW_KEYS, "the pinned workflow-key set is empty, which would admit any workflow at all"
         workflow = _load_yaml_mapping(WORKFLOW_PATH)
@@ -2377,11 +2450,8 @@ class TestGuardWiring:
     def test_workflow_bounds_the_guard_job(self) -> None:
         """The job declares its own ``timeout-minutes``, under a ceiling well below the default.
 
-        The guard bounds each router call and each collection probe
-        individually; a wedge anywhere outside those two ceilings is bounded by
-        the job's, and without one by GitHub's 360-minute default. Asserted as a
-        bound rather than as an exact value, so raising it within reason is not
-        a test edit.
+        What the ceiling stands between, and why it is asserted as a bound
+        rather than as an exact value, is recorded at ``GUARD_JOB_TIMEOUT_KEY``.
         """
         job = _guard_job()
         timeout = job.get(GUARD_JOB_TIMEOUT_KEY)
@@ -2464,12 +2534,8 @@ class TestGuardWiring:
         declared, and it is what scopes the run to the branch the guard reports
         into — so it is closed by its value instead: wherever one of the two
         events carrying the guard's claim declares it, the list has to be
-        exactly the pinned one. Equality rather than membership, because
-        ``[main, '!main']`` names ``main`` and matches nothing: GitHub's filter
-        admits ``!``-prefixed exclusions and applies them in the order written.
-        Editing that one word to a branch that does not exist has the same
-        effect for one character less, and every other pin in this class stays
-        green through either.
+        exactly the pinned one. Why equality rather than membership is recorded
+        at ``GUARD_TRIGGER_BRANCHES``.
 
         An absent ``branches`` is not asserted into existence: dropping it
         widens the trigger to pull requests into every branch, which is a

@@ -209,6 +209,16 @@ bypasses: a path that never invokes this script bypasses Layer 2, and a path
 that overrides the entrypoint (`docker compose run --entrypoint ""`) bypasses
 Layer 3. Neither implies the other — an unmodified entrypoint does not
 establish that the host-side gate ran.
+
+The sites where they co-occur are `test:dashboard` and the dashboard branches
+of both `ci/test_staged.sh` and `ci/test_changed.sh`: all three override the
+entrypoint and none of the three invokes this script. They come apart at
+`task run:adhoc`, the sanctioned ad-hoc Python path of
+[CLAUDE.md](../CLAUDE.md) §11 — it enters through the unmodified `python-cli`
+entrypoint, so Layer 3 still validates the gate artifact, but it never invokes
+this script: it writes the artifact itself and substitutes three inline
+`preconditions:` for the path and flag validation the script would have done.
+
 Separately, a target that runs pytest host-side is outside
 this gate's scope by construction — the gate exists to validate paths and flags
 before Python runs *in a container* — with one carve-out:

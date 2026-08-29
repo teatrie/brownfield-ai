@@ -123,6 +123,11 @@ tasks:
 
   scripts:
     desc: Run tests for scripts (Docker-based)
+    # The pytest command below names tests/ci/, so it collects the
+    # routing-coverage guard. A {{.CLI_ARGS}} filter that narrows collection
+    # (-k, --lf) leaves that guard's walk short of its cases and it ends the
+    # whole run at exit 70.
+    # Pass --ignore=tests/ci/test_router_coverage.py alongside the filter.
     cmds:
       - ./docker/shared/python-security-gate.sh test tests/ci/ tests/scripts/ tests/hooks/ tests/helpers/
       - defer: rm -f tmp/.python-gate-pass

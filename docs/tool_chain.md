@@ -30,7 +30,22 @@ containerised scripts suite runs it again whenever the routers fan `tests/ci/`
 into that suite. Each run spawns a router subprocess per tracked path under a
 router prefix, for both routers at the `scripts` router target — the only
 target the guard covers — plus a nested collection subprocess per distinct
-announced target.
+announced target, plus three child `pytest` processes that re-import the guard
+module — two of them far enough to rebuild its case list — to pin the two
+assertions that run outside a case body. That is an accounting of what the
+module spawns, not a wall-clock budget.
+A second cost is a false red. The guard's execution floor ends the process with
+exit **70** whenever fewer cases run than the walk holds, and it observes the
+count rather than the cause — so *any* partial selection of the module trips
+it, deliberate ones included. `task test:routing` threads no arguments and is
+unaffected. `task test:scripts` does thread `{{.CLI_ARGS}}`, into a pytest
+command that names `tests/ci/` first, so `task test:scripts -- -k <expr>`,
+`-- -x` and `-- --lf` each end at 70 rather than at pytest's own status. This
+is local-developer only: CI passes no such arguments on the scripts leg. The
+two ways out are to run the module whole, or to keep it out of collection
+entirely (`-- --ignore=tests/ci/test_router_coverage.py`), which registers no
+floor because nothing imports the module — and which is the filtered run
+declaring that it covered no routing.
 Install locally via `task setup:env` (offers brew install on
 macOS) or manually: `brew install uv` (macOS) / `pip install uv`
 (any platform) / `curl -LsSf https://astral.sh/uv/install.sh | sh`
