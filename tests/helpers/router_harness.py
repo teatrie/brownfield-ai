@@ -153,11 +153,23 @@ KNOWN_ROUTER_DIVERGENCE: frozenset[str] = frozenset({"docker/agent-cli/"})
 #: holds them, so this pin fails only when an alternative is *dropped* and the
 #: dot-prefixed alternatives are left to the per-alternative coverage check.
 #: Adding a ``.claude/`` path here would collapse the two into one check.
-#: ``tests/agents/`` is listed because it is the one prefix no behavioural
-#: assertion below reaches: the parity contract is driven through
-#: ``.claude/agents/``, and nothing routes a path under ``tests/agents/``
-#: itself, so dropping that prefix from a router would un-route every test
-#: under it with no other check to notice.
+#: ``tests/agents/`` and ``tests/scripts/`` are listed because no behavioural
+#: assertion below feeds a path under either *into* a router. Each appears
+#: below only on the expected-target side of an assertion — ``tests/agents/``
+#: as what a changed ``.claude/agents/`` definition routes to,
+#: ``tests/scripts/`` as REVIEWER_TEMPLATE_SUITE, DERIVED_TARGET_SUITE, and the
+#: name the ``docker/shared/`` case derives — and a target names no prefix the
+#: filter has to admit. The sibling test prefixes are not in that position:
+#: ``tests/hooks/``, ``tests/helpers/`` and ``tests/lint/`` each have a case
+#: routing a file under them to itself. So for these two this pin is the only
+#: check that the filter still admits the prefix, and dropping it from both
+#: routers leaves a change to a file underneath routing nothing at all — with
+#: the prefix-parity check agreeing, because both dropped it. The list is
+#: maintained rather than derived: a prefix added to the routers later can sit
+#: in the same position and carry nothing here. The ``tests/scripts/`` entry is
+#: spelled out rather than reused from REVIEWER_TEMPLATE_SUITE: bound to that
+#: constant, a repoint of the suite out of ``tests/scripts/`` would carry the
+#: sentinel out of the prefix with it and drop the cover silently.
 UNIVERSE_SENTINELS: tuple[str, ...] = (
     "ci/test_staged.sh",
     "ci/test_changed.sh",
@@ -166,6 +178,7 @@ UNIVERSE_SENTINELS: tuple[str, ...] = (
     "tests/helpers/router_harness.py",
     "docker/shared/python-security-gate.sh",
     "tests/agents/test_variant_parity.py",
+    "tests/scripts/test_reviewer_templates.py",
 )
 
 #: A tracked path that *contains* a ``CHANGED_SCRIPTS`` alternative without

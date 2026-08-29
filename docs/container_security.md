@@ -158,7 +158,7 @@ of single-line `grep` patterns.
 Blocks `docker [compose] run/exec` targeting the Python execution containers,
 any `--entrypoint` override on those containers, legacy `docker-compose`
 access, and interactive shell tasks (`task sh:python-cli`, `task sh:pytest-cli`).
-It also blocks direct `pytest` and `py.test` invocations on the host (the legitimate paths are the host-side targets enumerated in [CLAUDE.md](../CLAUDE.md) §11 — `task test:skills`, `task test:container-integration` and `task test:routing` — each of which invokes pytest internally and is invisible to the hook).
+It also blocks direct `pytest` and `py.test` invocations on the host. A `task` target that invokes pytest internally is invisible to the hook; [CLAUDE.md](../CLAUDE.md) §11 covers which targets run host-side and why.
 
 **Docker build hook**
 ([`.claude/hooks/block-docker-build-escape.sh`](../.claude/hooks/block-docker-build-escape.sh)):

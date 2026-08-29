@@ -23,11 +23,7 @@ carrying no `needs:`, no `if:` and no `continue-on-error:` — which checks out,
 installs Task and uv, restores the uv cache, runs `task test:routing`, and
 uploads `tmp/junit_routing.xml`. The
 separation is the point: neither the guard's signal nor the other suites' can
-suppress the other, in either direction. The local aggregates buy no such
-separation: `task test:all` and the root `task test` both run the guard as
-their first command, so masking there is one-directional by design and
-accepted — in exchange a red guard, or a failure of the host-`uv` `setup` dep
-it carries, stops the aggregate before the suites behind it run. The cost is
+suppress the other, in either direction. The cost is
 that the walk is paid
 twice: `routing-coverage` runs it host-side on every pull request, and the
 containerised scripts suite runs it again whenever the routers fan `tests/ci/`

@@ -16,16 +16,17 @@ that collects nothing is as silent a hole as no target at all. Collection is
 therefore probed per distinct announced target — once, over the deduplicated
 union, rather than once per path.
 
-One assertion here runs at **import** rather than inside a case, and leads the
-module for that reason. Every other wiring pin here reads one file: a workflow
-key, a taskfile key, a command token. Those enumerate the *channels* a pytest
-option can arrive by, and that set is open — a runner environment file, a pytest
-ini, the ambient shell. What such an option does on arrival is one thing, and
-small: a pytest run that evaluates no assertion and exits 0. Asserting the
-arriving effect covers the channels nobody has enumerated, and import is where
-it has to run, because under a deselecting option no case body runs at all.
+Two assertions here run outside a case body, because a run narrowed enough to
+retire this guard reaches no case body at all. One runs at **import** and leads
+the module: it screens the channels it reads for the two pinned deselecting
+spellings. The other is an execution floor — one counter incremented per walk
+case, read from an ``atexit`` handler — which stands on how many cases ran
+rather than on what the run was started with, so a narrowing that stops the
+walk ends the process non-zero however it was delivered and whatever it was
+spelled.
 """
 
+import atexit
 import configparser
 import os
 import re
@@ -74,12 +75,9 @@ PYTEST_INI_ADDOPTS = "--import-mode=importlib"
 #: any pass or fail count, evaluating no assertion, and still exiting 0 — which
 #: is the one exit the routing target forgives — and the short spelling pytest
 #: documents for it, which was not separately measured.
-#: Held to that shape deliberately. ``-k``, ``-m`` and ``--deselect`` narrow a
-#: run too, but deselecting every case leaves pytest with nothing to run, and a
-#: run that ran nothing exits 5, which the target does not forgive. That last
-#: step is read off pytest's exit-code contract rather than measured here; what
-#: is measured is that the exit-0 shape survives, which is why the list is held
-#: to it.
+#: Two spellings of one option rather than a list of the ways a run can be
+#: narrowed: a run narrowed some other way is caught by the execution floor at
+#: ``EXECUTED_ROUTER_CASES``, whenever the narrowing stops the walk.
 DESELECTING_OPTIONS: tuple[str, ...] = ("--collect-only", "--co")
 
 #: Every argument ``collect_target`` passes ahead of the target it probes. The
@@ -91,7 +89,8 @@ DESELECTING_OPTIONS: tuple[str, ...] = ("--collect-only", "--co")
 #: Known limit: a routing command spelled as exactly this vector followed by one
 #: target is exempted by the same comparison. Every one of its five tokens is
 #: outside ``ROUTING_COMMAND_TOKENS`` — but that whitelist is read by a case
-#: body, which is precisely what a deselecting run never reaches.
+#: body, which is precisely what a deselecting run never reaches. The execution
+#: floor is exempted on this same comparison, so it does not close this either.
 PROBE_ARGUMENTS: tuple[str, ...] = ("--collect-only", "-q", "-p", "no:cacheprovider", "--")
 
 
@@ -150,7 +149,7 @@ def assert_no_deselecting_option_is_in_effect(
     ini_addopts: str,
 ) -> None:
     """
-    Assert nothing has started this pytest run with an option that retires it.
+    Assert no pinned deselecting option arrives by the channels this scan reads.
 
     Called at import, which is where it has to run: under a deselecting option
     no case body executes, so an assertion inside one is unreachable exactly
@@ -161,10 +160,13 @@ def assert_no_deselecting_option_is_in_effect(
     ``env:`` at any of its scopes, ``pytest.ini`` or the ambient shell put it
     there.
 
-    The environment variable is required to be empty rather than screened for
-    the pinned options. The wiring pins below leave it declared nowhere that
-    reaches the guard's process, so a value arriving at runtime is unaccounted
-    for by construction, and equality closes an option nobody enumerated.
+    Every channel is screened for the pinned options rather than required to be
+    empty, the ambient variable included. That the variable is empty is pinned
+    too, but in a case body: at import an unrelated value — a ``-q``, a
+    ``--no-header`` — would raise during collection, and pytest abandons the
+    session on a collection error, so it would take every other module in
+    ``tests/ci/`` with it. The same split holds for ``pytest.ini``, one channel
+    across.
 
     Args:
         arguments: Pytest arguments, the interpreter and script dropped.
@@ -172,16 +174,12 @@ def assert_no_deselecting_option_is_in_effect(
         ini_addopts: The ``addopts`` value ``pytest.ini`` declares.
 
     Raises:
-        AssertionError: If the variable carries anything at all, or if a pinned
-            deselecting option arrives by the ini or the command line.
+        AssertionError: If a pinned deselecting option arrives by the ambient
+            variable, the ini or the command line.
     """
-    assert not ambient.strip(), (
-        f"${AMBIENT_ADDOPTS_ENV_VAR} is {ambient!r}; it hands pytest arguments the routing target's command "
-        "never names, so a deselecting option in it retires this guard with every wiring pin below still "
-        "green — unset it, and if CI set it, take out the line that did"
-    )
     assert DESELECTING_OPTIONS, "the deselecting-option list is empty, which leaves the scan below vacuous"
     delivered = {
+        f"${AMBIENT_ADDOPTS_ENV_VAR}": _deselecting_options(ambient.split()),
         PYTEST_INI_PATH: _deselecting_options(ini_addopts.split()),
         "the command line": () if _is_collection_probe(arguments) else _deselecting_options(arguments),
     }
@@ -242,24 +240,6 @@ STUB_COLLECT_TARGET = "tests/ci/"
 #: moved guard fails rather than leaving a scan reading nothing.
 GUARD_MODULE = "tests/ci/test_router_coverage.py"
 
-#: Sources the container-detection scan reads. This module is in the list
-#: because a skip inside it is the repair an in-container red invites;
-#: ``tests/ci/conftest.py`` is in it because it supplies this module's route
-#: fixtures and takes additions freely.
-#: Known limit: ``tests/helpers/router_harness.py`` is on this module's
-#: import-time path as well — it supplies ``tracked_paths``,
-#: ``changed_scripts_universe``, ``build_router_workspace`` and ``make_route`` —
-#: and it is NOT scanned. It declares ``CONTAINER_DETECTION_TOKENS`` itself, so
-#: a scan over it would match on the declaration whatever the surrounding code
-#: did. Closing that needs the token list to live in a module neither the guard
-#: nor the harness declares; until it moves there, a module-level
-#: container-keyed skip in the harness silences the guard with nothing here to
-#: notice.
-CONTAINER_DETECTION_SCAN_SOURCES: tuple[str, ...] = (
-    GUARD_MODULE,
-    "tests/ci/conftest.py",
-)
-
 #: A registered hole whose *shape* is pinned as well as its existence. An
 #: exemption records only that a pair reaches no test, so a router that started
 #: announcing some other wrong target would keep the hole set balanced and pass.
@@ -283,6 +263,27 @@ PINNED_OUTCOME_TARGETS: dict[str, tuple[str, ...]] = {
 #: a moved registry cannot leave the fan-out measured for a stale path.
 REGISTRY_MODULE = "tests/helpers/router_coverage_registry.py"
 REGISTRY_FANOUT_TARGETS: frozenset[str] = frozenset({"tests/ci/", "tests/helpers/"})
+
+#: Sources the container-detection scan reads. This module is in the list
+#: because a skip inside it is the repair an in-container red invites;
+#: ``tests/ci/conftest.py`` is in it because it supplies this module's route
+#: fixtures and takes additions freely; the registry is in it because it is
+#: this guard's data and declares none of the tokens, so scanning it costs
+#: nothing.
+#: Known limit: ``tests/helpers/router_harness.py`` is on this module's
+#: import-time path as well — it supplies ``tracked_paths``,
+#: ``changed_scripts_universe``, ``build_router_workspace`` and ``make_route`` —
+#: and it is NOT scanned. It declares ``CONTAINER_DETECTION_TOKENS`` itself, so
+#: a scan over it would match on the declaration whatever the surrounding code
+#: did. Closing that needs the token list to live in a module neither the guard
+#: nor the harness declares; until it moves there, a module-level
+#: container-keyed skip in the harness silences the guard with nothing here to
+#: notice.
+CONTAINER_DETECTION_SCAN_SOURCES: tuple[str, ...] = (
+    GUARD_MODULE,
+    REGISTRY_MODULE,
+    "tests/ci/conftest.py",
+)
 
 #: Paths the contamination check routes through both a reused and a fresh
 #: workspace. One per branch shape that yields a target: a whole-suite fan-out,
@@ -831,8 +832,7 @@ FORBIDDEN_ROUTING_PATTERNS: tuple[re.Pattern[str], ...] = (
 #: ``-k``, ``-m``, ``--deselect``, ``--collect-only`` — retires the guard
 #: exactly as ``{{.CLI_ARGS}}`` does and matches none of them. Listing what the
 #: target *does* run inverts that, since the set is six tokens and closed by
-#: inspection while the set of ways to retire a pytest run is not. Any addition
-#: reds and has to be argued for.
+#: inspection while the set of ways to retire a pytest run is not.
 ROUTING_COMMAND_TOKENS: frozenset[str] = frozenset({
     ROUTING_TASK_RUNNER,
     GUARD_MODULE,
@@ -1185,6 +1185,67 @@ def _build_router_cases() -> tuple[tuple[RouterCase, ...], tuple[str, ...]]:
 
 ROUTER_CASES, ROUTER_CASE_IDS = _build_router_cases()
 
+#: Walk cases this process has executed. The import-time scan above reads what
+#: the run was *started with*, over three channels and two spellings; this reads
+#: what it *ran*. A run narrowed by a channel that scan does not read, or by an
+#: option spelled some other way, leaves the count short of the walk.
+EXECUTED_ROUTER_CASES = 0
+
+#: The parametrize argument carrying a walk case. Read off the executing node so
+#: that the count is over the walk rather than over every test in the module:
+#: what the floor asserts is that every tracked path was routed, and the wiring
+#: pins are a different claim, held by their own cases.
+ROUTER_CASE_PARAM = "case"
+
+#: Status the floor ends the process with. Outside pytest's own exit codes, so a
+#: run ending this way cannot be read as one of pytest's verdicts — including
+#: the no-tests-collected 5 that both routers forgive.
+UNRUN_WALK_EXIT = 70
+
+
+@pytest.fixture(autouse=True)
+def _count_executed_router_case(request: pytest.FixtureRequest) -> None:
+    """Record that one walk case is about to run, for the floor below to read."""
+    global EXECUTED_ROUTER_CASES
+    callspec = getattr(request.node, "callspec", None)
+    if callspec is not None and isinstance(callspec.params.get(ROUTER_CASE_PARAM), RouterCase):
+        EXECUTED_ROUTER_CASES += 1
+
+
+def exit_when_the_walk_did_not_run() -> None:
+    """
+    End the process non-zero when fewer cases ran than the walk holds.
+
+    Registered with ``atexit`` at import, so it is reached however the run ends,
+    including one that evaluated no assertion at all and would otherwise exit 0.
+
+    ``os._exit`` rather than a raised ``SystemExit``: measured, an exception
+    raised out of an exit handler is reported as an ignored one and discarded,
+    leaving the status pytest already chose in place. The streams are flushed
+    first because ``os._exit`` skips that, and pytest's own output is
+    block-buffered whenever it is piped.
+    """
+    if EXECUTED_ROUTER_CASES >= len(ROUTER_CASES):
+        return
+    print(
+        f"{GUARD_MODULE}: {EXECUTED_ROUTER_CASES} of {len(ROUTER_CASES)} routing cases ran. Something narrowed "
+        "this run — a selection flag, a deselection, a collection-only option, an ini, a conftest hook — so the "
+        "guard reached none of the tracked paths it did not run a case for, and a run that asserted nothing "
+        "about them MUST NOT report success. `task test:routing` runs the whole module.",
+        file=sys.stderr,
+    )
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(UNRUN_WALK_EXIT)
+
+
+# Registered except in this module's own collection probe, which runs
+# `--collect-only` against an announced target and so runs no case by design.
+# The exemption is the argument vector the probe is built from, which is what
+# the import-time scan above exempts, rather than a second channel of its own.
+if not _is_collection_probe(sys.argv[1:]):
+    atexit.register(exit_when_the_walk_did_not_run)
+
 
 @pytest.fixture(scope="session")
 def exempt_pairs() -> frozenset[tuple[str, str]]:
@@ -1362,7 +1423,7 @@ class TestRouterCoverage:
             )
 
     def test_guard_sources_carry_no_container_detection(self) -> None:
-        """Neither this module nor the conftest behind it branches on being containerised.
+        """No scanned source behind this guard branches on being containerised.
 
         Both routers run their announced targets in ``pytest-cli``, and they
         reach this module on a pull request changing a non-test module under
@@ -1569,6 +1630,120 @@ class TestProbeHealthChecks:
         assert probed == [STUB_COLLECT_TARGET], (
             f"the collector ran {len(probed)} times for one target; a failed probe has to be held the way a "
             "successful one is, or one wedging target is paid for once per case that names it"
+        )
+
+
+#: The case a narrowed child run below selects. Held against the method itself
+#: rather than written as a literal: a selection matching nothing narrows the
+#: child to zero cases, which trips the floor too, so a stale literal would keep
+#: the pin passing while it stopped selecting the thing it names. This one
+#: routes nothing and probes nothing, which is why it is the one chosen.
+NARROWING_SELECTION = TestRouterCoverage.test_registry_names_only_tracked_paths.__name__
+
+#: Two ways of narrowing a run that the import-time scan does not see. ``-k`` is
+#: outside ``DESELECTING_OPTIONS`` and leaves one case selected. ``-o``
+#: overrides the ini and is prepended to the arguments as two tokens, of which
+#: neither is a pinned spelling. ``-p no:cacheprovider`` keeps a child from writing a cache
+#: directory into a mount whose only writable subtree is ``tmp/``, and ``--``
+#: stops the module path being read as a flag.
+NARROWING_ARGUMENTS: tuple[tuple[str, ...], ...] = (
+    ("-p", "no:cacheprovider", "-k", NARROWING_SELECTION, "--"),
+    ("-p", "no:cacheprovider", "-o", f"addopts={DESELECTING_OPTIONS[0]}", "--"),
+)
+
+#: Ids for the cases driving those arguments. Written out rather than rendered
+#: from the arguments themselves: ``-k`` matches a substring of the whole node
+#: id, parametrize ids included, so an id echoing the selection is matched by
+#: it — the child would then select the case that spawned it, spawn a child of
+#: its own, and every generation would run to ``COLLECT_TIMEOUT_SECONDS`` before
+#: the one above it gave up.
+NARROWING_IDS: tuple[str, ...] = ("selection-flag", "ini-override")
+
+
+def run_this_module(arguments: Sequence[str], *, ambient: str) -> subprocess.CompletedProcess[str]:
+    """
+    Run this module in a child pytest process, with the ambient variable pinned.
+
+    ``sys.executable -m pytest`` for the reason ``collect_target`` uses it: the
+    repository is bind-mounted into ``pytest-cli``, so ``.venv/bin/pytest``
+    exists in the container but its shebang names a host interpreter.
+
+    The ambient variable is written rather than inherited, so a child's outcome
+    turns on the arguments under test rather than on what the parent's shell
+    happened to export.
+
+    Args:
+        arguments: Pytest arguments to run ahead of this module's path.
+        ambient: Value to give the ambient add-options variable in the child.
+
+    Returns:
+        The completed child process, unclassified.
+
+    Raises:
+        subprocess.TimeoutExpired: If the child has not returned within
+            ``COLLECT_TIMEOUT_SECONDS``.
+    """
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", *arguments, GUARD_MODULE],
+        cwd=REPO_ROOT,
+        env={**os.environ, AMBIENT_ADDOPTS_ENV_VAR: ambient},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=COLLECT_TIMEOUT_SECONDS,
+    )
+
+
+class TestOutOfCaseAssertionsAreCalled:
+    """The two assertions that run outside a case body are wired into this module.
+
+    Their bodies are exercised elsewhere — the scan on synthetic arguments, the
+    floor on the count it reads — and neither exercise reads a *call site*.
+    Deleting the module-level call to the scan, or the ``atexit`` registration
+    below it, leaves every other case in this module green — which is the shape
+    of an assertion that has stopped existing without anything failing.
+
+    Each case here runs a child pytest process that can only red because the
+    call site it pins is still there.
+    """
+
+    @pytest.mark.parametrize("arguments", NARROWING_ARGUMENTS, ids=NARROWING_IDS)
+    def test_a_narrowed_run_of_this_module_ends_on_the_floor(self, arguments: tuple[str, ...]) -> None:
+        """A child reaching fewer cases than the walk holds exits ``UNRUN_WALK_EXIT``.
+
+        Both narrowings leave pytest reporting success on its own account: one
+        runs a single cheap case and one collects without running anything, and
+        the import-time scan reads neither as a deselecting option. The status
+        asserted is ``UNRUN_WALK_EXIT``, so the pin cannot be satisfied by the
+        child failing for some other reason.
+        """
+        result = run_this_module(arguments, ambient="")
+        assert result.returncode == UNRUN_WALK_EXIT, (
+            f"a child running {list(arguments)} against {GUARD_MODULE} exited {result.returncode}, not "
+            f"{UNRUN_WALK_EXIT}; the run reached fewer cases than the walk holds, so the floor registered at "
+            f"import has to end it non-zero\n--- stdout ---\n{result.stdout}--- stderr ---\n{result.stderr}"
+        )
+
+    def test_importing_this_module_runs_the_import_time_scan(self) -> None:
+        """A child importing this module with a poisoned ambient variable reds at collection.
+
+        The child is handed the collection probe's own argument vector, so the
+        command line is exempt and no case runs — which leaves the floor
+        unregistered and the ambient channel the only thing that can red it. A
+        child that collects cleanly means the module-level call is gone.
+        """
+        result = run_this_module(PROBE_ARGUMENTS, ambient=DESELECTING_OPTIONS[0])
+        rendered = result.stdout + result.stderr
+        assert result.returncode not in (COLLECTED_EXIT, NO_TESTS_COLLECTED_EXIT), (
+            f"a child collecting {GUARD_MODULE} with ${AMBIENT_ADDOPTS_ENV_VAR}={DESELECTING_OPTIONS[0]!r} "
+            f"exited {result.returncode}; importing this module has to run the scan, not merely define it\n{rendered}"
+        )
+        assert result.returncode != UNRUN_WALK_EXIT, (
+            f"the child exited on the floor rather than on the import-time scan; the probe's own argument "
+            f"vector is exempt from the floor, so this pin would stop reading the scan at all\n{rendered}"
+        )
+        assert AMBIENT_ADDOPTS_ENV_VAR in rendered, (
+            f"the child failed without naming ${AMBIENT_ADDOPTS_ENV_VAR}, so what red it is not the channel this pin reads\n{rendered}"
         )
 
 
@@ -1956,6 +2131,26 @@ class TestGuardWiring:
     red these assertions produce, a target repointed at another module. Those
     are left to review. Widening the router filters so that a wiring diff routes
     here is out of scope.
+
+    Five vectors are known, named and left open, all of one shape. The name
+    ``task test:routing`` resolves through a binding nothing here pins — a root
+    target keyed on it, or a repointed ``includes:`` — so the pins below can be
+    read off a target the CI step no longer reaches. ``deps: [setup]`` is pinned
+    by name, while ``setup`` is what builds the ``.venv/bin/pytest`` this guard
+    runs under and its commands are unpinned, as are the ``run:`` bodies of the
+    two install steps that put ``task`` and ``uv`` on the runner.
+    ``tests/conftest.py`` configures every session this module runs in and no
+    pin here reads it; the execution floor observes the effect of one hook it
+    can carry, not the file. And the ``route`` fixture's parity assertion covers
+    the two workspace builders' stub sets rather than the rest of their layout. Every
+    one of them takes an edit to the guard's own wiring, and every file such an
+    edit lands in — the taskfiles, the workflow, ``pytest.ini``,
+    ``tests/conftest.py`` — routes to no test in either router, so the only job
+    that would run on the diff is the one being retired. Closing them from
+    inside the process the edit controls is circular rather than impossible;
+    the control that does cover them is human review of that diff plus branch
+    protection on the branch it lands in, and nothing here is claimed to close
+    them.
     """
 
     def test_workflow_runs_the_guard_unconditionally(self) -> None:
@@ -1993,10 +2188,8 @@ class TestGuardWiring:
 
         The two pins above forbid the two step keys with a named retirement
         each. Every other key in GitHub Actions' step schema is unforbidden, and
-        one of them — ``env:`` — is a measured retirement: a
-        ``PYTEST_ADDOPTS=--collect-only`` reaching the guard's process makes
-        pytest report a collection count, evaluate no assertion and exit 0.
-        Asserting the key set instead closes that key together with the ones
+        one of them — ``env:`` — is a measured retirement; see
+        ``GUARD_STEP_KEYS``. Asserting the key set instead closes that key together with the ones
         nobody has enumerated, so an addition here has to be argued for rather
         than merged.
         """
@@ -2133,10 +2326,7 @@ class TestGuardWiring:
         declare — two levels above the step-key pin and one above the job-key
         pin, both of which would stay green.
 
-        What it buys is measured: a ``PYTEST_ADDOPTS=--collect-only`` present in
-        the environment ``task test:routing`` inherits reaches pytest through
-        go-task, and the run then prints a collection count in place of any pass
-        or fail count, evaluates no assertion and exits 0.
+        What it buys is measured; see ``GUARD_STEP_KEYS``.
         """
         workflow = _load_yaml_mapping(WORKFLOW_PATH)
         assert AMBIENT_ENV_KEY not in workflow, (
@@ -2508,9 +2698,7 @@ class TestGuardWiring:
         forbidden-expression scan below closes the shapes somebody named, and a
         deselecting pytest flag written as a plain literal — ``-k``, ``-m``,
         ``--deselect``, ``--collect-only`` — retires the guard exactly as
-        ``{{.CLI_ARGS}}`` does while matching none of them. Listing what the
-        command may contain closes that direction whatever the next flag is
-        called.
+        ``{{.CLI_ARGS}}`` does while matching none of them.
 
         ``deps:`` is pinned as the whole list, for the reason the aggregate's
         is: go-task completes every dependency before ``cmds[0]``, so a target
@@ -2655,12 +2843,9 @@ class TestGuardWiring:
         The forbidden-key scan below reads the routing target and its command
         mappings. A file-level ``env:`` sits above both, declared once for every
         target the file holds, so a ``PYTEST_ADDOPTS`` written there retires the
-        guard with that scan green. The retirement is measured: a
-        ``PYTEST_ADDOPTS=--collect-only`` in the environment the guard's command
-        inherits makes pytest print a collection count in place of any pass or
-        fail count, evaluate no assertion and exit 0. That a file-level ``env:``
-        is one of the ways to put it there is inferred from it being the same
-        mechanism one scope out from the target-level key, which was measured.
+        guard with that scan green. The retirement is measured, and that a
+        file-level ``env:`` is one of the ways to deliver it is inferred rather
+        than observed; see ``TASKFILE_ENV``.
 
         Whitelisted rather than forbidden, because ``taskfiles/test.yml``
         legitimately declares one. Keys *and values*: a key admitted with its
@@ -2723,6 +2908,28 @@ class TestGuardWiring:
             "else here reads it"
         )
 
+    def test_the_ambient_add_options_variable_hands_the_guard_nothing(self) -> None:
+        """``$PYTEST_ADDOPTS`` is empty in the process this guard runs in.
+
+        The variable reaches every channel the guard runs in and no key pin in
+        this class reads it, so equality is what closes the options nobody
+        enumerated: the wiring pins leave it declared nowhere that reaches the
+        guard's process, and a value arriving at runtime is unaccounted for by
+        construction.
+
+        Asserted in a case body rather than at import, the way the ini value is:
+        a variable set for an unrelated reason should red as a failing case
+        naming it, not as a collection error that takes every module in the
+        directory with it. The import-time scan reads the same value for the
+        narrower deselecting set.
+        """
+        ambient = os.environ.get(AMBIENT_ADDOPTS_ENV_VAR, "")
+        assert not ambient.strip(), (
+            f"${AMBIENT_ADDOPTS_ENV_VAR} is {ambient!r}; it hands pytest arguments the routing target's command "
+            "never names, so a deselecting option in it retires this guard with every wiring pin in this class "
+            "still green — unset it, and if CI set it, take out the line that did"
+        )
+
     def test_the_import_time_scan_fires_on_every_channel_it_reads(self) -> None:
         """The scan run at import raises on each channel, and lets its own probe through.
 
@@ -2732,10 +2939,17 @@ class TestGuardWiring:
         three channels and its one exemption, and the exemption is the half that
         has to be re-checked — widening it is how the scan would be defeated
         without any assertion here being deleted.
+
+        The ambient channel is driven in both directions. It screens for the
+        pinned options rather than requiring emptiness, so an ordinary value has
+        to pass here: were it to raise, every module in ``tests/ci/`` would stop
+        collecting alongside this one, on a variable set for a reason that has
+        nothing to do with the guard.
         """
         assert DESELECTING_OPTIONS, "the deselecting-option list is empty, which leaves this check vacuous"
         deselecting = DESELECTING_OPTIONS[0]
         assert_no_deselecting_option_is_in_effect(arguments=[GUARD_MODULE, "-v"], ambient="", ini_addopts=PYTEST_INI_ADDOPTS)
+        assert_no_deselecting_option_is_in_effect(arguments=[GUARD_MODULE, "-v"], ambient="-q", ini_addopts=PYTEST_INI_ADDOPTS)
         assert_no_deselecting_option_is_in_effect(arguments=[*PROBE_ARGUMENTS, "tests/ci/"], ambient="", ini_addopts=PYTEST_INI_ADDOPTS)
         with pytest.raises(AssertionError, match=re.escape(AMBIENT_ADDOPTS_ENV_VAR)):
             assert_no_deselecting_option_is_in_effect(arguments=[GUARD_MODULE], ambient=f" {deselecting} ", ini_addopts=PYTEST_INI_ADDOPTS)
@@ -2810,24 +3024,9 @@ class TestGuardWiring:
         and ``cmd:`` live in the same mapping; requiring a plain string does,
         and closes every other per-entry key with it.
 
-        Each of the six retires the guard without touching a command, so the command scan
-        above sees none of them. ``ignore_error`` reports success for a target
-        whose pytest run failed. A satisfied ``status`` makes go-task skip the
-        target outright, which is how ``setup`` skips a venv it already built.
-        ``platforms`` limits it to hosts that match, while CI and the developers
-        running the aggregate suite are not the same platform. ``sources`` hands
-        the target to go-task's checksum comparison: measured, ``sources:``
-        alone reports the target up to date and runs nothing once its listed
-        sources stop changing, while ``sources:`` paired with ``generates:`` did
-        not reproduce that, so the retirement is the ``sources:``-alone shape
-        rather than every shape carrying the key. ``env`` is measured end to
-        end: a target carrying ``env: PYTEST_ADDOPTS: "--collect-only"`` printed
-        a collection count in place of any pass or fail count and still exited
-        0, evaluating no assertion. ``dotenv`` is measured only as a delivery
-        channel — a variable set through it reaches the ``cmds:`` shell
-        identically — and that pytest then honours it is inferred rather than
-        observed, from pytest reading ``PYTEST_ADDOPTS`` off the process
-        environment whichever key populated it.
+        Each of the six retires the guard without touching a command, so the
+        command scan above sees none of them; what each one does, and how far
+        each was measured, is recorded at ``FORBIDDEN_ROUTING_TARGET_KEYS``.
 
         The per-command scan at the end reads the entries as written, since
         ``ignore_error`` also attaches to an individual ``cmd:`` mapping. On
