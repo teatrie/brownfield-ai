@@ -539,7 +539,7 @@ For everyday requests that may not require a full multi-agent orchestration team
 
 ### Local Testing & Agent Evaluation
 
-We use Pytest with a venv-based runner for `test:scripts` and `test:skills`, and a Docker/LocalStack container for `test:brownfield_ai`. Skills are evaluated headlessly against your configured agent (Claude Code, Copilot, or Gemini).
+We use Pytest. `test:scripts` and `test:brownfield_ai` run in the `pytest-cli` Docker container; a small set of exceptions runs host-side in a local `.venv/`, listed with their reasons in [CLAUDE.md](CLAUDE.md) §11. Skills are evaluated headlessly against your configured agent (Claude Code, Copilot, or Gemini).
 **For full instructions on setting up agent credentials and running the evaluation pipeline, please see [docs/local_development.md](./docs/local_development.md).**
 
 ### Directory Structure
@@ -596,7 +596,7 @@ task lint:json     # Run jsonlint on JSON files
 
 ### Testing
 
-Tests are executed headlessly using a local `.venv/` for `test:scripts` and `test:skills`, and a Docker container (`pytest-cli`) for `test:brownfield_ai`. Run `task test:setup` once to initialize the venv before your first run. You can instruct your agent to run these for you:
+Tests are executed headlessly. Most targets — including `test:scripts` and `test:brownfield_ai` — run in the `pytest-cli` Docker container; a small set of exceptions runs host-side in a local `.venv/`, listed with their reasons in [CLAUDE.md](CLAUDE.md) §11. Run `task test:setup` once to initialize the venv before your first run. You can instruct your agent to run these for you:
 
 - *"Run the tests for the files I just changed."* (`task test:changed`)
 - *"Run the complete test suite."* (`task test`)
@@ -605,7 +605,7 @@ Tests are executed headlessly using a local `.venv/` for `test:scripts` and `tes
 Alternatively, you can run the commands manually:
 
 ```bash
-task test                  # Run all tests (skills and scripts)
+task test                  # Run all suites in the Taskfile.yml test: aggregate
 task test:changed          # Run tests only for changed files (Recommended)
 task test:skills           # Run tests for all skills
 task test:scripts          # Run tests for all python scripts

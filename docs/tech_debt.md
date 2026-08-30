@@ -53,6 +53,14 @@ Agents MUST proactively document any codebase flaws, confusing conventions, or r
 
 ---
 
+### Python security-gate token is a fixed path, so concurrent gated tasks race
+
+- **Context**: `docker/shared/python-security-gate.sh` (writes `$WORKSPACE_ROOT/tmp/.python-gate-pass` at two sites), `docker/shared/python-gate-entrypoint.sh` (`GATE_FILE="/tmp/.python-gate-pass"`), and the ~50 gated call sites across `taskfiles/ledger.yml`, `lint.yml`, `findings.yml`, `todo.yml`, `test.yml`, `chromadb.yml` and `tools.yml`.
+- **Description**: The token path is a single hardcoded constant with no per-invocation component, and every call site pairs the gate invocation with an unconditional `- defer: rm -f tmp/.python-gate-pass`. Two gated targets in flight at once — the ordinary case when one agent runs `task lint:staged` while another runs `task test:staged`, or when a `task todo:list` lands mid-suite — therefore share one token and each deletes it on completion. The container that starts after the other's `defer` exits 1 with `ERROR: Security gate artifact not found.` That message is indistinguishable from a genuine attempt to bypass the gate, which is the worst available confusion for a security control: the operator learns to treat a real bypass signal as a benign race. The cleanup being duplicated verbatim at every site rather than owned by the gate itself is what makes the invariant unenforceable — a new target can omit the `defer` and nothing catches it.
+- **Proposed Fix**: Give the token a per-invocation identity (e.g. a `mktemp` path threaded through both the `-v` mount and an env var the entrypoint reads) so concurrent runs cannot collide, and move the cleanup into a single owner instead of repeating `defer` at each site. If the fixed path must stay, at minimum distinguish "token absent" from "token deleted by a concurrent run" in the entrypoint's exit surface. Until this lands the constraint is operational only, recorded in [workflow_learnings.md](workflow_learnings.md).
+
+---
+
 ## Upstream repositories
 
 Debt discovered inside the repositories you clone under `repos/` belongs here

@@ -292,11 +292,15 @@ uses a different mechanism:
 
 ### agent-cli — `docker/agent-cli/entrypoint.sh`
 
-The `agent-cli` container uses a command allowlist entrypoint. Only three
-commands are permitted: `copilot-review`, `gemini-review`, and `preflight`.
-The entrypoint validates `--prompt-file` arguments with `realpath` to prevent
-symlink traversal outside `tmp/`. There is no gate artifact and no bypass
-variable — this is intentional since the commands are fixed.
+The `agent-cli` container uses a command allowlist entrypoint. The permitted
+commands are `copilot-review`, `gemini-review`, `codex-review`, and
+`preflight`; remaining argv is passed through to the underlying wrapper
+unchanged. The entrypoint performs no path validation — containment is
+enforced instead by
+[`scripts/agent-cli/_review-common.sh`](../scripts/agent-cli/_review-common.sh),
+which resolves `DIFF_FILE` with `realpath` and rejects anything outside `tmp/`
+or the `agent-review/` scratch directory. There is no gate artifact and no
+bypass variable — this is intentional since the commands are fixed.
 
 ### Lint container — `docker/shared/lint-gate-entrypoint.sh`
 
@@ -401,7 +405,7 @@ Protected files can be modified through three paths:
 | `pytest-cli` | `block-container-escape.sh` | `python-security-gate.sh` | `python-gate-entrypoint.sh` | `agent` user with GID 0 for `docker.sock` access; `:ro` mount + `tmp/:rw` |
 | `repo-cli` | `block-container-escape.sh` | — | `entrypoint.sh` (command allowlist + git/gh flag filtering + git env hardening) | Non-root `agent` user; no gate artifact; git/gh/sparse-clone.sh only |
 | `infra-terraform` | `block-terraform-escape.sh` | `tf-safe.sh` (via task) | sudo + chmod 0700 binary | Non-root `agent` user; no gate artifact |
-| `agent-cli` | `block-container-escape.sh` | — | `entrypoint.sh` (command allowlist + `--prompt-file` validation) | Non-root `agent` user; `:ro` mount + `tmp/:rw`; no gate artifact; no bypass variable (intentional) |
+| `agent-cli` | `block-container-escape.sh` | — | `entrypoint.sh` (command allowlist only; `DIFF_FILE` containment lives in `scripts/agent-cli/_review-common.sh`) | Non-root `agent` user; `:ro` mount + `tmp/:rw`; no gate artifact; no bypass variable (intentional) |
 | `infra-lint` | `block-container-escape.sh` | `lint-security-gate.sh` | `lint-gate-entrypoint.sh` | Non-root `agent` user; `:ro` mount (uses `/workspace`) + `tmp/:rw`; lint/fix mode split |
 | `ledger-dashboard` | `block-container-escape.sh` | -- | `entrypoint.sh` (command allowlist: uvicorn only) | Non-root `agent` user; `~/.brownfield-ai:/brownfield-ai` r/w (writes `ledger_index.db`); no bypass variable |
 
@@ -555,8 +559,8 @@ hook protection as `DATALAKE_GATE_DISABLED`.
 ### agent-cli
 
 There is no emergency bypass variable for `agent-cli`. This is intentional —
-the container runs exactly 3 predefined commands. If a different command is
-needed, a human operator must exec into the container directly.
+the container runs a fixed set of predefined commands. If a different
+command is needed, a human operator must exec into the container directly.
 
 ## Testing
 
