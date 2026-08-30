@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from helpers import router_harness
 from helpers.lint_router_harness import FAILING_TASK_ENV, TASK_STUB, LintRouteFn
 from helpers.router_harness import GIT_STUB, NOOP_STUB, REPO_ROOT, RouteFn
 
@@ -47,6 +48,19 @@ def route(tmp_path: Path) -> RouteFn:
         stub = bin_dir / name
         stub.write_text(body, encoding="utf-8")
         stub.chmod(0o755)
+
+    # Compared against what was actually written here, not against a third
+    # literal: a stub added to ROUTER_PATH_STUBS and not to the loop above
+    # would otherwise leave these routers reaching the real executable, with
+    # nothing to say so.
+    shadowed = frozenset((stub.name, stub.read_text(encoding="utf-8")) for stub in bin_dir.iterdir())
+    pinned = frozenset(router_harness.ROUTER_PATH_STUBS)
+    assert shadowed == pinned, (
+        f"shadowed here but not in helpers.router_harness.ROUTER_PATH_STUBS: {sorted(name for name, _ in shadowed - pinned)}\n"
+        f"in ROUTER_PATH_STUBS but not shadowed here: {sorted(name for name, _ in pinned - shadowed)}\n"
+        "the two workspace builders keep separate stub sets, so one that grows or changes a stub body "
+        "without the other leaves this fixture's routers running against the real executable"
+    )
 
     # The routers run against a fake workspace, not the repository. The
     # security gate is invoked by a path relative to the working directory, so
@@ -88,6 +102,58 @@ def route(tmp_path: Path) -> RouteFn:
         )
 
     return _route
+
+
+@pytest.fixture(scope="session")
+def route_variant(tmp_path_factory: pytest.TempPathFactory) -> router_harness.RouteVariantFn:
+    """
+    Build route callables over workspaces whose gate shadow is chosen.
+
+    Each variant gets its own directory, and the factory is session-scoped, so a
+    caller can hold one variant across a whole run instead of paying a fresh
+    workspace per test — the first router call against a fresh workspace costs
+    an order of magnitude more than every later call into the same one.
+
+    Withholding ``shadow_security_gate`` is the only way to make a router die
+    mid-run rather than announce nothing, which is what separates a router
+    failure from a routing hole.
+
+    Args:
+        tmp_path_factory: pytest-provided session-scoped directory factory.
+
+    Returns:
+        Callable taking keyword-only ``shadow_security_gate``, and returning a
+        route callable shaped like the ``route`` fixture's.
+    """
+
+    def _variant(*, shadow_security_gate: bool = True) -> RouteFn:
+        space = router_harness.build_router_workspace(
+            tmp_path_factory.mktemp("router-workspace"),
+            PINNED_EVENT_NAME,
+            shadow_security_gate=shadow_security_gate,
+        )
+
+        return router_harness.make_route(space)
+
+    return _variant
+
+
+@pytest.fixture(scope="session")
+def session_route(route_variant: router_harness.RouteVariantFn) -> RouteFn:
+    """
+    One route callable over one workspace, reused for the whole session.
+
+    Not the ``route`` fixture rescoped: ``route`` stays function-scoped so a test
+    that needs an untouched workspace still gets one.
+
+    Args:
+        route_variant: Factory supplying the ``tmp_path_factory``-backed
+            workspace.
+
+    Returns:
+        Callable with the same signature as the ``route`` fixture's.
+    """
+    return route_variant()
 
 
 @pytest.fixture

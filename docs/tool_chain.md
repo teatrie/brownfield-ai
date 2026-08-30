@@ -7,10 +7,48 @@
 - **aws-vault**: Used to securely manage AWS SSO credentials. We use the `task aws:auth` task wrapper and our `aws-vault-auth` agent capability to securely extract temporary tokens into a local, git-ignored file (`tmp/.aws-credentials.env`), preventing STS secrets from bleeding into the LLM context limits or persisting permanently.
 - **uv** (Optional): Astral's Rust-based Python package manager.
 Used by `task test:setup` to create the host `.venv/` with Python
-3.12 for host-run tests — primarily `test:skills:staged`, which
-cannot run in a container per [CLAUDE.md](../CLAUDE.md) §11. Only
-developers who run the test suite locally need `uv`. CI installs
-it explicitly via `.github/workflows/test.yml` (official Astral curl installer).
+3.12 for host-run tests — `test:skills`, `test:container-integration`
+and `test:routing`, the three host-side exceptions listed in
+[CLAUDE.md](../CLAUDE.md) §11. The first two cannot run in a container;
+`test:routing` is host-side by cost — a per-PR cold `pytest-cli` image build
+was rejected — and its guard module is additionally collected in-container.
+Only developers who run the test suite locally need `uv`. CI installs
+it explicitly via `.github/workflows/test.yml` (official Astral curl installer)
+and restores `~/.cache/uv` from an `actions/cache` step keyed on the three
+requirements files, so the guard does not pay a cold resolve on
+every pull request. The cached path is the uv package cache and never `.venv`
+itself: a virtualenv records absolute interpreter paths and does not survive
+relocation. In that workflow the guard has its own job, `routing-coverage` —
+carrying no `needs:`, no `if:` and no `continue-on-error:` — which checks out,
+installs Task and uv, restores the uv cache, runs `task test:routing`, and
+uploads `tmp/junit_routing.xml`. The
+separation is the point: neither the guard's signal nor the other suites' can
+suppress the other, in either direction. The cost is
+that the walk is paid
+twice: `routing-coverage` runs it host-side on every pull request, and the
+containerised scripts suite runs it again whenever the routers fan `tests/ci/`
+into that suite. Each run spawns a router subprocess per tracked path under a
+router prefix, for both routers at the `scripts` router target — the only
+target the guard covers — plus a nested collection subprocess per distinct
+announced target, plus four child `pytest` processes: three of them re-import
+the guard module — two far enough to rebuild its case list, the third dying in
+the import-time scan above that build — and the fourth pins the ambient
+variable the scan reads, failing in pytest's own argument parsing without
+importing the module at all. Those are the per-path costs and the fixed child
+processes, not a complete spawn inventory or a wall-clock budget.
+A second cost is a false red. The guard's execution floor ends the process with
+exit **70** whenever fewer cases run than the walk holds, and it observes the
+count rather than the cause — so *any* partial selection of the module trips
+it, deliberate ones included. `task test:routing` threads no arguments and is
+unaffected. `task test:scripts` does thread `{{.CLI_ARGS}}`, into a pytest
+command that names `tests/ci/` first, so a filter that narrows collection
+(`task test:scripts -- -k <expr>`, `-- --lf`) ends at 70 rather than at
+pytest's own status. This is local-developer only: CI passes no such
+arguments on the scripts leg. The
+two ways out are to run the module whole, or to keep it out of collection
+entirely (`-- --ignore=tests/ci/test_router_coverage.py`), which registers no
+floor because nothing imports the module — and which is the filtered run
+declaring that it covered no routing.
 Install locally via `task setup:env` (offers brew install on
 macOS) or manually: `brew install uv` (macOS) / `pip install uv`
 (any platform) / `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -38,9 +76,44 @@ execution in `python-cli` and `pytest-cli` containers. Layer 1: Claude Code
 PreToolUse hooks block direct Docker access. Layer 2: Host-side gate script
 (`docker/shared/python-security-gate.sh`) validates paths, flags, and
 git-tracking. Layer 3: Container entrypoint validates a time-limited gate
-artifact. All existing
-taskfile tasks (`ledger:*`, `chromadb:*`, `todo:*`, `test:*`, `lint:*`)
-route through the gate automatically. See
+artifact. Taskfile tasks that invoke
+`docker/shared/python-security-gate.sh` before entering the container route
+through the gate, and that is most of the Python container tasks. The
+exceptions are structural rather than a single target, and
+there are two independent ones: a path that never invokes
+`docker/shared/python-security-gate.sh` bypasses Layer 2, and a path that
+overrides the entrypoint bypasses Layer 3. Neither implies the other — an
+unmodified entrypoint does not establish that the host-side gate ran.
+On the `python-cli` and `pytest-cli` containers, `test:dashboard`, the
+dashboard branches of both `ci/test_staged.sh` and `ci/test_changed.sh`, and
+the `sh:python-cli` and `sh:pytest-cli` shell tasks override the entrypoint,
+and none of them invokes the host-side gate, so both bypasses co-occur there.
+The Layer 1 hook denies the two shell tasks by name, which covers agent tool
+calls but not a human at a terminal.
+The two bypasses come apart at `task run:adhoc`, the sanctioned ad-hoc Python
+path of [CLAUDE.md](../CLAUDE.md) §11: it enters through the unmodified
+`python-cli` entrypoint, so Layer 3 still validates the gate artifact, but it
+never invokes `docker/shared/python-security-gate.sh` — it writes the artifact
+itself and substitutes three inline `preconditions:` for the script's path and
+flag validation.
+The host-side targets are outside the gate's scope by construction, because
+the gate exists to validate paths and flags before Python runs *in a
+container*: `test:container-integration`
+calls it anyway, since it launches real containers; `test:skills` and
+`test:routing` do not. `test:routing` follows the `test:skills` shape —
+`.venv/bin/pytest` invoked directly — and is safe to leave ungated because
+its host-side execution takes no caller input at all: it threads no
+`{{.CLI_ARGS}}`, which `tests/ci/test_router_coverage.py` asserts, and its
+pytest argument is a fixed module literal by construction, so there is no
+agent-supplied path or flag for a gate to validate.
+That guard module is also collected in-container, since both routers fan
+`tests/ci/` into the containerised scripts suite, where it spawns nested
+collection subprocesses on router-derived paths; those inputs are repo
+content rather than agent input, and the nested subprocesses are governed by
+the container boundary rather than by the entrypoint —
+`docker/shared/python-gate-entrypoint.sh` validates the initial argv only and
+then `exec`s the command, so it does not observe processes the suite spawns
+afterwards. See
 [docs/container_security.md](container_security.md) for the full security
 model, deny rules, Docker build auditing, and contributor onboarding.
 - **CLI Invocation Discipline**: Many `task` aliases (`ledger:*`,

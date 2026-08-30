@@ -158,7 +158,7 @@ of single-line `grep` patterns.
 Blocks `docker [compose] run/exec` targeting the Python execution containers,
 any `--entrypoint` override on those containers, legacy `docker-compose`
 access, and interactive shell tasks (`task sh:python-cli`, `task sh:pytest-cli`).
-It also blocks direct `pytest` and `py.test` invocations on the host (the legitimate path is `task test:skills`, which invokes pytest internally and is invisible to the hook).
+It also blocks direct `pytest` and `py.test` invocations on the host. A `task` target that invokes pytest internally is invisible to the hook; [CLAUDE.md](../CLAUDE.md) §11 covers which targets run host-side and why.
 
 **Docker build hook**
 ([`.claude/hooks/block-docker-build-escape.sh`](../.claude/hooks/block-docker-build-escape.sh)):
@@ -201,9 +201,31 @@ The timestamp has a 120-second TTL enforced by Layer 3. The SHA-256 hash is
 included for audit trail purposes; Layer 3 does not re-verify it (command
 binding is enforced at Layer 2).
 
-All existing taskfile tasks (`ledger:*`, `chromadb:*`, `todo:*`, `test:*`,
-`lint:*`) route through this gate automatically. A `defer` cleanup step
-removes the artifact after each task completes.
+Taskfile tasks that invoke this script before entering the container route
+through the gate, and a `defer` cleanup step removes the artifact after each
+task completes. That is most of the Python container tasks, and the rule for
+the exceptions is structural rather than a list. There are two independent
+bypasses: a path that never invokes this script bypasses Layer 2, and a path
+that overrides the entrypoint bypasses Layer 3. Neither implies the other —
+an unmodified entrypoint does not establish that the host-side gate ran.
+
+On the `python-cli` and `pytest-cli` containers, sites where they co-occur
+include `test:dashboard`, the dashboard branches of both `ci/test_staged.sh` and
+`ci/test_changed.sh`, and the `sh:python-cli` and `sh:pytest-cli` shell tasks:
+each overrides the entrypoint and none invokes this script. What covers the
+two shell tasks instead is the Layer 1 hook above, which denies them by name —
+a constraint on agent tool calls, not on a human at a terminal. The two
+bypasses come apart at `task run:adhoc`, the sanctioned ad-hoc Python path of
+[CLAUDE.md](../CLAUDE.md) §11 — it enters through the unmodified `python-cli`
+entrypoint, so Layer 3 still validates the gate artifact, but it never invokes
+this script: it writes the artifact itself and substitutes three inline
+`preconditions:` for the path and flag validation the script would have done.
+
+Separately, a target that runs pytest host-side is outside
+this gate's scope by construction — the gate exists to validate paths and flags
+before Python runs *in a container* — with one carve-out:
+`test:container-integration` calls the gate anyway, because it launches real
+containers. See [CLAUDE.md](../CLAUDE.md) §11 for the host-side targets.
 
 ### Terraform container — `tf-safe.sh` via task
 
@@ -270,11 +292,15 @@ uses a different mechanism:
 
 ### agent-cli — `docker/agent-cli/entrypoint.sh`
 
-The `agent-cli` container uses a command allowlist entrypoint. Only three
-commands are permitted: `copilot-review`, `gemini-review`, and `preflight`.
-The entrypoint validates `--prompt-file` arguments with `realpath` to prevent
-symlink traversal outside `tmp/`. There is no gate artifact and no bypass
-variable — this is intentional since the commands are fixed.
+The `agent-cli` container uses a command allowlist entrypoint. The permitted
+commands are `copilot-review`, `gemini-review`, `codex-review`, and
+`preflight`; remaining argv is passed through to the underlying wrapper
+unchanged. The entrypoint performs no path validation — containment is
+enforced instead by
+[`scripts/agent-cli/_review-common.sh`](../scripts/agent-cli/_review-common.sh),
+which resolves `DIFF_FILE` with `realpath` and rejects anything outside `tmp/`
+or the `agent-review/` scratch directory. There is no gate artifact and no
+bypass variable — this is intentional since the commands are fixed.
 
 ### Lint container — `docker/shared/lint-gate-entrypoint.sh`
 
@@ -379,7 +405,7 @@ Protected files can be modified through three paths:
 | `pytest-cli` | `block-container-escape.sh` | `python-security-gate.sh` | `python-gate-entrypoint.sh` | `agent` user with GID 0 for `docker.sock` access; `:ro` mount + `tmp/:rw` |
 | `repo-cli` | `block-container-escape.sh` | — | `entrypoint.sh` (command allowlist + git/gh flag filtering + git env hardening) | Non-root `agent` user; no gate artifact; git/gh/sparse-clone.sh only |
 | `infra-terraform` | `block-terraform-escape.sh` | `tf-safe.sh` (via task) | sudo + chmod 0700 binary | Non-root `agent` user; no gate artifact |
-| `agent-cli` | `block-container-escape.sh` | — | `entrypoint.sh` (command allowlist + `--prompt-file` validation) | Non-root `agent` user; `:ro` mount + `tmp/:rw`; no gate artifact; no bypass variable (intentional) |
+| `agent-cli` | `block-container-escape.sh` | — | `entrypoint.sh` (command allowlist only; `DIFF_FILE` containment lives in `scripts/agent-cli/_review-common.sh`) | Non-root `agent` user; `:ro` mount + `tmp/:rw`; no gate artifact; no bypass variable (intentional) |
 | `infra-lint` | `block-container-escape.sh` | `lint-security-gate.sh` | `lint-gate-entrypoint.sh` | Non-root `agent` user; `:ro` mount (uses `/workspace`) + `tmp/:rw`; lint/fix mode split |
 | `ledger-dashboard` | `block-container-escape.sh` | -- | `entrypoint.sh` (command allowlist: uvicorn only) | Non-root `agent` user; `~/.brownfield-ai:/brownfield-ai` r/w (writes `ledger_index.db`); no bypass variable |
 
@@ -533,8 +559,8 @@ hook protection as `DATALAKE_GATE_DISABLED`.
 ### agent-cli
 
 There is no emergency bypass variable for `agent-cli`. This is intentional —
-the container runs exactly 3 predefined commands. If a different command is
-needed, a human operator must exec into the container directly.
+the container runs a fixed set of predefined commands. If a different
+command is needed, a human operator must exec into the container directly.
 
 ## Testing
 

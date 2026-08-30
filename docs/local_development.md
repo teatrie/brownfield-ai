@@ -276,7 +276,7 @@ section below).
 Our testing framework uses a three-stage orchestrated pipeline built on `pytest`:
 
 1. **Infrastructure Mocking**: Tests dynamically spin up a [LocalStack](https://localstack.cloud/) emulator ([tests/envs/aws/docker-compose.yml](../tests/envs/aws/docker-compose.yml)) to mock our AWS production environment.
-2. **Isolated Execution**: For `test:brownfield_ai` and `test:scripts`, we use a dedicated `pytest-cli` Docker image. This strictly isolates the test suite's dependencies (`pytest`, `pexpect`) from the production script runner (`python-cli`). For `test:skills`, a local `.venv/` is used instead because headless `claude -p` requires OAuth via the host session (see [CLAUDE.md](../CLAUDE.md) Principle 11).
+2. **Isolated Execution**: For `test:brownfield_ai` and `test:scripts`, we use a dedicated `pytest-cli` Docker image. This strictly isolates the test suite's dependencies (`pytest`, `pexpect`) from the production script runner (`python-cli`). A small set of exceptions runs host-side in a local `.venv/` instead, listed with their reasons in [CLAUDE.md](../CLAUDE.md) Principle 11.
 3. **Headless Agent Invocation**: We use `pexpect` inside the test runner to programmatically invoke the configured agent CLI (e.g., `claude`, `gh copilot suggest`), piping prompts into the LLM safely without requiring manual keyboard input. The active runner is selected via `get_runner()` based on available credentials, or overridden via `EVAL_RUNNER`.
 
 ## Running Tests

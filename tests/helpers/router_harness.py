@@ -30,10 +30,12 @@ Lives under ``tests/helpers/`` because ``pytest.ini`` sets
 """
 
 import difflib
+import os
 import re
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -67,6 +69,7 @@ HELPER_MODULES: tuple[str, ...] = (
     "tests/helpers/runners.py",
     "tests/helpers/router_harness.py",
     "tests/helpers/lint_router_harness.py",
+    "tests/helpers/router_coverage_registry.py",
     "tests/helpers/aws_env.py",
 )
 
@@ -145,9 +148,57 @@ CHANGED_SCRIPTS_PATTERN = re.compile(r'^[ \t]*CHANGED_SCRIPTS=.*?-E\s+"\^\((.+?)
 #: in ``test_staged.sh`` the prefix would admit paths that then match no branch.
 KNOWN_ROUTER_DIVERGENCE: frozenset[str] = frozenset({"docker/agent-cli/"})
 
+#: Tracked paths every router's ``CHANGED_SCRIPTS`` universe must contain. Each
+#: sits under an alternative written without regex escapes, deliberately: a
+#: universe built with ``str.startswith`` over the escaped alternatives still
+#: holds them, so this pin fails only when an alternative is *dropped* and the
+#: dot-prefixed alternatives are left to the per-alternative coverage check.
+#: Adding a ``.claude/`` path here would collapse the two into one check.
+#: ``tests/agents/`` and ``tests/scripts/`` are listed because no behavioural
+#: assertion below feeds a path under either *into* a router. Each appears
+#: below only on the expected-target side of an assertion — ``tests/agents/``
+#: as what a changed ``.claude/agents/`` definition routes to,
+#: ``tests/scripts/`` as REVIEWER_TEMPLATE_SUITE, DERIVED_TARGET_SUITE, and the
+#: name the ``docker/shared/`` case derives — and a target names no prefix the
+#: filter has to admit. The sibling test prefixes are not in that position:
+#: ``tests/hooks/``, ``tests/helpers/`` and ``tests/lint/`` each have a case
+#: routing a file under them to itself. So for these two this pin is the only
+#: check that the filter still admits the prefix, and dropping it from both
+#: routers leaves a change to a file underneath routing nothing at all — with
+#: the prefix-parity check agreeing, because both dropped it. The list is
+#: maintained rather than derived: a prefix added to the routers later can sit
+#: in the same position and carry nothing here. The ``tests/scripts/`` entry is
+#: spelled out rather than reused from REVIEWER_TEMPLATE_SUITE: bound to that
+#: constant, a repoint of the suite out of ``tests/scripts/`` would carry the
+#: sentinel out of the prefix with it and drop the cover silently.
+UNIVERSE_SENTINELS: tuple[str, ...] = (
+    "ci/test_staged.sh",
+    "ci/test_changed.sh",
+    "scripts/setup_codex_reviewer.sh",
+    "tests/ci/conftest.py",
+    "tests/helpers/router_harness.py",
+    "docker/shared/python-security-gate.sh",
+    "tests/agents/test_variant_parity.py",
+    "tests/scripts/test_reviewer_templates.py",
+)
+
+#: A tracked path that *contains* a ``CHANGED_SCRIPTS`` alternative without
+#: starting with one. A lower bound is satisfied by an over-matching pattern
+#: too, so only a path that must stay *out* of the universe can catch a lost
+#: ``^`` anchor or a substring match. It must stay tracked to mean anything —
+#: an untracked negative sentinel can never appear, and the check goes vacuous.
+UNIVERSE_NEGATIVE_SENTINEL = "workflows/agent-memory/skills/execution-ledger/scripts/todo_cli.py"
+
 #: Opening line of the reviewer-template branch both test routers must carry
 #: byte-identically.
 REVIEWER_TEMPLATE_BRANCH_MARKER = 'elif [[ "$file" == .claude/prompts/reviewer/* ]]'
+
+#: Opening line of the ``scripts/*`` dispatch branch both test routers must
+#: carry byte-identically. Pinned as the whole condition line rather than a
+#: prefix of it: ``ci/test_changed.sh`` opens its agent-cli branch with
+#: ``elif [[ "$file" == scripts/`` as well, and a marker matching two blocks
+#: fails extraction outright instead of comparing either one.
+SCRIPTS_BRANCH_MARKER = 'elif [[ "$file" == scripts/* ]] || [[ "$file" == ci/* ]]; then'
 
 #: Opening prefix shared by every branch of the changed-file dispatch chain.
 #: Bounding a block slice at the next sibling branch is what keeps it from
@@ -163,6 +214,71 @@ BRANCH_BOUNDARY_MARKERS: tuple[str, ...] = ('elif [[ "$file" == ',)
 BLOCK_TERMINATOR = "fi"
 
 ANNOUNCE_PREFIX = "Running pytest (Docker) with "
+
+#: Liveness ceiling on the tracked-file listing. Its callers run it at import
+#: time, so a git that never returns wedges collection itself rather than
+#: failing a test: there is no case left to report the stall against, and the
+#: run reports nothing at all.
+TRACKED_PATHS_TIMEOUT_SECONDS = 60
+
+#: Liveness ceiling on one router run. Well above the per-run cost rather than
+#: close to it: this is not a performance assertion, it is what stops a router
+#: that wedges from stalling the walk that calls it several hundred times.
+#: Named rather than written inline at the call, like the listing ceiling
+#: above, so the value can be read and cited without opening ``run_router``.
+ROUTER_TIMEOUT_SECONDS = 180
+
+#: Container-detection expressions the routing-coverage guard and the fixtures
+#: it consumes must not carry. Both routers run their announced targets in
+#: ``pytest-cli``, and they reach the guard module on a pull request changing a
+#: non-test module under ``tests/helpers/`` or the guard module itself, so a
+#: skip keyed on one of these would silence the guard in the containerised
+#: channel. The list lives here rather than beside the scan that reads it: a
+#: module scanning its own source for a literal it also declares always matches
+#: itself — which is also why this module is outside the scan that reads the
+#: list; see ``CONTAINER_DETECTION_SCAN_SOURCES`` in the guard.
+#: A measured set, not a closed one: these are the expressions this repository's
+#: own container detection is written with, and a skip keyed on anything else
+#: carries nothing here to match. Known uncovered members: ``/run/.containerenv``,
+#: which identifies a Podman container; a predicate on ``CI`` or
+#: ``GITHUB_ACTIONS``, which reaches the same skip without naming a container at
+#: all; a hostname read compared against a container's; and a read of the
+#: process mount table. The paragraph above states the property the list serves,
+#: which is not the same as the reach of the list.
+CONTAINER_DETECTION_TOKENS: tuple[str, ...] = (
+    "/.dockerenv",
+    "INSIDE_CONTAINER",
+    "/proc/1/cgroup",
+    "/proc/self/cgroup",
+)
+
+#: Expressions that rebuild a routing target out of a source path. The
+#: routing-coverage guard runs the routers instead of re-modelling them, because
+#: a reconstructed dispatch chain agrees with a broken router, so its own source
+#: must carry none of these. The list lives here for the reason
+#: CONTAINER_DETECTION_TOKENS does: a module scanning its own source for a
+#: literal it also declares always matches itself. It is deliberately scoped to
+#: that one module — RouterContract's negative derivation tests below spell some
+#: of these on purpose, to prove the routers do not derive.
+#: The ``.replace`` entries stop before their second argument, so a derivation
+#: written without the interior space is caught by the same token.
+#: Known limits include: a test-path literal used as an expected target, which
+#: cannot be tokenised at all, since the guard's outcome pins are required to
+#: name ``tests/ci/`` and ``tests/helpers/``; a target rebuilt by f-string or
+#: concatenation, which carries no token to match; ``basename`` imported by
+#: name and then called bare, which none of the dotted spellings reach; and
+#: ``.parent`` or ``.parts``, which are left out because a path split on either
+#: of them is not by itself a rebuilt target. The list is a drift guard over one
+#: module's source, not a closed enumeration of every way to derive a path.
+SOURCE_PATH_DERIVATION_TOKENS: tuple[str, ...] = (
+    "os.path.basename",
+    "os.path.dirname",
+    "os.path.splitext",
+    ".stem",
+    ".name",
+    '.replace("-"',
+    ".replace('-'",
+)
 
 GIT_STUB = """#!/usr/bin/env bash
 # Fully synthetic git — nothing here reaches the real binary, so no assertion
@@ -200,6 +316,160 @@ exit 0
 """
 
 RouteFn = Callable[..., subprocess.CompletedProcess[str]]
+
+#: Builds a ``RouteFn`` over a fresh workspace whose security-gate shadow the
+#: caller chooses.
+RouteVariantFn = Callable[..., RouteFn]
+
+#: Executables a router workspace shadows on PATH, and the stub body each gets.
+#: ``task`` is stubbed alongside ``docker`` so a changed-file list reaching the
+#: agent-cli branch of ``ci/test_changed.sh`` cannot launch the real
+#: container-integration suite from a unit test.
+ROUTER_PATH_STUBS: tuple[tuple[str, str], ...] = (
+    ("git", GIT_STUB),
+    ("docker", NOOP_STUB),
+    ("task", NOOP_STUB),
+)
+
+
+class RouterWorkspace(NamedTuple):
+    """A synthetic workspace and stub PATH, ready to run a router against."""
+
+    #: Working directory the router runs from.
+    workspace: Path
+    #: Directory prepended to PATH, holding the executable stubs.
+    bin_dir: Path
+    #: File each run rewrites with its changed-file list.
+    listing: Path
+    #: Value pinned into ``GITHUB_EVENT_NAME`` on every run.
+    event_name: str
+
+
+def build_router_workspace(
+    root: Path,
+    event_name: str,
+    *,
+    shadow_security_gate: bool = True,
+) -> RouterWorkspace:
+    """
+    Lay out a synthetic workspace a test router can be run against.
+
+    The routers invoke the security gate by a path relative to the working
+    directory, so shadowing it means placing a stub at that relative path.
+    Shadowing is the normal case: the real gate writes
+    ``tmp/.python-gate-pass``, which in CI is already owned by the outer gate
+    run's uid, so a nested invocation fails with EACCES and ``set -e`` kills the
+    router before it announces anything. Withholding the shadow reproduces that
+    death on demand, which is how a caller can tell a router that *failed* apart
+    from one that deliberately selected nothing — but only for a changed-file
+    list that reaches ``run_pytest_docker``, since both routers return early on
+    an empty target list and never touch the gate.
+
+    ``tests/`` is symlinked in rather than copied, so the routers' ``[ -f ]``
+    probes see the repository's real test files.
+
+    Args:
+        root: Directory to build under.
+        event_name: Value to pin into ``GITHUB_EVENT_NAME`` on every run.
+        shadow_security_gate: Whether to place the security-gate stub.
+
+    Returns:
+        The workspace, its stub bin directory, the changed-file listing path,
+        and the pinned event name.
+    """
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True)
+    for name, body in ROUTER_PATH_STUBS:
+        stub = bin_dir / name
+        stub.write_text(body, encoding="utf-8")
+        stub.chmod(0o755)
+
+    workspace = root / "workspace"
+    (workspace / "docker" / "shared").mkdir(parents=True)
+    if shadow_security_gate:
+        gate = workspace / "docker" / "shared" / "python-security-gate.sh"
+        gate.write_text(NOOP_STUB, encoding="utf-8")
+        gate.chmod(0o755)
+    (workspace / "tmp").mkdir()
+    (workspace / "tests").symlink_to(REPO_ROOT / "tests")
+
+    return RouterWorkspace(
+        workspace=workspace,
+        bin_dir=bin_dir,
+        listing=root / "changed-files.txt",
+        event_name=event_name,
+    )
+
+
+def run_router(
+    space: RouterWorkspace,
+    script: str,
+    changed_files: Sequence[str],
+    *,
+    target: str = "scripts",
+) -> subprocess.CompletedProcess[str]:
+    """
+    Run a router script in a prepared workspace against a changed-file list.
+
+    The listing is rewritten in full on every call, so no earlier call's paths
+    survive into a later one. That is what makes one workspace safe to reuse for
+    a whole session rather than rebuilding it per test.
+
+    The exit status is returned rather than checked: the caller decides whether
+    a non-zero router is a failure or the outcome under test.
+
+    Args:
+        space: Prepared workspace to run in.
+        script: Router filename under ``ci/``.
+        changed_files: Paths the stubbed ``git`` reports as changed.
+        target: Router target argument.
+
+    Returns:
+        The completed router process.
+    """
+    space.listing.write_text("".join(f"{path}\n" for path in changed_files), encoding="utf-8")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{space.bin_dir}{os.pathsep}{env['PATH']}"
+    env["ROUTER_TEST_CHANGED_FILES"] = str(space.listing)
+    env["GITHUB_EVENT_NAME"] = space.event_name
+
+    return subprocess.run(
+        ["bash", str(REPO_ROOT / "ci" / script), target],
+        cwd=space.workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=ROUTER_TIMEOUT_SECONDS,
+    )
+
+
+def make_route(space: RouterWorkspace) -> RouteFn:
+    """
+    Bind a workspace into a ``RouteFn``, so callers pass only script and paths.
+
+    The closure lives here rather than in the fixture that returns it because
+    only this module resolves under mypy: ``tests/`` is not a package base, so
+    an importer of ``helpers.router_harness`` sees every name as ``Any`` and a
+    call to ``run_router`` there checks nothing.
+
+    Args:
+        space: Prepared workspace every routed call runs in.
+
+    Returns:
+        Callable taking the script filename under ``ci/`` and the changed-file
+        list, plus an optional keyword-only ``target``.
+    """
+
+    def _route(
+        script: str,
+        changed_files: Sequence[str],
+        *,
+        target: str = "scripts",
+    ) -> subprocess.CompletedProcess[str]:
+        return run_router(space, script, changed_files, target=target)
+
+    return _route
 
 
 def routed_targets(result: subprocess.CompletedProcess[str]) -> list[str]:
@@ -324,6 +594,153 @@ def assert_changed_scripts_prefixes_agree() -> None:
         f"in ci/{staged_script} only: {sorted(missing)} (pinned: none)\n"
         "add the prefix to both routers, or pin the divergence in KNOWN_ROUTER_DIVERGENCE"
     )
+
+
+def split_nul_records(payload: str) -> tuple[str, ...]:
+    """
+    Split a NUL-delimited git payload into records.
+
+    ``git ls-files -z`` *terminates* every record rather than separating them,
+    so the split leaves a trailing empty fragment; discarding empties keeps a
+    zero-length path out of the universe. NUL delimiting is also what holds a
+    path containing a space or a newline together, which line splitting would
+    not.
+
+    Args:
+        payload: Raw NUL-delimited stdout.
+
+    Returns:
+        One entry per record, empty fragments discarded.
+    """
+    return tuple(record for record in payload.split("\0") if record)
+
+
+def tracked_paths() -> tuple[str, ...]:
+    """
+    Enumerate every path git tracks in this repository.
+
+    Shells out on each call, so a caller that needs the listing more than once
+    should hold the result rather than re-enumerate per case.
+
+    ``safe.directory`` is set for the directory being listed, and derived from
+    the same constant the call runs in so the two cannot drift. Both routers fan
+    a changed module under ``tests/helpers/`` into ``tests/ci/``, which runs in
+    ``pytest-cli`` as ``--user agent`` against a read-only bind mount of the
+    repository.
+
+    The failure this guards against is reasoned rather than observed: ``agent``
+    is a system account the image creates with ``useradd -r``, so nothing ties
+    its uid to the uid owning the mounted tree on a Linux runner, and git's
+    ownership check refuses to read a repository owned by another user — exit
+    128 before a single path is listed, taking every caller of this function
+    with it. It has not been reproduced here, and has never run on a Linux
+    runner: Docker Desktop remaps bind-mount ownership, so on this host the
+    mounted tree already reports the container uid as its owner and the check
+    passes whatever the image does. What is confirmed is that the option is
+    accepted where it is set — ``git help config`` §SCOPES counts ``-c`` as
+    protected command scope, which is the scope ``safe.directory`` requires.
+    Where the uid already matches, the option changes nothing.
+
+    Deviation recorded rather than resolved: ``.claude/rules/lang.python.md``
+    prefers GitPython to ``subprocess`` for git operations, and GitPython is in
+    the root requirements file both channels this runs in install from — the
+    host-side venv and the ``pytest-cli`` image — so availability is not what
+    excludes it. What a swap would have to keep is the NUL-delimited listing and
+    the protected command scope the ``-c`` above needs; neither has been checked
+    against GitPython's API.
+
+    Returns:
+        Repository-relative tracked paths, in ``git ls-files`` order.
+
+    Raises:
+        AssertionError: If git exits non-zero, or reports nothing at all. A
+            partial listing is the dangerous case — it shrinks the universe
+            silently, and every downstream comparison then passes on a subset.
+        subprocess.TimeoutExpired: If git has not returned within
+            ``TRACKED_PATHS_TIMEOUT_SECONDS``.
+    """
+    result = subprocess.run(
+        ["git", "-c", f"safe.directory={REPO_ROOT}", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+        timeout=TRACKED_PATHS_TIMEOUT_SECONDS,
+    )
+    assert result.returncode == 0, (
+        f"`git ls-files -z` failed in {REPO_ROOT} with exit {result.returncode}; whatever "
+        f"reached stdout is a partial listing and is not usable\n{result.stderr}"
+    )
+    paths = split_nul_records(result.stdout)
+    assert paths, f"`git ls-files -z` reported no tracked files in {REPO_ROOT}"
+    return paths
+
+
+def changed_scripts_universe(script: str) -> tuple[str, ...]:
+    """
+    Enumerate the tracked paths a test router's ``CHANGED_SCRIPTS`` filter admits.
+
+    The filter is reconstructed from the router's own source rather than
+    restated here, so the universe follows a prefix added to or dropped from
+    the router with no list to maintain. ``changed_scripts_prefixes`` returns
+    its alternatives regex-escaped, so the reconstruction has to stay a regex
+    *and* has to stay anchored: a ``str.startswith`` equivalent drops every
+    dot-prefixed alternative, and an unanchored match admits any path that
+    merely contains one.
+
+    The floor below is asserted here rather than in a test of its own, so it
+    runs on every call — a caller that never happens to run that test would
+    otherwise consume a silently narrowed universe.
+
+    Args:
+        script: Router filename under ``ci/``.
+
+    Returns:
+        Tracked repository-relative paths the filter admits, in
+        ``git ls-files`` order.
+
+    Raises:
+        AssertionError: If the universe is empty, omits a pinned sentinel,
+            leaves an alternative with no member, or if the negative sentinel
+            has stopped being tracked or has entered the universe.
+            Also if ``UNIVERSE_SENTINELS`` is itself empty, which would leave
+            the floor asserting nothing about the universe it admits.
+    """
+    alternatives = changed_scripts_prefixes(script)
+    pattern = re.compile("^(" + "|".join(sorted(alternatives)) + ")")
+    tracked = tracked_paths()
+    universe = tuple(path for path in tracked if pattern.search(path))
+
+    assert universe, (
+        f"ci/{script}: the reconstructed CHANGED_SCRIPTS filter {pattern.pattern!r} admitted none of the {len(tracked)} tracked paths"
+    )
+    assert UNIVERSE_SENTINELS, "the pinned sentinel list is empty, which leaves the universe floor vacuous"
+    absent = [sentinel for sentinel in UNIVERSE_SENTINELS if sentinel not in universe]
+    assert not absent, (
+        f"ci/{script}: pinned universe sentinels are missing: {absent} — either the router dropped "
+        "a CHANGED_SCRIPTS prefix, or those paths moved and UNIVERSE_SENTINELS needs repointing"
+    )
+    uncovered: list[str] = []
+    for alternative in sorted(alternatives):
+        admits = re.compile("^(" + alternative + ")")
+        if not any(admits.search(path) for path in universe):
+            uncovered.append(alternative)
+    assert not uncovered, (
+        f"ci/{script}: CHANGED_SCRIPTS alternatives with no tracked member: {uncovered} — an "
+        "alternative that matches nothing means the reconstruction stopped being a regex, or the "
+        "prefix is dead and belongs out of the router"
+    )
+    assert UNIVERSE_NEGATIVE_SENTINEL in tracked, (
+        f"{UNIVERSE_NEGATIVE_SENTINEL} is no longer tracked, which leaves the over-match check "
+        "below vacuous — repoint UNIVERSE_NEGATIVE_SENTINEL at another tracked path that contains "
+        "a CHANGED_SCRIPTS alternative without starting with one"
+    )
+    assert UNIVERSE_NEGATIVE_SENTINEL not in universe, (
+        f"ci/{script}: {pattern.pattern!r} admitted {UNIVERSE_NEGATIVE_SENTINEL}, which only "
+        "contains an alternative rather than starting with one — the pattern lost its `^` anchor, "
+        "or it is being applied in a way that ignores the anchor, so the universe over-matches"
+    )
+    return universe
 
 
 def extract_marked_block(
@@ -656,6 +1073,29 @@ class RouterContract:
         """
         assert_block_mirrored(
             REVIEWER_TEMPLATE_BRANCH_MARKER,
+            routers=TEST_ROUTERS,
+            boundaries=BRANCH_BOUNDARY_MARKERS,
+        )
+
+    def test_scripts_branch_is_byte_identical(self) -> None:
+        """Both routers carry the ``scripts/*`` dispatch branch byte-identically.
+
+        ``test_derived_target_source_routes_to_its_derived_suite`` drives the
+        branch through one source, which catches a trigger *dropped* from a
+        router; comparing the branch text closes the other direction, where a
+        trigger is added to one router only.
+
+        What byte-identity here does **not** pin is routing parity for
+        ``scripts/agent-cli/``. ``ci/test_changed.sh`` matches those paths in an
+        earlier branch, so they never reach this block at all, and the two
+        routers genuinely resolve them to different targets while this block
+        stays identical. Closing that gap is tracked separately.
+
+        Ignores ``SCRIPT`` and reads both routers, for the same reason as
+        ``test_reviewer_template_suite_path_is_pinned``.
+        """
+        assert_block_mirrored(
+            SCRIPTS_BRANCH_MARKER,
             routers=TEST_ROUTERS,
             boundaries=BRANCH_BOUNDARY_MARKERS,
         )

@@ -106,8 +106,8 @@ Before running skill or script evaluations locally, initialize the local virtual
 task test:setup
 ```
 
-This creates a `.venv/` in the repository root and installs all test dependencies. The `test:scripts` and `test:skills` tasks use this local `.venv/` directly — **Docker is not required** for these targets.
+This creates a `.venv/` in the repository root and installs all test dependencies. The `test:scripts` and `test:brownfield_ai` tasks do **not** use it — they run in the `pytest-cli` Docker container. The targets that do run host-side against this `.venv/` are listed with their reasons in [CLAUDE.md](../CLAUDE.md) §11.
 
-`task test:brownfield_ai` remains Docker-based and requires LocalStack to be running, as it exercises AWS infrastructure mocking.
+`task test:brownfield_ai` additionally requires LocalStack to be running, as it exercises AWS infrastructure mocking.
 
 > **WARNING**: Evals execute against live agents. They will consume actual tokens and API resources, and test suite lifecycles may take noticeably longer to complete.
