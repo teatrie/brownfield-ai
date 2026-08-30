@@ -288,10 +288,11 @@ REGISTRY_FANOUT_TARGETS: frozenset[str] = frozenset({"tests/ci/", "tests/helpers
 #: ``changed_scripts_universe``, ``build_router_workspace`` and ``make_route`` —
 #: and it is NOT scanned. It declares ``CONTAINER_DETECTION_TOKENS`` itself, so
 #: a scan over it would match on the declaration whatever the surrounding code
-#: did. Closing that needs the token list to live in a module neither the guard
-#: nor the harness declares; until it moves there, a module-level
-#: container-keyed skip in the harness silences the guard with nothing here to
-#: notice.
+#: did. Closing that would take a pin that tolerates the declaration itself —
+#: an occurrence count over the harness source, or a token list living in a
+#: module neither the guard nor the harness declares. Until one is added, a
+#: module-level container-keyed skip in the harness silences the guard with
+#: nothing here to notice.
 #: ``tests/conftest.py`` sits in the same position and is likewise not scanned:
 #: it is loaded for every session this module runs in — ``TestGuardWiring``
 #: names it among the vectors it leaves open — and it already spells one of
@@ -678,9 +679,10 @@ BASE_BRANCH_SCOPED_EVENTS: tuple[str, ...] = (GUARD_TRIGGER_EVENT, "push")
 #: reds whether or not anybody listed it, and the branch key has to be spelled
 #: the way the workflow spells it for the set to admit the trigger at all.
 #: Read as "no key beside these" rather than as equality, so that an event
-#: declaring none is not red: the two readings differ only on the empty mapping,
-#: which is the widening ``GUARD_TRIGGER_BASE_BRANCH`` gives the reason for
-#: declining to assert against.
+#: declaring none is not red: while this set holds one key the two readings
+#: differ only on the empty mapping, which is the widening
+#: ``GUARD_TRIGGER_BASE_BRANCH`` gives the reason for declining to assert
+#: against.
 #: Held to ``BASE_BRANCH_SCOPED_EVENTS`` rather than to every event the workflow
 #: declares. ``merge_group:`` carries no mapping to read keys off, and an event
 #: added later carries neither of the claims these two do.
@@ -2014,6 +2016,16 @@ class TestWalkCasePredicate:
         inside the fixture's own docstring or a comment, so a body that tests
         the ``callspec`` inline and mentions the predicate in prose passes one.
         What is required here is a call node.
+
+        Known limit: what is required is that the call node exist in the block,
+        not that it is reached or that its result is read. A call under an
+        ``if False:``, or one whose return value is discarded, passes here
+        beside an inline ``callspec`` test, and the rest of this module stays
+        green through it: the predicate's own cases drive it directly, the
+        threshold cases patch the count, and the floor's ``>=`` absorbs a count
+        that ran wide. Named rather than closed — reaching it takes an inert
+        call written deliberately past the pin, where the rewrite this pin
+        exists for carries no call node at all.
         """
         body = _counter_fixture_source()
         called = {node.func.id for node in ast.walk(ast.parse(body)) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
@@ -2843,7 +2855,7 @@ class TestGuardWiring:
         )
 
     def test_workflow_triggers_the_guard_on_every_pull_request(self) -> None:
-        """The workflow is triggered by pull requests, and by none of the filters measured to narrow that.
+        """The workflow is triggered by pull requests, and by none of the filters ``FORBIDDEN_TRIGGER_FILTER_KEYS`` names.
 
         Which trigger-level filters skip a run the guard has to report on, and
         how each of them does it, is recorded at

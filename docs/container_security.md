@@ -209,8 +209,8 @@ bypasses: a path that never invokes this script bypasses Layer 2, and a path
 that overrides the entrypoint bypasses Layer 3. Neither implies the other —
 an unmodified entrypoint does not establish that the host-side gate ran.
 
-On the `python-cli` and `pytest-cli` containers, the sites where they co-occur
-are `test:dashboard`, the dashboard branches of both `ci/test_staged.sh` and
+On the `python-cli` and `pytest-cli` containers, sites where they co-occur
+include `test:dashboard`, the dashboard branches of both `ci/test_staged.sh` and
 `ci/test_changed.sh`, and the `sh:python-cli` and `sh:pytest-cli` shell tasks:
 each overrides the entrypoint and none invokes this script. What covers the
 two shell tasks instead is the Layer 1 hook above, which denies them by name —

@@ -49,12 +49,10 @@ def route(tmp_path: Path) -> RouteFn:
         stub.write_text(body, encoding="utf-8")
         stub.chmod(0o755)
 
-    # This fixture builds its own workspace rather than calling
-    # `build_router_workspace`, so its stub set is a second copy of
-    # ROUTER_PATH_STUBS. Compared against what was actually written here, not
-    # against a third literal: a stub added to the harness constant and not to
-    # the loop above would otherwise leave these routers reaching the real
-    # executable, with nothing to say so.
+    # Compared against what was actually written here, not against a third
+    # literal: a stub added to ROUTER_PATH_STUBS and not to the loop above
+    # would otherwise leave these routers reaching the real executable, with
+    # nothing to say so.
     shadowed = frozenset((stub.name, stub.read_text(encoding="utf-8")) for stub in bin_dir.iterdir())
     pinned = frozenset(router_harness.ROUTER_PATH_STUBS)
     assert shadowed == pinned, (
@@ -146,8 +144,7 @@ def session_route(route_variant: router_harness.RouteVariantFn) -> RouteFn:
     One route callable over one workspace, reused for the whole session.
 
     Not the ``route`` fixture rescoped: ``route`` stays function-scoped so a test
-    that needs an untouched workspace still gets one, and the two workspace
-    builders stay separate rather than merged.
+    that needs an untouched workspace still gets one.
 
     Args:
         route_variant: Factory supplying the ``tmp_path_factory``-backed
