@@ -30,10 +30,12 @@ containerised scripts suite runs it again whenever the routers fan `tests/ci/`
 into that suite. Each run spawns a router subprocess per tracked path under a
 router prefix, for both routers at the `scripts` router target — the only
 target the guard covers — plus a nested collection subprocess per distinct
-announced target, plus three child `pytest` processes that re-import the guard
-module — two of them far enough to rebuild its case list — to pin the two
-assertions that run outside a case body. That is an accounting of what the
-module spawns, not a wall-clock budget.
+announced target, plus four child `pytest` processes: three of them re-import
+the guard module — two far enough to rebuild its case list, the third dying in
+the import-time scan above that build — and the fourth pins the ambient
+variable the scan reads, failing in pytest's own argument parsing without
+importing the module at all. Those are the per-path costs and the fixed child
+processes, not a complete spawn inventory or a wall-clock budget.
 A second cost is a false red. The guard's execution floor ends the process with
 exit **70** whenever fewer cases run than the walk holds, and it observes the
 count rather than the cause — so *any* partial selection of the module trips
@@ -88,12 +90,12 @@ the `sh:python-cli` and `sh:pytest-cli` shell tasks override the entrypoint,
 and none of them invokes the host-side gate, so both bypasses co-occur there.
 The Layer 1 hook denies the two shell tasks by name, which covers agent tool
 calls but not a human at a terminal.
-They come apart at `task run:adhoc`, the sanctioned ad-hoc Python path of
-[CLAUDE.md](../CLAUDE.md) §11: it enters through the unmodified `python-cli`
-entrypoint, so Layer 3 still validates the gate artifact, but it never invokes
-`docker/shared/python-security-gate.sh` — it writes the artifact itself and
-substitutes three inline `preconditions:` for the script's path and flag
-validation.
+The two bypasses come apart at `task run:adhoc`, the sanctioned ad-hoc Python
+path of [CLAUDE.md](../CLAUDE.md) §11: it enters through the unmodified
+`python-cli` entrypoint, so Layer 3 still validates the gate artifact, but it
+never invokes `docker/shared/python-security-gate.sh` — it writes the artifact
+itself and substitutes three inline `preconditions:` for the script's path and
+flag validation.
 The host-side targets are outside the gate's scope by construction, because
 the gate exists to validate paths and flags before Python runs *in a
 container*: `test:container-integration`

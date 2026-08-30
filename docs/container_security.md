@@ -214,8 +214,8 @@ are `test:dashboard`, the dashboard branches of both `ci/test_staged.sh` and
 `ci/test_changed.sh`, and the `sh:python-cli` and `sh:pytest-cli` shell tasks:
 each overrides the entrypoint and none invokes this script. What covers the
 two shell tasks instead is the Layer 1 hook above, which denies them by name —
-a constraint on agent tool calls, not on a human at a terminal. They come
-apart at `task run:adhoc`, the sanctioned ad-hoc Python path of
+a constraint on agent tool calls, not on a human at a terminal. The two
+bypasses come apart at `task run:adhoc`, the sanctioned ad-hoc Python path of
 [CLAUDE.md](../CLAUDE.md) §11 — it enters through the unmodified `python-cli`
 entrypoint, so Layer 3 still validates the gate artifact, but it never invokes
 this script: it writes the artifact itself and substitutes three inline

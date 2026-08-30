@@ -35,6 +35,7 @@ narrows the rest of that suite without ending on the floor.
 ``task test:routing`` runs the whole module.
 """
 
+import ast
 import atexit
 import configparser
 import io
@@ -291,6 +292,13 @@ REGISTRY_FANOUT_TARGETS: frozenset[str] = frozenset({"tests/ci/", "tests/helpers
 #: nor the harness declares; until it moves there, a module-level
 #: container-keyed skip in the harness silences the guard with nothing here to
 #: notice.
+#: ``tests/conftest.py`` sits in the same position and is likewise not scanned:
+#: it is loaded for every session this module runs in — ``TestGuardWiring``
+#: names it among the vectors it leaves open — and it already spells one of
+#: ``CONTAINER_DETECTION_TOKENS``, for its ``docker_ip`` fixture, so a scan over
+#: it would match on that read whatever the surrounding code did. Spelling the
+#: token here rather than naming the list would red the scan over *this* module,
+#: which is the same self-match one file across.
 CONTAINER_DETECTION_SCAN_SOURCES: tuple[str, ...] = (
     GUARD_MODULE,
     REGISTRY_MODULE,
@@ -611,8 +619,9 @@ WORKFLOW_KEYS: frozenset[object] = frozenset({"name", WORKFLOW_TRIGGER_KEY, "per
 #: runs on a pull request at all, which makes the filter check below vacuous.
 GUARD_TRIGGER_EVENT = "pull_request"
 
-#: Trigger-level filters measured to skip a workflow run the guard has to
-#: report on. ``paths`` and ``paths-ignore`` skip the run outright for a diff
+#: Trigger-level filters that skip a workflow run the guard has to report on.
+#: That reading is off the trigger's documented filter semantics; it is not
+#: measured here. ``paths`` and ``paths-ignore`` skip the run outright for a diff
 #: touching nothing they list, which retires the guard on exactly the pull
 #: requests it exists for. ``types`` is the same one-line shape one key across:
 #: the ``pull_request`` default is ``[opened, synchronize, reopened]``, so
@@ -623,6 +632,12 @@ GUARD_TRIGGER_EVENT = "pull_request"
 #: ``branches`` is absent from this list because it cannot be in it: the
 #: workflow declares it, and it is load-bearing. It is closed by its *value*
 #: instead — see ``GUARD_TRIGGER_BASE_BRANCH``.
+#: At the two events ``BASE_BRANCH_SCOPED_EVENTS`` names this list is the
+#: diagnostic rather than the closure, the way ``GUARD_JOB_FORBIDDEN_KEYS`` sits
+#: beneath ``GUARD_JOB_KEYS``: ``GUARD_TRIGGER_KEYS`` closes their key space, and
+#: this list is what makes a failure name the retirement rather than only report
+#: an unlisted key. At any other event the workflow declares it is not a
+#: diagnostic but the whole check — no key set is pinned there.
 FORBIDDEN_TRIGGER_FILTER_KEYS: tuple[str, ...] = ("paths", "paths-ignore", "types", "branches-ignore")
 
 #: The base branch the guard reports into, and the trigger key scoping a run to
@@ -654,6 +669,22 @@ GUARD_TRIGGER_BRANCHES: tuple[str, ...] = (GUARD_TRIGGER_BASE_BRANCH,)
 #: are held to these two rather than applied to every event the workflow
 #: declares.
 BASE_BRANCH_SCOPED_EVENTS: tuple[str, ...] = (GUARD_TRIGGER_EVENT, "push")
+
+#: Every key those two events may declare, as a whitelist. The forbidden list
+#: above closes only what somebody thought to name, and it is read by a bare
+#: membership test — so renaming its members, or renaming
+#: ``GUARD_TRIGGER_BRANCH_KEY``, leaves a real ``paths:`` invisible and the
+#: branch value unread. This is the level that closes both: a key outside it
+#: reds whether or not anybody listed it, and the branch key has to be spelled
+#: the way the workflow spells it for the set to admit the trigger at all.
+#: Read as "no key beside these" rather than as equality, so that an event
+#: declaring none is not red: the two readings differ only on the empty mapping,
+#: which is the widening ``GUARD_TRIGGER_BASE_BRANCH`` gives the reason for
+#: declining to assert against.
+#: Held to ``BASE_BRANCH_SCOPED_EVENTS`` rather than to every event the workflow
+#: declares. ``merge_group:`` carries no mapping to read keys off, and an event
+#: added later carries neither of the claims these two do.
+GUARD_TRIGGER_KEYS: frozenset[str] = frozenset({GUARD_TRIGGER_BRANCH_KEY})
 
 #: The uv package cache the guard's ``deps: [setup]`` venv build restores from.
 #: The package cache, never ``.venv`` itself — a virtualenv is not relocatable.
@@ -1978,14 +2009,17 @@ class TestWalkCasePredicate:
         ``TestOutOfCaseAssertionsAreCalled`` names for the two assertions that
         run outside a case body, one seam across.
 
-        Read as source text, so a mention of the predicate inside that block
-        satisfies it. What it closes is the body that stops naming the
-        predicate at all.
+        Read as source text and *parsed*, rather than searched. A substring
+        search over that block is satisfied by the predicate's name written
+        inside the fixture's own docstring or a comment, so a body that tests
+        the ``callspec`` inline and mentions the predicate in prose passes one.
+        What is required here is a call node.
         """
         body = _counter_fixture_source()
-        call = f"{_is_walk_case.__name__}("
-        assert call in body, (
-            f"the {_count_executed_router_case.__name__} block does not call {call}:\n{body}\n"
+        called = {node.func.id for node in ast.walk(ast.parse(body)) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+        assert _is_walk_case.__name__ in called, (
+            f"the {_count_executed_router_case.__name__} block calls {sorted(called)}, which does not include "
+            f"{_is_walk_case.__name__}:\n{body}\n"
             "the floor's count then rests on whatever that body tests instead, which nothing here reads — "
             "count through the predicate the cases above do read"
         )
@@ -2009,6 +2043,33 @@ class TestConstantSafetyProperties:
 
     What belongs here is a claim about a value. A claim about the code that
     reads a constant is held where that code is exercised.
+
+    Taken literally that criterion admits more than the cases below cover, and
+    the difference is deliberate: a claim whose *consequence* is already closed
+    one level out needs no case of its own — what needs one is a claim nothing
+    else reds. ``GUARD_STEP_TOLERANCE_KEY`` and ``GUARD_JOB_FORBIDDEN_KEYS`` are
+    both read by bare membership tests and are both renameable with every case
+    in this module green; both are cleared because the key-set equalities beside
+    them, ``GUARD_STEP_KEYS`` and ``GUARD_JOB_KEYS``, red on the very key such a
+    rename would hide. ``FORBIDDEN_ROUTING_TARGET_KEYS`` is cleared the same way
+    at the target level, where ``ROUTING_TARGET_KEYS`` closes the key space, and
+    two of its members are held besides: ``dotenv`` by the case below, and
+    ``ignore_error`` by the synthetic entry ``TOLERATED_COMMAND_ENTRY`` carries
+    into the mapping-form case.
+
+    ``COLLECT_TIMEOUT_SECONDS`` is a borderline member cleared on other grounds,
+    recorded so a later reader does not derive it again. Its comment says the
+    ceiling sits well above the per-probe budget, which nothing asserts, so it
+    fits the criterion literally — but every mis-setting of it fails loudly
+    rather than quietly: too small errors the walk on a raised
+    ``TimeoutExpired``, and too large costs liveness rather than silence. It has
+    no retirement to close.
+
+    Known limit: nothing enforces any of this. A constant whose comment states a
+    property of its value and carries no case here passes like any other, and
+    the sweep behind these cases was reasoned per constant rather than driven —
+    so the constants named above are what that reading surfaced, not every one
+    that qualifies.
     """
 
     def test_the_floors_exit_status_is_none_of_pytests_own(self) -> None:
@@ -2021,11 +2082,18 @@ class TestConstantSafetyProperties:
         the status compares it against itself — the children assert the exit
         they were told to expect, the threshold case compares a list of it — so
         none of them observes the value at all.
+
+        The premise the case opens on is an identity rather than a membership.
+        Every one of pytest's verdicts is in the set, so a membership test is
+        satisfied by a ``NO_TESTS_COLLECTED_EXIT`` naming any of them — a usage
+        error, say — while the prose beside it calls the value the forgiven one.
         """
         verdicts = {int(code) for code in pytest.ExitCode}
-        assert NO_TESTS_COLLECTED_EXIT in verdicts, (
-            f"pytest.ExitCode does not carry {NO_TESTS_COLLECTED_EXIT}, the no-tests-collected status both "
-            "routers forgive, so it is not the set this comparison should be reading"
+        assert NO_TESTS_COLLECTED_EXIT == int(pytest.ExitCode.NO_TESTS_COLLECTED), (
+            f"pytest reads {NO_TESTS_COLLECTED_EXIT} as something other than the no-tests-collected status "
+            f"both routers forgive, which is {int(pytest.ExitCode.NO_TESTS_COLLECTED)}; a membership test over "
+            "pytest's own verdicts admits any one of them, so the premise this case rests on has to name the "
+            "one it means"
         )
         assert UNRUN_WALK_EXIT not in verdicts, (
             f"UNRUN_WALK_EXIT is {UNRUN_WALK_EXIT}, which is pytest's own {pytest.ExitCode(UNRUN_WALK_EXIT)!r}; "
@@ -2396,12 +2464,13 @@ def _runs_task(target: object, entry: str) -> bool:
     """
     Decide whether one target runs a named task, under every spelling discovered.
 
-    Four shapes reach the same target and only one of them is a ``cmds:``
-    mapping carrying ``task:``: a ``deps:`` entry runs it *before* ``cmds[0]``,
-    a ``deps:`` mapping is the same one key across, and a plain shell command
-    invoking ``task`` runs it without any structure to read. All four are
-    matched here so the discovery is over what a taskfile can express rather
-    than over the one form the pinned sites happen to use.
+    A ``cmds:`` mapping carrying ``task:`` is one shape among several that reach
+    the same target: a ``deps:`` entry runs it *before* ``cmds[0]``, a ``deps:``
+    mapping is the same one key across, and a plain shell command invoking
+    ``task`` runs it without any structure to read. They are matched here so the
+    discovery is over what a taskfile can express rather than over the one form
+    the pinned sites happen to use — which is also why each shape is driven on a
+    literal, at ``test_the_aggregate_discovery_reads_every_shape_it_claims``.
 
     Args:
         target: A target as the taskfile declares it.
@@ -2776,10 +2845,16 @@ class TestGuardWiring:
     def test_workflow_triggers_the_guard_on_every_pull_request(self) -> None:
         """The workflow is triggered by pull requests, and by none of the filters measured to narrow that.
 
-        Which trigger-level filters are measured to skip a run the guard has to
-        report on, and how each of them does it, is recorded at
+        Which trigger-level filters skip a run the guard has to report on, and
+        how each of them does it, is recorded at
         ``FORBIDDEN_TRIGGER_FILTER_KEYS``. The step-level and job-level pins
         above sit underneath all of them and would still pass.
+
+        That list is read by a membership test, which closes only the keys it
+        spells; the key space of the two events carrying the guard's claim is
+        closed beside it, against ``GUARD_TRIGGER_KEYS``. Why that closure is
+        written as "no key beside the pinned one" rather than as an equality,
+        and why it is held to those two events, is recorded there.
 
         ``branches`` cannot be forbidden the way those four are — it is
         declared, and it is what scopes the run to the branch the guard reports
@@ -2825,15 +2900,25 @@ class TestGuardWiring:
             f"{WORKFLOW_PATH} filters its triggers by {filtered}; a path filter skips the whole run for a "
             "diff it does not list, so the guard would stop reporting on the changes it exists to report on"
         )
+        unpinned: list[str] = []
         misscoped: list[str] = []
         for event in BASE_BRANCH_SCOPED_EVENTS:
             settings = triggers.get(event)
-            if not isinstance(settings, dict) or GUARD_TRIGGER_BRANCH_KEY not in settings:
+            if not isinstance(settings, dict):
+                continue
+            unpinned.extend(f"{event}.{key}" for key in sorted(str(name) for name in settings) if key not in GUARD_TRIGGER_KEYS)
+            if GUARD_TRIGGER_BRANCH_KEY not in settings:
                 continue
             declared = settings[GUARD_TRIGGER_BRANCH_KEY]
             branches = [declared] if isinstance(declared, str) else declared
             if not isinstance(branches, list) or tuple(branches) != GUARD_TRIGGER_BRANCHES:
                 misscoped.append(f"{event}.{GUARD_TRIGGER_BRANCH_KEY} is {declared!r}")
+        assert not unpinned, (
+            f"{WORKFLOW_PATH} declares {unpinned}, which is outside {sorted(GUARD_TRIGGER_KEYS)}; the "
+            "forbidden list above reaches only the keys it names, so a filter spelled any other way — or "
+            "the pinned branch key renamed out from under it — narrows the trigger with every membership "
+            "check here still passing"
+        )
         assert not misscoped, (
             f"{WORKFLOW_PATH}: " + "; ".join(misscoped) + f", not {list(GUARD_TRIGGER_BRANCHES)}; a branch "
             "filter that omits the branch the guard reports into — or that names it and then excludes it — "
@@ -3124,6 +3209,59 @@ class TestGuardWiring:
                     f"{sorted(expected)}; a target running the guard without the position and deps ratchets "
                     "above can demote or drop it with nothing here to notice — add it to AGGREGATE_SITES"
                 )
+
+    def test_the_aggregate_discovery_reads_every_shape_it_claims(self) -> None:
+        """``_runs_task`` matches each shape it says it does, driven on literals rather than on the taskfiles.
+
+        Both pinned sites write the guard as a ``cmds:`` mapping carrying
+        ``task:``, and no target in the scanned taskfiles reaches it any other
+        way — read off those files rather than asserted here. So on the tree as
+        it stands that one arm is the only one the discovery above ever sees
+        return true, and every other arm could be broken with it still green: a
+        typo in the invocation pattern, a dropped ``:``-strip, a shorthand
+        reader that returns nothing for the list form. The shapes the helper
+        exists for are the ones a *future* aggregate might be written in, which
+        is exactly the case the discovery is there to catch.
+
+        Driven on synthetic targets for the reason
+        ``test_per_command_scan_reads_the_mapping_form`` gives for its own: a
+        helper is held to the shapes it claims to read, not to the shape the
+        tree happens to hold. Each shape is checked under both spellings of the
+        entry, because the helper's contract admits a leading ``:`` on either
+        side of the comparison and a strip dropped from one side reds nothing
+        otherwise.
+        """
+        name = ROUTING_TASK_NAME
+        shell = f"{TASK_INVOCATION} {name}"
+        shapes: dict[str, object] = {
+            "a deps entry": {"deps": [name]},
+            "a deps entry with a leading colon": {"deps": [f":{name}"]},
+            "a deps mapping": {"deps": [{"task": name}]},
+            "a deps mapping with a leading colon": {"deps": [{"task": f":{name}"}]},
+            "a cmds mapping": {"cmds": [{"task": name}]},
+            "a cmds mapping with a leading colon": {"cmds": [{"task": f":{name}"}]},
+            "a cmds mapping carrying command text": {"cmds": [{"cmd": shell}]},
+            "a cmds shell command": {"cmds": [shell]},
+            "the list shorthand": [shell],
+            "the string shorthand": shell,
+        }
+        for entry in (name, f":{name}"):
+            unread = sorted(shape for shape, target in shapes.items() if not _runs_task(target, entry))
+            assert not unread, (
+                f"_runs_task reads a target written as {unread} as running nothing, while every one of them "
+                f"runs {entry!r}; an aggregate written in one of those shapes reaches the guard without the "
+                "position and deps ratchets above, and the discovery beside this compares it against nothing"
+            )
+        prefixes: dict[str, object] = {
+            "a shell command invoking a longer name": {"cmds": [f"{shell}:extra"]},
+            "a deps entry naming a longer name": {"deps": [f"{name}:extra"]},
+        }
+        matched = sorted(shape for shape, target in prefixes.items() if _runs_task(target, name))
+        assert not matched, (
+            f"_runs_task reads {matched} as running {name!r}; a target carrying the pinned name only as a "
+            "prefix would then be pulled into AGGREGATE_SITES' comparison, which is what the whole-word "
+            "rationale at TASK_INVOCATION rests on"
+        )
 
     def test_wiring_taskfiles_declare_no_ambient_environment(self) -> None:
         """Neither wiring taskfile hands the guard an environment from the file level.
