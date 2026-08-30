@@ -82,11 +82,12 @@ there are two independent ones: a path that never invokes
 `docker/shared/python-security-gate.sh` bypasses Layer 2, and a path that
 overrides the entrypoint bypasses Layer 3. Neither implies the other — an
 unmodified entrypoint does not establish that the host-side gate ran.
-`test:dashboard`, the dashboard branches of both `ci/test_staged.sh`
-and `ci/test_changed.sh`, and the `sh:python-cli` and `sh:pytest-cli` shell
-tasks override the entrypoint, and none of them invokes the host-side gate,
-so both bypasses co-occur there. The Layer 1 hook denies the two shell tasks
-by name, which covers agent tool calls but not a human at a terminal.
+On the `python-cli` and `pytest-cli` containers, `test:dashboard`, the
+dashboard branches of both `ci/test_staged.sh` and `ci/test_changed.sh`, and
+the `sh:python-cli` and `sh:pytest-cli` shell tasks override the entrypoint,
+and none of them invokes the host-side gate, so both bypasses co-occur there.
+The Layer 1 hook denies the two shell tasks by name, which covers agent tool
+calls but not a human at a terminal.
 They come apart at `task run:adhoc`, the sanctioned ad-hoc Python path of
 [CLAUDE.md](../CLAUDE.md) §11: it enters through the unmodified `python-cli`
 entrypoint, so Layer 3 still validates the gate artifact, but it never invokes

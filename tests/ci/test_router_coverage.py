@@ -28,8 +28,11 @@ spelled.
 The floor's cost is unconditional: *any* run of this module that reaches fewer
 cases than the walk holds ends at ``UNRUN_WALK_EXIT``, whatever narrowed it and
 whether or not it was deliberate. A ``-k`` against this module ends there, and
-so does ``task test:scripts -- <pytest arguments>``, whose command threads it
-and names ``tests/ci/``. ``task test:routing`` runs the whole module.
+so does ``task test:scripts`` under a filter that narrows collection, since that
+target's command threads ``{{.CLI_ARGS}}`` and names ``tests/ci/``; passing
+``--ignore=tests/ci/test_router_coverage.py`` alongside the filter is what
+narrows the rest of that suite without ending on the floor.
+``task test:routing`` runs the whole module.
 """
 
 import atexit
@@ -373,6 +376,15 @@ TASKFILE_ENV: dict[str, dict[str, object]] = {
 #: defines a top-level ``env:`` as a map of variables available to the steps of
 #: *all* jobs in the workflow — the guard's job included. There is no workflow
 #: equivalent of ``dotenv``, so only the one key is read there.
+#: Known limit: both spellings mirror go-task's schema, which nothing here
+#: executes or reads, so a key renamed there leaves the scan for it looking past
+#: whatever go-task now calls it. What each spelling *is* held to is a subject
+#: inside this repository. ``AMBIENT_ENV_KEY`` has the file-level environment
+#: pinned at ``TASKFILE_ENV``, non-empty in one of the two files, so renaming it
+#: reds there. ``AMBIENT_DOTENV_KEY`` has no such subject — neither wiring
+#: taskfile declares one, and an absence holds for any name — so it is held
+#: against ``FORBIDDEN_ROUTING_TARGET_KEYS``, which forbids the same go-task key
+#: one scope down and spells it as a literal of its own.
 AMBIENT_ENV_KEY = "env"
 AMBIENT_DOTENV_KEY = "dotenv"
 
@@ -803,6 +815,11 @@ AGGREGATE_SCAN_PATHS: tuple[str, ...] = _aggregate_scan_paths()
 #: than through go-task's own ``task:`` key. ``_runs_task`` matches it as a
 #: whole word followed by the target name, so a longer name carrying one of the
 #: pinned entries as a prefix does not read as running it.
+#: That search is not what holds the word, in either direction: it reaches only
+#: a shell command spelling it, and a search reaching none passes for any word
+#: at all. So the word is held against the first one of ``GUARD_STEP_COMMAND``,
+#: which is itself pinned against the guard step's whole ``run:`` — what the
+#: search looks for is then what the workflow runs.
 TASK_INVOCATION = "task"
 
 #: A ``cmds:`` entry in the mapping form, used to drive ``_command_entries``
@@ -1217,6 +1234,10 @@ EXECUTED_ROUTER_CASES = 0
 #: that the count is over the walk rather than over every test in the module:
 #: what the floor asserts is that every tracked path was routed, and the wiring
 #: pins are a different claim, held by their own cases.
+#: Bound by the walk's own parametrize as well as read off the node, for the
+#: reason ``AGGREGATE_SITE_PARAM`` is: spelled as a literal on the binding side,
+#: it would be a hand-copy that keeps the reading side passing after the
+#: parametrize it claims to mirror is renamed.
 ROUTER_CASE_PARAM = "case"
 
 #: Status the floor ends the process with. Outside pytest's own exit codes, so a
@@ -1331,7 +1352,7 @@ def routing_probe(session_route: RouteFn) -> RoutingProbe:
 class TestRouterCoverage:
     """Every tracked path a router filters in reaches a test that exists."""
 
-    @pytest.mark.parametrize("case", ROUTER_CASES, ids=ROUTER_CASE_IDS)
+    @pytest.mark.parametrize(ROUTER_CASE_PARAM, ROUTER_CASES, ids=ROUTER_CASE_IDS)
     def test_tracked_path_reaches_a_collecting_target(
         self,
         case: RouterCase,
@@ -1850,6 +1871,42 @@ class TestExecutionFloorThreshold:
         )
 
 
+def _counter_fixture_source() -> str:
+    """
+    Slice the counting fixture's own block out of this module's source.
+
+    Read off the source rather than off the name the fixture decorator leaves
+    behind, which is a wrapper object rather than the function whose body pytest
+    runs. The source is located the way the two scans above locate it, by
+    resolving ``GUARD_MODULE`` against ``__file__``.
+
+    Returns:
+        The fixture's ``def`` line and every line indented under it.
+
+    Raises:
+        AssertionError: If ``GUARD_MODULE`` is not this module, or the source
+            does not carry exactly one module-level ``def`` of that name.
+    """
+    source_path = REPO_ROOT / GUARD_MODULE
+    assert source_path.resolve() == Path(__file__).resolve(), (
+        f"{GUARD_MODULE} is not this module, so the slice below reads the wrong source — repoint "
+        "GUARD_MODULE at wherever this guard now lives"
+    )
+    opening = f"def {_count_executed_router_case.__name__}("
+    lines = source_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    starts = [index for index, line in enumerate(lines) if line.startswith(opening)]
+    assert len(starts) == 1, (
+        f"{GUARD_MODULE} carries {len(starts)} module-level {opening!r} lines, not exactly 1; the pin below "
+        "has no single block to read, so it would report on whichever one it happened to slice"
+    )
+    start = starts[0]
+    end = next(
+        (index for index in range(start + 1, len(lines)) if lines[index].strip() and not lines[index].startswith((" ", "\t"))),
+        len(lines),
+    )
+    return "".join(lines[start:end]).rstrip("\n") + "\n"
+
+
 class NodeCallspec(NamedTuple):
     """A parametrized node's ``callspec``, as the walk-case predicate reads it.
 
@@ -1874,14 +1931,23 @@ class TestWalkCasePredicate:
     count to zero either way, so neither observes the difference. The slack
     grows with every non-walk parametrize added.
 
+    The predicate is a conjunction of an argument *name* and the type bound to
+    it, and the two halves need a negative case each: negatives that all differ
+    in the name leave the type half carrying nothing.
+
+    The counter's one call to the predicate is pinned here as well. Everything
+    below can hold while the fixture stops consulting it — testing the node's
+    ``callspec`` inline instead — and nothing else in this module reads that
+    call site.
+
     Driven on stand-in callspecs rather than in a third child process, for the
     reason ``TestExecutionFloorThreshold`` gives.
     """
 
     def test_only_a_walk_parameter_is_counted(self) -> None:
-        """A walk case counts; an aggregate-site case and an unparametrized node do not."""
+        """A walk case counts; an aggregate-site case, a wrongly typed binding of the walk's own argument, and an unparametrized node do not."""
         assert ROUTER_CASES, "the walk is empty, which leaves the positive case below vacuous"
-        assert AGGREGATE_SITES, "no aggregate sites are pinned, which leaves the negative case below vacuous"
+        assert AGGREGATE_SITES, "no aggregate sites are pinned, which leaves the negative cases below vacuous"
         assert _is_walk_case(NodeCallspec({ROUTER_CASE_PARAM: ROUTER_CASES[0]})), (
             f"a node binding {ROUTER_CASE_PARAM!r} to a {RouterCase.__name__} does not count as a walk case, "
             "so the count stays at zero through the whole walk and the floor reds every complete run"
@@ -1891,9 +1957,139 @@ class TestWalkCasePredicate:
             "this module's other parametrizations, so it stops standing on the walk and the slack grows with "
             "every one added"
         )
+        assert not _is_walk_case(NodeCallspec({ROUTER_CASE_PARAM: AGGREGATE_SITES[0]})), (
+            f"a node binding {ROUTER_CASE_PARAM!r} to {type(AGGREGATE_SITES[0]).__name__} counts as a walk "
+            f"case; the other negatives here differ in the argument name, so the predicate's type half would "
+            f"carry nothing and a later parametrize reusing {ROUTER_CASE_PARAM!r} — a name generic enough to "
+            "be reached for — would be counted into the floor's tally"
+        )
         assert not _is_walk_case(None), (
             "a node pytest did not parametrize counts as a walk case; the wiring pins here are such nodes, so "
             "the floor's count would take in cases that assert nothing about routing"
+        )
+
+    def test_the_counter_reaches_the_predicate(self) -> None:
+        """The counting fixture's body calls the predicate the cases above hold.
+
+        A body testing the node's ``callspec`` directly counts every
+        parametrized node in this module, and every case above stays green
+        while it does: the predicate keeps each property asserted of it and is
+        simply no longer consulted. That is the same gap
+        ``TestOutOfCaseAssertionsAreCalled`` names for the two assertions that
+        run outside a case body, one seam across.
+
+        Read as source text, so a mention of the predicate inside that block
+        satisfies it. What it closes is the body that stops naming the
+        predicate at all.
+        """
+        body = _counter_fixture_source()
+        call = f"{_is_walk_case.__name__}("
+        assert call in body, (
+            f"the {_count_executed_router_case.__name__} block does not call {call}:\n{body}\n"
+            "the floor's count then rests on whatever that body tests instead, which nothing here reads — "
+            "count through the predicate the cases above do read"
+        )
+
+
+#: A long option pytest does not define, written into the ambient add-options
+#: variable to observe pytest reading that variable at all. Nothing is assumed
+#: about the spelling: were pytest to define it, the child below would collect
+#: cleanly and the case would red rather than pass.
+UNRECOGNISED_PYTEST_OPTION = "--not-a-pytest-option"
+
+
+class TestConstantSafetyProperties:
+    """Properties a constant's own comment states about its value, asserted rather than described.
+
+    A comment saying what makes a constant load-bearing — that a status is
+    outside pytest's own, that a word is the one some other tool reads — is a
+    claim about the *value*, and a value nothing holds to its claim can be
+    edited with every other case in this module green. Each case here is that
+    claim for one constant, and a comment making such a claim needs one.
+
+    What belongs here is a claim about a value. A claim about the code that
+    reads a constant is held where that code is exercised.
+    """
+
+    def test_the_floors_exit_status_is_none_of_pytests_own(self) -> None:
+        """``UNRUN_WALK_EXIT`` is outside pytest's exit codes, the forgiven one included.
+
+        Both routers map a no-tests-collected pytest exit to success, so a
+        status set to that one retires the floor outright in the containerised
+        channel: the process still ends on it, and the router reads the result
+        as a run that collected nothing and reports success. Every other pin on
+        the status compares it against itself — the children assert the exit
+        they were told to expect, the threshold case compares a list of it — so
+        none of them observes the value at all.
+        """
+        verdicts = {int(code) for code in pytest.ExitCode}
+        assert NO_TESTS_COLLECTED_EXIT in verdicts, (
+            f"pytest.ExitCode does not carry {NO_TESTS_COLLECTED_EXIT}, the no-tests-collected status both "
+            "routers forgive, so it is not the set this comparison should be reading"
+        )
+        assert UNRUN_WALK_EXIT not in verdicts, (
+            f"UNRUN_WALK_EXIT is {UNRUN_WALK_EXIT}, which is pytest's own {pytest.ExitCode(UNRUN_WALK_EXIT)!r}; "
+            "a run ended by the floor is then indistinguishable from one of pytest's own verdicts, and at the "
+            "no-tests-collected status both routers forgive it outright"
+        )
+
+    def test_pytest_reads_options_from_the_ambient_variable(self) -> None:
+        """Pytest takes command-line options from the variable ``AMBIENT_ADDOPTS_ENV_VAR`` names.
+
+        The import-time scan, the emptiness pin and the child that drives the
+        scan all read or write whatever this constant says, so all three hold
+        for a variable pytest ignores — while a real ``PYTEST_ADDOPTS`` reaches
+        every channel unscreened. This drives the name against pytest itself:
+        the child is handed an option pytest does not define, by that variable
+        and by nothing else, and has to fail on it.
+
+        The child's command line is the collection probe's own argument vector,
+        which the scan and the floor both exempt, so the variable is the only
+        thing that can end it.
+        """
+        result = run_this_module(PROBE_ARGUMENTS, ambient=UNRECOGNISED_PYTEST_OPTION)
+        rendered = result.stdout + result.stderr
+        assert result.returncode not in (COLLECTED_EXIT, NO_TESTS_COLLECTED_EXIT), (
+            f"a child handed {UNRECOGNISED_PYTEST_OPTION!r} through ${AMBIENT_ADDOPTS_ENV_VAR} exited "
+            f"{result.returncode}, which is a collection that went through; pytest reads its extra options "
+            f"from some other variable, so every channel screened through this one screens nothing\n{rendered}"
+        )
+        assert result.returncode != UNRUN_WALK_EXIT, (
+            "the child exited on the floor rather than on the option; the probe's own argument vector is "
+            f"exempt from the floor, so this pin would stop reading the variable at all\n{rendered}"
+        )
+        assert UNRECOGNISED_PYTEST_OPTION in rendered, (
+            f"the child failed without naming {UNRECOGNISED_PYTEST_OPTION!r}, so what red it is not the "
+            f"option ${AMBIENT_ADDOPTS_ENV_VAR} carried\n{rendered}"
+        )
+
+    def test_the_forbidden_dotenv_key_is_spelled_the_same_at_both_scopes(self) -> None:
+        """``AMBIENT_DOTENV_KEY`` is the key the target-level forbidden list carries too.
+
+        The file-level check is a bare absence, and a key nothing declares is
+        absent whatever it is called, so the constant renamed on its own leaves
+        that check passing over a real ``dotenv:``. What that rename has to red
+        against is recorded at ``AMBIENT_DOTENV_KEY``, along with what neither
+        spelling is held against.
+        """
+        assert FORBIDDEN_ROUTING_TARGET_KEYS, "the forbidden-key list is empty, which leaves this check vacuous"
+        assert AMBIENT_DOTENV_KEY in FORBIDDEN_ROUTING_TARGET_KEYS, (
+            f"the file-level scan forbids {AMBIENT_DOTENV_KEY!r} while the target-level list forbids "
+            f"{list(FORBIDDEN_ROUTING_TARGET_KEYS)}; those screen one go-task key at two scopes, and a "
+            "spelling only one of them carries is a scope screening a key nothing can declare"
+        )
+
+    def test_the_shell_task_invocation_is_the_one_the_workflow_runs(self) -> None:
+        """``TASK_INVOCATION`` is the word the guard's own CI step invokes go-task by.
+
+        Why the word needs a subject outside ``_runs_task``, and why this is the
+        subject it gets, is recorded at ``TASK_INVOCATION``.
+        """
+        invoked = GUARD_STEP_COMMAND.split()[:1]
+        assert invoked == [TASK_INVOCATION], (
+            f"_runs_task searches command text for {TASK_INVOCATION!r} while the guard step runs go-task as "
+            f"{invoked}; an aggregate reaching the guard through a shell command would then be invisible to "
+            "the discovery that holds every such aggregate to the position and deps ratchets"
         )
 
 
@@ -2318,6 +2514,9 @@ class TestGuardWiring:
     constant the case reads, and point at it from the docstring rather than
     restating it. A rationale kept in two places drifts, and the constant is
     the copy the failure message is written next to.
+    Known limit: nothing enforces it. A case restating a rationale its constant
+    already carries, and a case reading a constant that carries none, both pass
+    like any other.
     """
 
     def test_workflow_runs_the_guard_unconditionally(self) -> None:

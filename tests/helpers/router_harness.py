@@ -641,6 +641,14 @@ def tracked_paths() -> tuple[str, ...]:
     protected command scope, which is the scope ``safe.directory`` requires.
     Where the uid already matches, the option changes nothing.
 
+    Deviation recorded rather than resolved: ``.claude/rules/lang.python.md``
+    prefers GitPython to ``subprocess`` for git operations, and GitPython is in
+    the root requirements file both channels this runs in install from — the
+    host-side venv and the ``pytest-cli`` image — so availability is not what
+    excludes it. What a swap would have to keep is the NUL-delimited listing and
+    the protected command scope the ``-c`` above needs; neither has been checked
+    against GitPython's API.
+
     Returns:
         Repository-relative tracked paths, in ``git ls-files`` order.
 
