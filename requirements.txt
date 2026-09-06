@@ -1,5 +1,5 @@
 alembic==1.19.1
-boto3==1.43.83
+boto3==1.43.87
 chromadb==1.5.9
 defopt==7.0.0
 docker==7.2.0
