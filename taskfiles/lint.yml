@@ -240,6 +240,41 @@ tasks:
         pytest-cli
         pytest tests/lint/test_reviewer_envelope_required.py -v
 
+  writing-style:
+    desc: >-
+      Check that the PR Writing Style block in docs/pr_protocol.md and
+      .claude/rules/pr.artifacts.md stays byte-identical apart from the
+      two differences their guard comment sanctions: the Collapsible
+      Details Convention above/below pointer and the lead sentence only
+      docs/pr_protocol.md carries. The third copy,
+      .github/instructions/pr.artifacts.instructions.md, is a
+      deliberately non-identical mirror and is out of scope.
+      Part of the aggregate `task lint`.
+      Uses the `run` mode of python-security-gate.sh (path-validated,
+      .py-only, git-tracked) rather than `lint` mode whose allowlist is
+      restricted to ruff/mypy/specific lint scripts. `run` mode never
+      inspects the file's contents, and `lint:*` is an enumerated allow
+      entry in .claude/settings.json so this target executes without a
+      user prompt — so python-cli keeps its default entrypoint, which
+      supplies the gate-token TTL check and the ruff S-rule rescan. That
+      rescan only fires when the container's argv[0] is `python3`.
+    env:
+      # Bound rather than interpolated for the reason spelled out on
+      # lint:reviewer-templates-fix above.
+      WORKSPACE_ROOT: '{{.ROOT_DIR}}'
+    cmds:
+      # Built ahead of the gate: an on-demand build of a missing image can
+      # outlast the token's 120s TTL and surface as a gate expiry.
+      - docker compose build python-cli
+      - >-
+        ./docker/shared/python-security-gate.sh run
+        scripts/verify_writing_style.py
+      - defer: rm -f tmp/.python-gate-pass
+      - >-
+        docker compose run --rm
+        -v "$WORKSPACE_ROOT/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro"
+        python-cli python3 scripts/verify_writing_style.py
+
   python-sql:
     desc: Check Python files for SQL wildcard projections (SELECT *, RETURNING *)
     cmds:
