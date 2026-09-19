@@ -263,13 +263,13 @@ tasks:
       # lint:reviewer-templates-fix above.
       WORKSPACE_ROOT: '{{.ROOT_DIR}}'
     cmds:
-      # Built ahead of the gate: an on-demand build of a missing image can
-      # outlast the token's 120s TTL and surface as a gate expiry.
+      - defer: rm -f tmp/.python-gate-pass
+      # Keep the build above the gate call: a build that runs after the token is
+      # stamped can outlast its 120s TTL and fail the run below as a gate expiry.
       - docker compose build python-cli
       - >-
         ./docker/shared/python-security-gate.sh run
         scripts/verify_writing_style.py
-      - defer: rm -f tmp/.python-gate-pass
       - >-
         docker compose run --rm
         -v "$WORKSPACE_ROOT/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro"

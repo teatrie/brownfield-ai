@@ -24,10 +24,14 @@ tasks:
           echo "{{.CLI_ARGS}}" | grep -qvE '(^|\s)(-c|-m)\b'
         msg: "Flags -c and -m are not allowed"
     cmds:
+      - defer: rm -f tmp/.python-gate-pass
+      # Keep the build above the stamp: a build that runs after the token is
+      # stamped can outlast its 120s TTL and fail the run below as a gate expiry.
+      # Its progress goes to stderr so the script's stdout stays clean.
+      - docker compose build python-cli 1>&2
       - >-
         mkdir -p tmp &&
         echo "GATE_PASS=$(date +%s):adhoc" > tmp/.python-gate-pass
-      - defer: rm -f tmp/.python-gate-pass
       - >-
         docker compose run --rm
         -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro

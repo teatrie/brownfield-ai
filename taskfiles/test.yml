@@ -63,9 +63,11 @@ tasks:
     desc: Run tests for src/brownfield_ai
     deps: [purge-envs]
     cmds:
-      - ./docker/shared/python-security-gate.sh test tests/src/brownfield_ai/
       - defer: rm -f tmp/.python-gate-pass
+      # Keep the build above the gate call: a build that runs after the token is
+      # stamped can outlast its 120s TTL and fail the run below as a gate expiry.
       - docker compose build pytest-cli
+      - ./docker/shared/python-security-gate.sh test tests/src/brownfield_ai/
       - >-
         docker compose run --rm --user agent
         -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
@@ -129,8 +131,11 @@ tasks:
     # whole run at exit 70.
     # Pass --ignore=tests/ci/test_router_coverage.py alongside the filter.
     cmds:
-      - ./docker/shared/python-security-gate.sh test tests/ci/ tests/scripts/ tests/hooks/ tests/helpers/
       - defer: rm -f tmp/.python-gate-pass
+      # Keep the build above the gate call: a build that runs after the token is
+      # stamped can outlast its 120s TTL and fail the run below as a gate expiry.
+      - docker compose build pytest-cli
+      - ./docker/shared/python-security-gate.sh test tests/ci/ tests/scripts/ tests/hooks/ tests/helpers/
       - >-
         docker compose run --rm --user agent
         -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
@@ -210,8 +215,11 @@ tasks:
       - sh: docker info > /dev/null 2>&1
         msg: Docker daemon must be running for integration tests.
     cmds:
-      - ./docker/shared/python-security-gate.sh test tests/integration/
       - defer: rm -f tmp/.python-gate-pass
+      # Keep the build above the gate call: a build that runs after the token is
+      # stamped can outlast its 120s TTL and fail the run below as a gate expiry.
+      - docker compose build pytest-cli
+      - ./docker/shared/python-security-gate.sh test tests/integration/
       - >-
         docker compose run --rm --user agent
         -v {{.ROOT_DIR}}/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro
