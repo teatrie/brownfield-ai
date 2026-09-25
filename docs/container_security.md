@@ -201,6 +201,33 @@ The timestamp has a 120-second TTL enforced by Layer 3. The SHA-256 hash is
 included for audit trail purposes; Layer 3 does not re-verify it (command
 binding is enforced at Layer 2).
 
+A call site whose container run keeps the gate entrypoint must ensure the image
+is built **before the token is stamped** — via a `docker compose build` command
+ahead of that point. `docker compose run` builds a missing image implicitly, so
+a site carrying no build line is not exempt, though making the build explicit
+costs a `docker compose build` on every invocation. A cold build after the stamp
+can consume the whole 120-second budget, and the run then fails with `ERROR:
+Gate artifact expired`, which reads as a gate violation rather than a slow
+build. A run passing `--entrypoint ""` never reaches the TTL check, but it
+bypasses Layer 3 entirely — including the ruff S-rule and conftest scans — so it
+is not a substitute for this ordering.
+
+No test enforces this ordering: the router contracts in `tests/ci/` do execute
+`run_pytest_docker` in `ci/test_staged.sh` and `ci/test_changed.sh`, but an
+ordering assertion there would first need an argv-recording `docker` stub,
+because the current one swallows the build and the run identically. That remedy
+also covers only the two `ci/*.sh` sites: no `taskfiles/` path matches either
+router's path regex, so closing the gap needs a `taskfiles/` routing branch in
+both routers and not only a stub. Follow-up work is tracked in `TODO-0368`.
+
+A known set of `python-cli` task targets does not yet comply: gated targets in
+`taskfiles/ledger.yml`, `taskfiles/findings.yml`, `taskfiles/todo.yml`, and
+`taskfiles/chromadb.yml` stamp the token and keep the gate entrypoint with no
+build line. They are agent hot-loop paths where a per-invocation build is its
+own latency and behaviour decision — `taskfiles/findings.yml` documents
+`findings:apply-batch` as existing to amortise container startup — and are
+tracked in `TODO-0366`.
+
 Taskfile tasks that invoke this script before entering the container route
 through the gate, and a `defer` cleanup step removes the artifact after each
 task completes. That is most of the Python container tasks, and the rule for

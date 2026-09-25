@@ -27,9 +27,11 @@ run_pytest_docker() {
         return 0
     fi
     trap 'rm -f "tmp/.python-gate-pass"' RETURN
+    # Keep the build above the gate call: a build that runs after the token is
+    # stamped can outlast its 120s TTL and fail the run below as a gate expiry.
+    docker compose build pytest-cli
     ./docker/shared/python-security-gate.sh test "$@"
     echo "Running pytest (Docker) with $*"
-    docker compose build pytest-cli
     set +e
     docker compose run --rm --user agent \
         -v "$(pwd)/tmp/.python-gate-pass:/tmp/.python-gate-pass:ro" \
