@@ -145,7 +145,7 @@ defeats the workspace's headless-safe allowlist.
 
 ```bash
 task agent:review:gemini:local -- ROUND=3 EFFORT=high GEMINI_MODEL=gemini-3.1-pro-high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
-task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+task agent:review:codex -- ROUND=3 EFFORT=medium REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 task agent:review:copilot -- ROUND=3 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
 

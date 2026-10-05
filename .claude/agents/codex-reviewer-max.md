@@ -32,12 +32,7 @@ Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-revie
 **Plan-review example at `max` effort (frontier reservation)**:
 
 ```bash
-# Local (OAuth)
 task agent:review:codex:local -- ROUND=1 EFFORT=max MODEL=gpt-6-sol \
-  REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
-
-# Container (API-key)
-task agent:review:codex -- ROUND=1 EFFORT=max \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 ```
 
