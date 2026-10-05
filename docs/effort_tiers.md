@@ -292,7 +292,7 @@ Three canonical invocations, one per family, at `-xhigh`:
 ```text
 Agent(subagent_type="code-review-xhigh")   # Claude native — subagent
                                           # dispatch; no task alias exists
-task agent:review:codex:local -- ROUND=1 EFFORT=xhigh REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+task agent:review:codex:local -- ROUND=1 EFFORT=xhigh MODEL=gpt-6-sol REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 task agent:review:gemini:local -- ROUND=1 EFFORT=xhigh GEMINI_MODEL=gemini-3.1-pro-preview REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
 
