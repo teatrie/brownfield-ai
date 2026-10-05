@@ -64,8 +64,8 @@ task, matching the cross-family equivalence table:
 
 | Tier | Gemini Model | Codex Equivalent | Claude Equivalent |
 |------|-------------|------------------|-------------------|
-| **Pro** | `gemini-3.1-pro-preview` | `gpt-5.4` | Opus |
-| **Flash** | `gemini-3-flash-preview` | `gpt-5.3-codex` | Sonnet |
+| **Pro** | `gemini-3.1-pro-preview` | `gpt-6-sol` | Opus |
+| **Flash** | `gemini-3-flash-preview` | `gpt-6-luna` | Sonnet |
 
 **Tier selection by agent variant** (no per-call decision — pinned to the variant):
 

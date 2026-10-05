@@ -145,7 +145,7 @@ defeats the workspace's headless-safe allowlist.
 
 ```bash
 task agent:review:gemini:local -- ROUND=3 EFFORT=high GEMINI_MODEL=gemini-3.1-pro-high
-task agent:review:codex -- ROUND=3 EFFORT=high MODEL=o3-mini
+task agent:review:codex -- ROUND=3 EFFORT=high MODEL=gpt-6-sol
 task agent:review:copilot -- ROUND=3
 ```
 

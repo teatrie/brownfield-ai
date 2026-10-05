@@ -28,7 +28,7 @@ Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-revie
 **Plan-review example at `high` effort**:
 
 ```bash
-task agent:review:codex:local -- ROUND=1 EFFORT=high MODEL=gpt-5.4 \
+task agent:review:codex:local -- ROUND=1 EFFORT=high MODEL=gpt-6-sol \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 ```
 
