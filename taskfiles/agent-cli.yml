@@ -53,7 +53,7 @@ tasks:
       Execute codex review inside agent-cli container.
 
       Caller values via CLI_ARGS (KEY=value after `--`):
-        task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt MODEL=gpt-6-sol
+        task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
       Keys this target consumes: ROUND, EFFORT, REVIEW_SESSION_ID,
       WORKSPACE, MODEL, REVIEW_TYPE, DIFF_FILE.
       The shim allowlist is global (see review:gemini desc), not

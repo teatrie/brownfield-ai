@@ -37,7 +37,7 @@ task agent:review:codex:local -- ROUND=1 EFFORT=max MODEL=gpt-6-sol \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 
 # Container (API-key)
-task agent:review:codex -- ROUND=1 EFFORT=max MODEL=gpt-6-sol \
+task agent:review:codex -- ROUND=1 EFFORT=max \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 ```
 

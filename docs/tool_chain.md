@@ -144,9 +144,9 @@ defeats the workspace's headless-safe allowlist.
 **Correct — values travel through `CLI_ARGS`:**
 
 ```bash
-task agent:review:gemini:local -- ROUND=3 EFFORT=high GEMINI_MODEL=gemini-3.1-pro-high
-task agent:review:codex -- ROUND=3 EFFORT=high MODEL=gpt-6-sol REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
-task agent:review:copilot -- ROUND=3
+task agent:review:gemini:local -- ROUND=3 EFFORT=high GEMINI_MODEL=gemini-3.1-pro-high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+task agent:review:codex -- ROUND=3 EFFORT=high REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+task agent:review:copilot -- ROUND=3 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
 
 **Denied — inline env-var prefix:**

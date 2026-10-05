@@ -65,7 +65,7 @@ task, matching the cross-family equivalence table:
 | Tier | Gemini Model | Codex Equivalent | Claude Equivalent |
 |------|-------------|------------------|-------------------|
 | **Pro** | `gemini-3.1-pro-preview` | `gpt-6-sol` | Opus |
-| **Flash** | `gemini-3-flash-preview` | caller-supplied via `MODEL` | Sonnet |
+| **Flash** | `gemini-3-flash-preview` | caller-supplied via `MODEL`; the CLI's own default when unset | Sonnet |
 
 **Tier selection by agent variant** (no per-call decision — pinned to the variant):
 
