@@ -32,18 +32,14 @@ Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-revie
 **Plan-review example at `max` effort (frontier reservation)**:
 
 ```bash
-# Local (OAuth) — gpt-6-sol is the MAX-tier model
+# Local (OAuth)
 task agent:review:codex:local -- ROUND=1 EFFORT=max MODEL=gpt-6-sol \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 
-# Container (API-key) — the MAX example uses gpt-6-sol in both contexts.
+# Container (API-key)
 task agent:review:codex -- ROUND=1 EFFORT=max MODEL=gpt-6-sol \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 ```
-
-**Cost note**: Per-review cost on the GPT-6 models has not been
-measured. See the Model Selection Matrix in
-[codex-reviewer.md](codex-reviewer.md#model-selection-matrix).
 
 ---
 

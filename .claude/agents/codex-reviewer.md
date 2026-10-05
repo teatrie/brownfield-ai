@@ -167,20 +167,18 @@ Effort Value Comes From".
 
 | Context | Model | Rationale |
 |---|---|---|
-| Default code review | caller-supplied via `MODEL`; the CLI's own default when unset | Pass `MODEL=gpt-6-luna` for the medium tier. |
-| Plan reviews (architecture/design) | `gpt-6-sol` | OpenAI positions it for "ambiguous, difficult, or high-value tasks that need extra analysis, judgment, or polish". |
-| Large diffs (>1000 lines) | `gpt-6-sol` | OpenAI positions it for "ambiguous, difficult, or high-value tasks that need extra analysis, judgment, or polish". |
-| Rework plan reviews (MAX tier) | `gpt-6-sol` | OpenAI positions it for "ambiguous, difficult, or high-value tasks that need extra analysis, judgment, or polish". Used for the MAX tier in both host and container contexts. |
+| Default code review | caller-supplied via `MODEL`; the CLI's own default when unset | — |
+| Plan reviews (architecture/design) | `gpt-6-sol` | Deep-reasoning Codex model; the `high`, `xhigh` and `max` rows of the effort table below all use it. |
+| Large diffs (>1000 lines) | `gpt-6-sol` | Same model as plan reviews. |
+| Rework plan reviews (MAX tier) | `gpt-6-sol` | Same model as plan reviews. |
 
 The Orchestrator selects the model by passing `MODEL` as a `KEY=value`
-CLI_ARG (e.g., `MODEL=gpt-6-sol` or `MODEL=gpt-6-luna`), never as an
+CLI_ARG (e.g., `MODEL=gpt-6-sol`), never as an
 exported shell variable, per the **CLI Invocation** section above. The
 wrapper forwards the value as `-m` to `codex exec`. When `MODEL` is
 unset the wrapper passes no `-m` at all and the run takes the CLI's own
 default model — no config layer supplies one (see the TODO-0228 note
 above).
-
-Per-review cost on the GPT-6 models has not been measured.
 
 ---
 
@@ -202,8 +200,8 @@ internal reasoning level. This is why `EFFORT=medium` maps to
 |----------|-------------------------------|-------|-------------------|
 | `medium` | `high` | caller-supplied via `MODEL`; the CLI's own default when unset | Sonnet `high` |
 | `high`   | `high` | `gpt-6-sol` (caller-supplied via `MODEL`) | Opus 4.7 `high` |
-| `xhigh`  | `xhigh` | `gpt-6-sol` | Opus 4.7 `xhigh` |
-| `max`    | `xhigh` (ceiling collision) | `gpt-6-sol` | Opus 4.7 `max` |
+| `xhigh`  | `xhigh` | `gpt-6-sol` (caller-supplied via `MODEL`) | Opus 4.7 `xhigh` |
+| `max`    | `xhigh` (ceiling collision) | `gpt-6-sol` (caller-supplied via `MODEL`) | Opus 4.7 `max` |
 
 **Ceiling collision**: Codex tops out at `xhigh` — `EFFORT=max`
 collapses to `xhigh` at wrapper composition time. See

@@ -79,7 +79,6 @@ translation without inspecting the wrapper.
 > reviewers; if a caller wants cheaper execution, they should pick a
 > lower model tier (Flash / Sonnet) at HIGH internal
 > setting rather than a high-capacity model at LOW internal.
-> On Codex, the suggested medium-tier `MODEL` is `gpt-6-luna`.
 
 ### Design Rationale — MEDIUM = lower model at HIGH internal setting
 
