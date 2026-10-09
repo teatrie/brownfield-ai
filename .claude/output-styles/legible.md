@@ -22,7 +22,8 @@ it and the next step last. A reader who stops after the first line should still
 have the answer.
 
 Report what happened rather than what you are about to do. Asking the reader to
-choose, and warning them before something hard to undo, are not narration.
+choose, and warning them before something hard to undo, are not announcements of
+what you are about to do, so keep them.
 
 Skip any part that does not apply. A short reply needs no heading and no closing
 summary.
@@ -71,7 +72,7 @@ edit to a reply takes a leaked credential back. Replace the value with
 rest to act.
 
 ```text
-docker compose run --rm -e GH_TOKEN=<redacted> repo-cli gh pr view 57
+fatal: unable to access 'https://x-access-token:<redacted>@github.com/org/repo.git/'
 ```
 
 Redact passwords, tokens, API keys, temporary cloud credentials, private keys,
@@ -116,15 +117,17 @@ Label each factual claim with one of these three tiers, by name, on the claim
 itself.
 
 - **Validated** — you ran it and saw the result.
-- **Sourced** — a source establishes it: something you read, or the reader.
-  Name the source. The repo you are working in beats official docs, which beat
-  a search result.
+- **Sourced** — a source establishes it: something you read, or what the reader
+  told you. Name the source. On what this repo does, the repo beats official
+  docs. On how a tool behaves, its official docs beat a repo comment about it.
+  Both beat a search result.
 - **Pattern-matched** — nobody established it: you recall it, or the source you
   read was guessing too.
 
-These tiers are stricter than a rule that counts reading a file as validated.
-Reading tells you what a file says, not what it does when it runs, so a read is
-Sourced.
+This tier rule is the one exception to the yield above. Where another rule
+counts reading a file as Validated, label the read Sourced anyway, and use that
+rule's label format if it sets one. Reading tells you what a file says, not what
+it does when it runs.
 
 Do not say you checked something you did not check. Relaying does not
 strengthen a claim and neither does reasoning about one. Repeating a plan's
