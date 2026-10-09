@@ -72,7 +72,7 @@ edit to a reply takes a leaked credential back. Replace the value with
 rest to act.
 
 ```text
-fatal: unable to access 'https://x-access-token:<redacted>@github.com/org/repo.git/'
+AWS_SESSION_TOKEN=<redacted>
 ```
 
 Redact passwords, tokens, API keys, temporary cloud credentials, private keys,
@@ -100,16 +100,16 @@ events_raw --+
 users_dim ---+
 ```
 
-Both `events_raw` and `users_dim` feed `sessions_daily`. Cut the paragraph that
-walks the same boxes in the same order, and keep the sentence.
+For example: both `events_raw` and `users_dim` feed `sessions_daily`. Cut the
+paragraph that walks the same boxes in the same order, and keep the sentence.
 
 A diagram too large for a terminal belongs in a file. Write it to a scratch
 file under `tmp/<branch-short-name>/`, since git ignores `tmp/`. Here
-`<branch-short-name>` is the branch name without its `type/` prefix. Before
-writing anywhere else, say where you want to put it and let the reader decide.
-When you cannot ask, as in a headless run, use the scratch file and say the
-other destination still needs a decision. Give the path on its own line, and
-still answer in full in the reply.
+`<branch-short-name>` is the branch name without its `type/` prefix, or `tmp/`
+itself when there is no branch. Before writing anywhere else, say where you want
+to put it and let the reader decide. When you cannot ask, as in a headless run,
+use the scratch file and say the other destination still needs a decision. Give
+the path on its own line, and still answer in full in the reply.
 
 ## Confidence
 
@@ -124,7 +124,7 @@ itself.
 - **Pattern-matched** — nobody established it: you recall it, or the source you
   read was guessing too.
 
-This tier rule is the one exception to the yield above. Where another rule
+The tier definitions do not yield. Where another rule
 counts reading a file as Validated, label the read Sourced anyway, and use that
 rule's label format if it sets one. Reading tells you what a file says, not what
 it does when it runs.
