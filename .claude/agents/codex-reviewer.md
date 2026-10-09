@@ -149,11 +149,11 @@ The agent does NOT invoke `codex` directly — all CLI construction is
 encapsulated in the wrapper script.
 
 **Optional per-round model selection**: The Orchestrator may pass a
-`MODEL` CLI_ARG (e.g., `MODEL=gpt-5.4`) to select the model for the
+`MODEL` CLI_ARG (e.g., `MODEL=gpt-6-sol`) to select the model for the
 current round:
 
 ```bash
-task agent:review:codex:local -- ROUND=$ROUND EFFORT=high MODEL=gpt-5.4 REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+task agent:review:codex:local -- ROUND=$ROUND EFFORT=high MODEL=gpt-6-sol REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
 
 The profile itself pins nothing today — its `[profiles.reviewer]`
@@ -167,24 +167,18 @@ Effort Value Comes From".
 
 | Context | Model | Rationale |
 |---|---|---|
-| Default code review | caller-supplied via `MODEL`; the CLI's own default when unset | Pass `MODEL=gpt-5.3-codex` for the review-optimized, cheapest option. No `gpt-5.5-codex` SKU exists yet (as of 2026-04-24). |
-| Plan reviews (architecture/design) | `gpt-5.4` | Strongest reasoning for structural analysis at sustainable cost. |
-| Large diffs (>1000 lines) | `gpt-5.4` | 1M-context capacity shared with gpt-5.5 — no upgrade benefit at this scale. |
-| Rework plan reviews (MAX tier) | `gpt-5.5` (local OAuth) / `gpt-5.4` (container API-key) | Frontier-tier ceiling. gpt-5.5 leads on Terminal-Bench 2.0 (82.7%) and Expert-SWE long-horizon coding; 2× the per-token cost of gpt-5.4 ($5/$30 vs $2.50/$15 per 1M tokens) is justified only at low-volume frontier reviews. **Auth constraint**: gpt-5.5 is currently OAuth-only in Codex CLI. **Operator selection, not runtime auto-downgrade**: on an auth error the `ERROR_CLASS="auth"` branch in `scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with `error_class=auth` and stops — no retry, no downgrade — but it **exits 0**, so the caller must read `tmp/codex-exit.json` rather than the process exit status. Container-mode callers MUST pass `MODEL=gpt-5.4` explicitly until OpenAI ships API-key support for gpt-5.5. |
+| Default code review | caller-supplied via `MODEL`; the CLI's own default when unset | — |
+| Plan reviews (architecture/design) | `gpt-6-sol` | Deep-reasoning Codex model; the `high`, `xhigh` and `max` rows of the effort table below all use it. |
+| Large diffs (>1000 lines) | `gpt-6-sol` | Same model as plan reviews. |
+| Rework plan reviews (MAX tier) | `gpt-6-sol` | Same model as plan reviews. |
 
 The Orchestrator selects the model by passing `MODEL` as a `KEY=value`
-CLI_ARG (e.g., `MODEL=gpt-5.5` or `MODEL=gpt-5.4`), never as an
+CLI_ARG (e.g., `MODEL=gpt-6-sol`), never as an
 exported shell variable, per the **CLI Invocation** section above. The
 wrapper forwards the value as `-m` to `codex exec`. When `MODEL` is
 unset the wrapper passes no `-m` at all and the run takes the CLI's own
 default model — no config layer supplies one (see the TODO-0228 note
 above).
-
-**Cost reference (2026-04-24)**: gpt-5.4 at $2.50/$15 per 1M
-input/output tokens; gpt-5.5 at $5.00/$30; gpt-5.3-codex
-review-optimized below gpt-5.4. A typical 100K-input + 20K-output
-review costs ~$0.55 on gpt-5.4 and ~$1.10 on gpt-5.5 — confining
-gpt-5.5 to MAX-tier rework keeps the cost delta bounded.
 
 ---
 
@@ -205,9 +199,9 @@ internal reasoning level. This is why `EFFORT=medium` maps to
 | `EFFORT` | Codex `model_reasoning_effort` | Model | Claude Equivalent |
 |----------|-------------------------------|-------|-------------------|
 | `medium` | `high` | caller-supplied via `MODEL`; the CLI's own default when unset | Sonnet `high` |
-| `high`   | `high` | `gpt-5.4` (caller-supplied via `MODEL`) | Opus 4.7 `high` |
-| `xhigh`  | `xhigh` | `gpt-5.4` | Opus 4.7 `xhigh` |
-| `max`    | `xhigh` (ceiling collision) | `gpt-5.5` local / `gpt-5.4` container | Opus 4.7 `max` |
+| `high`   | `high` | `gpt-6-sol` (caller-supplied via `MODEL`) | Opus 4.7 `high` |
+| `xhigh`  | `xhigh` | `gpt-6-sol` (caller-supplied via `MODEL`) | Opus 4.7 `xhigh` |
+| `max`    | `xhigh` (ceiling collision) | `gpt-6-sol` (caller-supplied via `MODEL`) | Opus 4.7 `max` |
 
 **Ceiling collision**: Codex tops out at `xhigh` — `EFFORT=max`
 collapses to `xhigh` at wrapper composition time. See

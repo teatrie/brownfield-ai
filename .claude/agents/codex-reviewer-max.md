@@ -32,25 +32,9 @@ Inherits the base file's Caller Contract — see [codex-reviewer.md](codex-revie
 **Plan-review example at `max` effort (frontier reservation)**:
 
 ```bash
-# Local (OAuth) — gpt-5.5 is the MAX-tier model
-task agent:review:codex:local -- ROUND=1 EFFORT=max MODEL=gpt-5.5 \
-  REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
-
-# Container (API-key) — gpt-5.5 is OAuth-only in Codex CLI as of
-# 2026-04-24. The wrapper does NOT auto-downgrade on auth failure: the
-# ERROR_CLASS="auth" branch in codex-review.sh emits CODEX_ERROR with
-# error_class=auth and exits 0, so the outcome is only visible in
-# tmp/codex-exit.json. The operator MUST pass MODEL=gpt-5.4 explicitly
-# in container mode.
-task agent:review:codex -- ROUND=1 EFFORT=max MODEL=gpt-5.4 \
+task agent:review:codex:local -- ROUND=1 EFFORT=max MODEL=gpt-6-sol \
   REVIEW_TYPE=plan DIFF_FILE=tmp/<todo_id>-plan.md
 ```
-
-**Cost note**: gpt-5.5 is 2× the per-token cost of gpt-5.4 ($5/$30
-vs $2.50/$15 per 1M input/output tokens). MAX tier is reserved for
-low-volume frontier reviews where Terminal-Bench / Expert-SWE
-long-horizon coding gains justify the premium. See the Model
-Selection Matrix in [codex-reviewer.md](codex-reviewer.md#model-selection-matrix).
 
 ---
 

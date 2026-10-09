@@ -39,7 +39,7 @@ The wrapper then validates the value it received against the enum
 | Level | `EFFORT` value | Scope | Model Tier |
 |---|---|---|---|
 | medium (standard) | `medium` | default for all reviewers | Sonnet 4.6 / Flash / caller-supplied `MODEL` (the CLI's own default when unset) |
-| high | `high` | plan reviews, architecture audits | Opus 4.7 / Pro / gpt-5.4 |
+| high | `high` | plan reviews, architecture audits | Opus 4.7 / Pro / gpt-6-sol |
 | xhigh | `xhigh` | very deep diff/plan reviews — Opus 4.7 only | Opus 4.7 @ xhigh |
 | max | `max` | frontier reservation, exceptional cases | Opus 4.7 @ max |
 
@@ -66,9 +66,9 @@ translation without inspecting the wrapper.
 | `EFFORT` | Claude `code-review` | Codex (model + reasoning) | Gemini (`-m <alias>`) |
 |---|---|---|---|
 | medium | Sonnet `high` | caller-supplied `MODEL` (the CLI's own default when unset) + `high` | `<tier-sn>-high` |
-| high | Opus `high` | `gpt-5.4` + `high` (MODEL override) | `gemini-3.1-pro-high` |
-| xhigh | Opus `xhigh` | `gpt-5.4` + `xhigh` (MODEL override) | `gemini-3.1-pro-high` (ceiling collision) |
-| max | Opus `max` | `gpt-5.4` + `xhigh` (MODEL override, ceiling collision) | `gemini-3.1-pro-high` (ceiling collision) |
+| high | Opus `high` | `gpt-6-sol` + `high` (MODEL override) | `gemini-3.1-pro-high` |
+| xhigh | Opus `xhigh` | `gpt-6-sol` + `xhigh` (MODEL override) | `gemini-3.1-pro-high` (ceiling collision) |
+| max | Opus `max` | `gpt-6-sol` + `xhigh` (MODEL override, ceiling collision) | `gemini-3.1-pro-high` (ceiling collision) |
 
 > **Reviewers run at HIGH internal reasoning minimum.** The Codex
 > wrapper defaults an omitted `EFFORT` to `high`, and the caller
@@ -77,7 +77,7 @@ translation without inspecting the wrapper.
 > Claude-native variant —
 > LOW is a false economy for review quality. MEDIUM is the floor for
 > reviewers; if a caller wants cheaper execution, they should pick a
-> lower model tier (Flash / gpt-5.3-codex / Sonnet) at HIGH internal
+> lower model tier (Flash / Sonnet) at HIGH internal
 > setting rather than a high-capacity model at LOW internal.
 
 ### Design Rationale — MEDIUM = lower model at HIGH internal setting
@@ -85,7 +85,7 @@ translation without inspecting the wrapper.
 The MEDIUM effort tier runs the lower-capability model at its MAX
 internal reasoning/thinking setting — it is not a "medium-everything"
 tier. This economizes on model cost (Sonnet and Flash are
-substantially cheaper per token than Opus/Pro/gpt-5.4) while keeping
+substantially cheaper per token than Opus/Pro) while keeping
 reviews thorough. On Codex the `medium` model is not pinned to a
 lower tier by anything in this repo — it is caller-supplied via
 `MODEL`; the CLI's own default when unset — so the economy there
@@ -107,7 +107,7 @@ Rationale** note above the Cross-Family Mapping table).
 
 `high`, `xhigh`, and `max` all require the deep-reasoning model per
 family: Opus 4.7 on Claude, `gemini-3.1-pro-preview` on Gemini, and
-`gpt-5.4` on Codex. Pairing a deep-effort tier with the standard
+`gpt-6-sol` on Codex. Pairing a deep-effort tier with the standard
 reviewer model is a configuration error — the wrapper enforces the
 mapping via the customAliases (Gemini) and `-c model_reasoning_effort`
 override (Codex); Claude variants are pinned via `model_tier:
@@ -292,7 +292,7 @@ Three canonical invocations, one per family, at `-xhigh`:
 ```text
 Agent(subagent_type="code-review-xhigh")   # Claude native — subagent
                                           # dispatch; no task alias exists
-task agent:review:codex:local -- ROUND=1 EFFORT=xhigh REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
+task agent:review:codex:local -- ROUND=1 EFFORT=xhigh MODEL=gpt-6-sol REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 task agent:review:gemini:local -- ROUND=1 EFFORT=xhigh GEMINI_MODEL=gemini-3.1-pro-preview REVIEW_TYPE=diff DIFF_FILE=tmp/qa-diff.txt
 ```
 
