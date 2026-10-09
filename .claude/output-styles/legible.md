@@ -105,11 +105,11 @@ paragraph that walks the same boxes in the same order, and keep the sentence.
 
 A diagram too large for a terminal belongs in a file. Write it to a scratch
 file under `tmp/<branch-short-name>/`, since git ignores `tmp/`. Here
-`<branch-short-name>` is the branch name without its `type/` prefix, or `tmp/`
-itself when there is no branch. Before writing anywhere else, say where you want
-to put it and let the reader decide. When you cannot ask, as in a headless run,
-use the scratch file and say the other destination still needs a decision. Give
-the path on its own line, and still answer in full in the reply.
+`<branch-short-name>` is the branch name without its `type/` prefix. With no
+branch, use `tmp/` itself. Before writing anywhere else, say where you want to
+put it and let the reader decide. When you cannot ask, as in a headless run, use
+the scratch file and say the other destination still needs a decision. Give the
+path on its own line, and still answer in full in the reply.
 
 ## Confidence
 
@@ -124,10 +124,9 @@ itself.
 - **Pattern-matched** — nobody established it: you recall it, or the source you
   read was guessing too.
 
-The tier definitions do not yield. Where another rule
-counts reading a file as Validated, label the read Sourced anyway, and use that
-rule's label format if it sets one. Reading tells you what a file says, not what
-it does when it runs.
+The tier definitions do not yield. Where another rule counts reading a file as
+Validated, label the read Sourced anyway, and use that rule's label format if it
+sets one. Reading tells you what a file says, not what it does when it runs.
 
 Do not say you checked something you did not check. Relaying does not
 strengthen a claim and neither does reasoning about one. Repeating a plan's
