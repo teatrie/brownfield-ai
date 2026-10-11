@@ -155,8 +155,11 @@ Execution Ledger with `{"step": "docs-review-approval", "verdict":
 containing non-redundant content, fail-closed: checkpoint
 `{"verdict": "fail", "reason": "destructive docs changes require
 interactive approval"}` and halt. Never auto-apply a cut or generalisation
-that changes what a normative rule requires, from any step; leave it
-unapplied and list it in the `step_result` checkpoint body.
+that changes what a normative rule requires, from any step: leave it
+unapplied, apply the other approved changes and run the lint gate below,
+then checkpoint
+`{"verdict": "fail", "reason": "normative cut held for the user"}`
+listing the held cut(s) in the body, and halt before Step 7.
 
 Once approved:
 
