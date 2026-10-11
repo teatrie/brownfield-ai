@@ -36,7 +36,7 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
   (`verification_protocol.md:959-965`).
 - **Spec Verification deviation:** rows whose Test Coverage is `none — read` are graded on their Verification column
   instead of requiring a test. This epic only; no protocol text changes. In Spec Verification round 2 codex rejected
-  the deviation (F1) because the gate's written verdict definitions (`verification_protocol.md:995-1015`) then
+  the deviation (F1) because the gate's written verdict definitions (`verification_protocol.md:989-1009`) then
   disagree with this epic's practice; the operator kept the deviation on 2026-10-11, and TODO-0388 tracks amending
   the gate so rule and practice agree.
 - **Normative change approved:** `diff-review` Step 3's rule that the Orchestrator MUST delegate every finding gains
@@ -64,7 +64,7 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 | Req-002 | `docs/planning_protocol.md`: the Draft step gains the guidance bullet, and Resolution step 6.1 gains the fix-rule sentence. Both keep the Requirements Traceability Map explicit | S1.2 | none — read | Read §2 steps 3 and 6 |
 | Req-003 | The FRR prompt (`verification_protocol.md` §Finding Resolution Review step 2) accepts a cut or generalisation to intent plus a pointer, and still rejects a claim that is wrong or missing a trap | S1.2 | none — read | The prompt has one copy in the tree (sourced), so no mirror changes |
 | Req-004 | `.claude/skills/diff-review/SKILL.md` gets all four of `66126cc`'s hunks: the item 5 extension (item 5 is lines 211–226, between `SHARED:diff-scope` end at 202 and `SHARED:diff-dimensions` start at 242), the normative-cut carve-out in Step 3, the same carve-out in the finding-resolution paragraph (headless: checkpoint unresolved and HALT), and the cross-reference note that the item 5 extension needs no `tdd-refactor.md` change (`66126cc.diff:61-68`; the local paragraph is near `diff-review/SKILL.md:453`) | S1.3 | `tests/scripts/test_reviewer_templates.py` (routed by `ci/test_staged.sh:106`) | The parity test passes; item 5 is outside the `SHARED:` blocks, so `diff.md` needs no edit |
-| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped. The audit also covers workflow skill files (`workflows/*/skills/*/SKILL.md`), which Step 2's read list does not otherwise include and `claude-review` (scoped to `.claude/`) does not reach | S1.4, S1.6 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
+| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped. The audit also covers every `SKILL.md` under `workflows/`, which Step 2's read list does not otherwise include and `claude-review` (scoped to `.claude/`) does not reach; third-party skills (e.g. under `third-party/`) are report-only | S1.4, S1.6, S1.10 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
 | Req-006 | `claude-review/SKILL.md` gains the **Guidance Over Exhaustive Rules** check, with its `.github/instructions/` mirror clause and the route to the existing *Exception* (line 98) and report (line 103). "Cascade Search" becomes plain intent (e.g. "and every restated copy") | S1.4 | none — read | Read the check list near line 34; no parent-only name remains |
 | Req-007 | The `CLAUDE.md` Coding Standards Index gains one entry pointing at the new section (P1) | S1.5 | none — read | Read the index |
 | Req-029 | PR 1 commits this folder, `docs/plans/PROTOCOL-PORT-001/`, with its `README.md` lifecycle block and this plan (`docs/plans/README.md:26-59`). Both are committed with status `IN PROGRESS` / approved, not `DRAFT` | S1.5 | none — read | The folder is in PR 1's diff with a current status |
@@ -203,6 +203,12 @@ Principle 13.
   - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
   - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
 - [ ] S1.9 Fix-ups from Code Diff Review Gate round 1 (operator-approved 2026-10-11): `diff-review` Step 3 gives the held-cut branch as pseudocode and a rejected cut leaves the finding open (codex F2, F3); item 5 links `coding_standards.md` (F4); `claude-review` scopes the mirror to rules; this plan dates its line citations, marks `tmp/` scratch as uncommitted, and notes Req-003 under Req-N07.
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.10 Fix-ups from Code Diff Review Gate round 2: the headless held-cut branch records an ad hoc run's cut in the report when there is no epic (codex F2); the `docs-review` audit covers every workflow `SKILL.md`, third-party report-only (codex F3); the Spec-gate citation uses base numbering (Opus F1). Codex's F1 (Spec deviation) stands on the operator's ruling.
   - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
   - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
   - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.

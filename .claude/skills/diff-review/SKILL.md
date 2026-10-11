@@ -674,9 +674,11 @@ a cut or generalisation that changes what a normative rule requires (see
 A held cut resolves as follows:
 
 ```text
-held cut (a finding whose fix would change what a normative rule requires):
-  headless   -> checkpoint it as unresolved; HALT, as for unresolved findings below
-  otherwise  -> ask the user; record the decision in the run's checkpoint
+held cut (a finding whose fix would change what a normative rule requires);
+"record" = the run's checkpoint with an epic, else its report:
+  headless   -> leave it unapplied; record it as unresolved; HALT, as for
+                unresolved findings below
+  otherwise  -> ask the user; record the decision
     approved -> it becomes a code-change: the steps below
                 (implementer, regression guard, fresh re-review)
     rejected -> the finding stays open: choose another fix, or file no-action
