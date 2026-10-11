@@ -227,9 +227,10 @@ and the per-family mapping.
 >    directions; that obligation rests with the author and the orchestrator.
 >    For agent-facing docs, flag wrong claims, missing non-derivable traps and
 >    over-specified behavioural claims or edge-case lists that read as
->    complete, per `docs/coding_standards.md` §"Guidance Over Exhaustive Rules";
->    do not flag a claim already stated as intent plus a pointer for not
->    enumerating every case.
+>    complete, per
+>    [`docs/coding_standards.md`](../../../docs/coding_standards.md#guidance-over-exhaustive-rules)
+>    §"Guidance Over Exhaustive Rules"; do not flag a claim already stated as
+>    intent plus a pointer for not enumerating every case.
 > 6. Anti-Faking Duty: inspect for hardcoded stubs, skipped validation steps,
 >    or faked configurations that tests would not catch
 > 7. Linter suppression additions or modifications (`# noqa`, `# type: ignore`,
@@ -668,15 +669,21 @@ All active reviewers must return APPROVED with no findings that require artifact
 amendments before the gate passes. **ALL findings — including non-blocking notes
 — MUST be resolved.** Do not defer findings as "non-blocking" or "follow-up";
 the Orchestrator MUST delegate every finding to an implementer subagent, except
-a cut or generalisation that changes what a normative rule requires: hold that
-for the user, or in headless mode checkpoint it as unresolved and HALT, as for
-unresolved findings below (see
+a cut or generalisation that changes what a normative rule requires (see
 [coding_standards.md](../../../docs/coding_standards.md#guidance-over-exhaustive-rules)).
-A held cut stays unresolved until the user decides; an approved one becomes a
-`code-change` and follows the steps below (implementer, regression guard, fresh
-re-review), and a rejected one goes to the Finding Resolution Review as
-`no-action`, citing the user's decision. Record the decision in the run's
-checkpoint. If any reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED
+A held cut resolves as follows:
+
+```text
+held cut (a finding whose fix would change what a normative rule requires):
+  headless   -> checkpoint it as unresolved; HALT, as for unresolved findings below
+  otherwise  -> ask the user; record the decision in the run's checkpoint
+    approved -> it becomes a code-change: the steps below
+                (implementer, regression guard, fresh re-review)
+    rejected -> the finding stays open: choose another fix, or file no-action
+                with a justification that stands without the cut
+```
+
+If any reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED
 with informational observations that imply a code change:
 
 1. Spawn a `tdd-green` or `general-purpose` implementer subagent (at `fast`

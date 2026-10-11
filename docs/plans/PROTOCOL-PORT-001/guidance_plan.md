@@ -9,8 +9,10 @@ afterwards, under its own epic and plan folder, which do not exist yet.
 
 **How this plan is written.** It follows the principle it ports (operator instruction, 2026-10-10): intent, decision
 criteria and the traps an implementer cannot derive, with pointers instead of copies. The Requirements Traceability Map
-stays explicit. Claims are tagged (validated), (sourced) or (unverified). Review history (rounds 1–5, when PR 1 and
-PR 2a shared one plan) is in `tmp/protocol-port/`.
+stays explicit. Claims are tagged (validated), (sourced) or (unverified). File:line citations are as of base commit
+`44e1002`; lines in files this PR edits shift after merge. Review history (rounds 1–5, when PR 1 and PR 2a shared one
+plan) was session scratch in `tmp/protocol-port/` and is not committed; this epic's Execution Ledger artifacts
+(`step_result`, `gate_verdict`) are the durable record.
 
 **Parent source.** The source of truth for the ported text is commit `66126cc` (PR #686) in the parent repo
 `data-ai`. A local snapshot of that commit's diff, `tmp/protocol-port/parent/66126cc.diff`, was the implementers'
@@ -48,7 +50,7 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 |---|---|
 | Every shell step is a `task <ns>:*` call in the allow list | `.claude/settings.json:3-12` has exactly eight namespaces (sourced) |
 | No `>` redirect | Hook rule 11b (sourced: `block-container-escape.sh:116-139`) |
-| Agents with Edit can create files; `task` agents (`[Read, Bash]`) cannot | An Edit with an empty `old_string` created a new file (validated: `tmp/protocol-port/edit-create-probe.md`) |
+| Agents with Edit can create files; `task` agents (`[Read, Bash]`) cannot | An Edit with an empty `old_string` created a new file (validated: `tmp/protocol-port/edit-create-probe.md`, uncommitted session scratch) |
 | No ported text names a parent-only thing | e.g. lineage bullets, Cascade Search, Inventory Rule Parity, JIRA ticket lines |
 
 ## Requirements
@@ -71,7 +73,7 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 
 | Req-ID | Constraint | Verification |
 |---|---|---|
-| Req-N07 | MUST NOT apply a cut or generalisation that changes what a normative rule requires without operator sign-off | A read of the diff finds one hunk that changes a normative rule: `diff-review` Step 3's "MUST delegate every finding" gains the held-cut exception (and the matching Critical Invariants pointer). The reviewer checks it against the operator's approval of 2026-10-11 recorded in the S1.7 ledger `step_result`. Any other such hunk needs the same direct sign-off; the PR body points to the record rather than serving as the evidence |
+| Req-N07 | MUST NOT apply a cut or generalisation that changes what a normative rule requires without operator sign-off | A read of the diff finds one hunk that changes a normative rule: `diff-review` Step 3's "MUST delegate every finding" gains the held-cut exception (and the matching Critical Invariants pointer). The FRR prompt addition (Req-003) adds a criterion rather than cutting one and was approved with the plan. The reviewer checks it against the operator's approval of 2026-10-11 recorded in the S1.7 ledger `step_result`, and its S1.9 rewording (a rejected cut leaves the finding open) against the approval recorded in the S1.9 `step_result`. Any other such hunk needs the same direct sign-off; the PR body points to the record rather than serving as the evidence |
 | Req-N08 | MUST NOT write into `repos/` or overwrite the root `plan.md` | Diff paths |
 | Req-N11 | MUST NOT port the parent's `full-pr-reviewer` Lens 4 hunk; it lands with the agent in the clean-room gate port | `.claude/agents/full-pr-reviewer.md` is not in PR 1's diff |
 
@@ -195,6 +197,12 @@ Principle 13.
   - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
   - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
 - [ ] S1.8 Fix-ups from `auto-pr` Step 2b (docs-review and claude-review, operator-approved 2026-10-11): `diff-review` Critical Invariants say a normative cut is first held for the user, matching Step 3; the `docs-review` audit links `.github/instructions/` and `.claude/rules/`.
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.9 Fix-ups from Code Diff Review Gate round 1 (operator-approved 2026-10-11): `diff-review` Step 3 gives the held-cut branch as pseudocode and a rejected cut leaves the finding open (codex F2, F3); item 5 links `coding_standards.md` (F4); `claude-review` scopes the mirror to rules; this plan dates its line citations, marks `tmp/` scratch as uncommitted, and notes Req-003 under Req-N07.
   - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
   - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
   - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
