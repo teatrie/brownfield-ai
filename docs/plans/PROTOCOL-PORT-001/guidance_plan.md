@@ -4,19 +4,19 @@ Status: Approved v6 — operator approved without a further review round; implem
 
 This PR ports the parent repo's **Guidance Over Exhaustive Rules** principle: agent-facing docs give an agent enough
 guidance to reason to the best decision, instead of a rule for every case. It adds one local extension: mechanics a
-doc defines are drawn as a diagram or pseudocode rather than narrated (Req-030). It is the first of three PRs; PR 2a
-(`PROTOCOL-PORT-002`) has its own plan in `docs/plans/PROTOCOL-PORT-002/`, and PR 2b (`PROTOCOL-PORT-003`) is
-planned after PR 2a merges.
+doc defines are drawn as a diagram or pseudocode rather than narrated (Req-030). It is the first PR of the port. The clean-room PR review gate is ported
+afterwards, under its own epic and plan folder, which do not exist yet.
 
 **How this plan is written.** It follows the principle it ports (operator instruction, 2026-10-10): intent, decision
 criteria and the traps an implementer cannot derive, with pointers instead of copies. The Requirements Traceability Map
 stays explicit. Claims are tagged (validated), (sourced) or (unverified). Review history (rounds 1–5, when PR 1 and
 PR 2a shared one plan) is in `tmp/protocol-port/`.
 
-**Parent source.** The parent repo is `data-ai`. Implementers read it only through
-`tmp/protocol-port/parent/66126cc.diff` (#686), a snapshot of a clean copy at `b670fc7` (validated: non-empty).
-`task git:run` runs in the `repo-cli` container, which cannot see the parent's volume (sourced: `taskfiles/git.yml`).
-The commit's `full-pr-reviewer` Lens 4 hunk belongs to PR 2a, not this PR.
+**Parent source.** The source of truth for the ported text is commit `66126cc` (PR #686) in the parent repo
+`data-ai`. A local snapshot of that commit's diff, `tmp/protocol-port/parent/66126cc.diff`, was the implementers'
+working copy; it is scratch, and the commit is the durable reference. `task git:run` runs in the `repo-cli`
+container, which cannot see the parent's volume (sourced: `taskfiles/git.yml`). The commit's `full-pr-reviewer`
+Lens 4 hunk belongs to the clean-room gate port, not this PR.
 
 ## Domain Research Summary
 
@@ -51,12 +51,12 @@ The commit's `full-pr-reviewer` Lens 4 hunk belongs to PR 2a, not this PR.
 
 | Req-ID | Requirement | Impl Step | Test Coverage | Verification |
 |---|---|---|---|---|
-| Req-001 | `docs/coding_standards.md` gains `## Guidance Over Exhaustive Rules` after `## Documentation Standards`, from `66126cc.diff`. Every example is true here: the Cut example cites `lifecycle.py` and `claims.py`; the "Point, do not restate" exception example is a local one (e.g. `claude-review`'s **Content parity** check, `.claude/rules/` against `.github/instructions/`) | S1.1 | none — read | `claimed_by` is cleared in `lifecycle.py` (sourced: 111, 256), stale auto-release is `claims.py:28-71`, `task ledger:touch` exists (`taskfiles/ledger.yml:176`), Content parity is at `claude-review/SKILL.md:53`. No parent-only name remains |
+| Req-001 | `docs/coding_standards.md` gains `## Guidance Over Exhaustive Rules` after `## Documentation Standards`, from parent commit `66126cc`. Every example is true here: the Cut example cites `lifecycle.py` and `claims.py`; the "Point, do not restate" exception example is a local one (e.g. `claude-review`'s **Content parity** check, `.claude/rules/` against `.github/instructions/`) | S1.1 | none — read | `claimed_by` is cleared in `lifecycle.py` (sourced: 111, 256), stale auto-release is `claims.py:28-71`, `task ledger:touch` exists (`taskfiles/ledger.yml:176`), Content parity is at `claude-review/SKILL.md:53`. No parent-only name remains |
 | Req-030 | Local extension beyond the parent (operator, 2026-10-11): the new section gains the **Draw mechanics, don't narrate them** bullet (P2). It applies only to mechanics a doc itself defines; behaviour owned by code or a tool is still pointed to. Diagrams use Mermaid, which the repo already uses (validated: 5 fences in `docs/vertical_slicing_guide.md` and `docs/local_development.md`) | S1.1 | none — read | The bullet matches P2 and sits with the section's other bullets |
 | Req-002 | `docs/planning_protocol.md`: the Draft step gains the guidance bullet, and Resolution step 6.1 gains the fix-rule sentence. Both keep the Requirements Traceability Map explicit | S1.2 | none — read | Read §2 steps 3 and 6 |
 | Req-003 | The FRR prompt (`verification_protocol.md` §Finding Resolution Review step 2) accepts a cut or generalisation to intent plus a pointer, and still rejects a claim that is wrong or missing a trap | S1.2 | none — read | The prompt has one copy in the tree (sourced), so no mirror changes |
 | Req-004 | `.claude/skills/diff-review/SKILL.md` gets all four of `66126cc`'s hunks: the item 5 extension (item 5 is lines 211–226, between `SHARED:diff-scope` end at 202 and `SHARED:diff-dimensions` start at 242), the normative-cut carve-out in Step 3, the same carve-out in the finding-resolution paragraph (headless: checkpoint unresolved and HALT), and the cross-reference note that the item 5 extension needs no `tdd-refactor.md` change (`66126cc.diff:61-68`; the local paragraph is near `diff-review/SKILL.md:453`) | S1.3 | `tests/scripts/test_reviewer_templates.py` (routed by `ci/test_staged.sh:106`) | The parity test passes; item 5 is outside the `SHARED:` blocks, so `diff.md` needs no edit |
-| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped | S1.4 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
+| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped. The audit also covers workflow skill files (`workflows/*/skills/*/SKILL.md`), which Step 2's read list does not otherwise include and `claude-review` (scoped to `.claude/`) does not reach | S1.4, S1.6 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
 | Req-006 | `claude-review/SKILL.md` gains the **Guidance Over Exhaustive Rules** check, with its `.github/instructions/` mirror clause and the route to the existing *Exception* (line 98) and report (line 103). "Cascade Search" becomes plain intent (e.g. "and every restated copy") | S1.4 | none — read | Read the check list near line 34; no parent-only name remains |
 | Req-007 | The `CLAUDE.md` Coding Standards Index gains one entry pointing at the new section (P1) | S1.5 | none — read | Read the index |
 | Req-029 | PR 1 commits this folder, `docs/plans/PROTOCOL-PORT-001/`, with its `README.md` lifecycle block and this plan (`docs/plans/README.md:26-59`). Both are committed with status `IN PROGRESS` / approved, not `DRAFT` | S1.5 | none — read | The folder is in PR 1's diff with a current status |
@@ -65,9 +65,9 @@ The commit's `full-pr-reviewer` Lens 4 hunk belongs to PR 2a, not this PR.
 
 | Req-ID | Constraint | Verification |
 |---|---|---|
-| Req-N07 | MUST NOT apply a cut or generalisation that changes what a normative rule requires without operator sign-off | Any such cut appears in the PR body as operator-approved |
+| Req-N07 | MUST NOT apply a cut or generalisation that changes what a normative rule requires without operator sign-off | A read of the diff finds no hunk that cuts or generalises an existing normative rule. Any such cut needs the operator's direct reply in session, recorded in that step's ledger `step_result`; the PR body points to that record rather than serving as the evidence |
 | Req-N08 | MUST NOT write into `repos/` or overwrite the root `plan.md` | Diff paths |
-| Req-N11 | MUST NOT port the parent's `full-pr-reviewer` Lens 4 hunk; it lands with the agent in PR 2a | `.claude/agents/full-pr-reviewer.md` is not in PR 1's diff |
+| Req-N11 | MUST NOT port the parent's `full-pr-reviewer` Lens 4 hunk; it lands with the agent in the clean-room gate port | `.claude/agents/full-pr-reviewer.md` is not in PR 1's diff |
 
 ### Accepted residual risks
 
@@ -81,7 +81,7 @@ The commit's `full-pr-reviewer` Lens 4 hunk belongs to PR 2a, not this PR.
 
 ## Out of Scope
 
-- `full-pr-reviewer` and every PR 2a / PR 2b change.
+- `full-pr-reviewer` and every change of the clean-room gate port.
 - Sweeping existing docs to apply the principle retroactively.
 - Slice 1a of `UPSTREAM-PORT-001`, and the root `plan.md`.
 
@@ -97,7 +97,7 @@ The commit's `full-pr-reviewer` Lens 4 hunk belongs to PR 2a, not this PR.
   criteria and traps. Draw only mechanics the doc owns. For behaviour owned by code or a tool, point to the source
   instead (e.g. ledger transitions in `src/brownfield_ai/ledger/epics/constants.py`)."
 
-Everything else comes from `66126cc.diff`, adapted per the requirements above.
+Everything else comes from parent commit `66126cc`, adapted per the requirements above.
 
 ## Execution Strategy
 
@@ -176,6 +176,12 @@ Principle 13.
   - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
   - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
   - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.6 Fix-ups from Spec Verification round 1 (codex F2–F5, F7): `diff-review` Step 3 item 1 excludes a finding held for the user; the `docs-review` audit covers workflow skill files; this plan cites parent commit `66126cc` and drops claims about plans that do not exist yet; Req-N07's verification needs a recorded operator reply.
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
 - [ ] Execute docs-review and claude-review skills to validate structural alignment.
 
 ### Final QA
@@ -188,4 +194,4 @@ Principle 13.
 
 ### Close-out (after merge)
 
-- [ ] Set this folder's README lifecycle `Status` to `SHIPPED` and record any material deviation from this plan (`docs/plans/README.md:61-74`); this ships with PR 2a's first step, since `main` is protected. Confirm `PROTOCOL-PORT-001` reaches `completed` (`task ledger:check-reviews`).
+- [ ] Set this folder's README lifecycle `Status` to `SHIPPED` and record any material deviation from this plan (`docs/plans/README.md:61-74`); this ships with the next PR's first step, since `main` is protected. Confirm `PROTOCOL-PORT-001` reaches `completed` (`task ledger:check-reviews`).

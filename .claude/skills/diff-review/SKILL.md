@@ -674,7 +674,9 @@ reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED with informational
 observations that imply a code change:
 
 1. Spawn a `tdd-green` or `general-purpose` implementer subagent (at `fast`
-   model tier) per the delegation protocol to resolve the findings. The invoking
+   model tier) per the delegation protocol to resolve the findings, except one
+   held for the user under the exception above, which is not sent to the
+   implementer. The invoking
    agent MUST NOT resolve findings directly — this is a delegation boundary.
 
 > **Experimentation advisory**: If any reviewer flags that experiments or
