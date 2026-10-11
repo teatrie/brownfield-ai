@@ -194,6 +194,12 @@ Principle 13.
   - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
   - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
   - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.8 Fix-ups from `auto-pr` Step 2b (docs-review and claude-review, operator-approved 2026-10-11): `diff-review` Critical Invariants say a normative cut is first held for the user, matching Step 3; the `docs-review` audit links `.github/instructions/` and `.claude/rules/`.
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
 - [ ] Execute docs-review and claude-review skills to validate structural alignment.
 
 ### Final QA

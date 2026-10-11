@@ -54,7 +54,8 @@ directives are the primary cause of silent violations.
   APPROVED WITH NOTES items — MUST be routed through the
   [Finding Resolution Review](../../../docs/verification_protocol.md#finding-resolution-review).
   The resolution determines the action: `code-change` (delegated to
-  an implementer subagent, except a normative cut — see Step 3), `doc-or-todo` (documentation or TODO
+  an implementer subagent; a normative cut is first held for the
+  user — see Step 3), `doc-or-todo` (documentation or TODO
   capture, still requiring reviewer consensus), or `no-action`
   (validated by reviewers as requiring no change). The Orchestrator
   MUST NOT dismiss, defer, or triage findings as "follow-up" or
