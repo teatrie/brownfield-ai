@@ -1,0 +1,191 @@
+Status: Approved v6 — operator approved without a further review round; implementation in progress (2026-10-11)
+
+# Plan — PR 1: port "Guidance Over Exhaustive Rules" (`PROTOCOL-PORT-001`)
+
+This PR ports the parent repo's **Guidance Over Exhaustive Rules** principle: agent-facing docs give an agent enough
+guidance to reason to the best decision, instead of a rule for every case. It adds one local extension: mechanics a
+doc defines are drawn as a diagram or pseudocode rather than narrated (Req-030). It is the first of three PRs; PR 2a
+(`PROTOCOL-PORT-002`) has its own plan in `docs/plans/PROTOCOL-PORT-002/`, and PR 2b (`PROTOCOL-PORT-003`) is
+planned after PR 2a merges.
+
+**How this plan is written.** It follows the principle it ports (operator instruction, 2026-10-10): intent, decision
+criteria and the traps an implementer cannot derive, with pointers instead of copies. The Requirements Traceability Map
+stays explicit. Claims are tagged (validated), (sourced) or (unverified). Review history (rounds 1–5, when PR 1 and
+PR 2a shared one plan) is in `tmp/protocol-port/`.
+
+**Parent source.** The parent repo is `data-ai`. Implementers read it only through
+`tmp/protocol-port/parent/66126cc.diff` (#686), a snapshot of a clean copy at `b670fc7` (validated: non-empty).
+`task git:run` runs in the `repo-cli` container, which cannot see the parent's volume (sourced: `taskfiles/git.yml`).
+The commit's `full-pr-reviewer` Lens 4 hunk belongs to PR 2a, not this PR.
+
+## Domain Research Summary
+
+- **Signals:** `diff-review`, `docs-review`, `claude-review`, `coding_standards.md`, `planning_protocol.md`,
+  `verification_protocol.md`, `CLAUDE.md`. All in this workspace; no `repos/` signal.
+- **Ledger:** `task ledger:index -- --limit 20` (validated) shows no epic covering this work.
+- **Context Sufficiency Gate:** sufficient. Every anchor below was located in the tree (sourced).
+
+## Decisions (operator, 2026-10-10 and 2026-10-11)
+
+- One plan and one ledger epic per PR; this folder holds PR 1's plan.
+- **Plan-file exception:** the root `plan.md` holds slice 1a of `UPSTREAM-PORT-001`. For this epic, this plan file
+  and its working copy `tmp/protocol-port/guidance-working.md` stand in for the root `plan.md` wherever the protocols
+  read it: the per-step read (Principle 13, `verification_protocol.md:42`) and the Spec Verification Gate's input
+  (`verification_protocol.md:959-965`).
+- **Spec Verification deviation:** rows whose Test Coverage is `none — read` are graded on their Verification column
+  instead of requiring a test. This epic only; no protocol text changes.
+- Steps run sequentially.
+
+## Safeguards
+
+| Safeguard | Check |
+|---|---|
+| Every shell step is a `task <ns>:*` call in the allow list | `.claude/settings.json:3-12` has exactly eight namespaces (sourced) |
+| No `>` redirect | Hook rule 11b (sourced: `block-container-escape.sh:116-139`) |
+| Agents with Edit can create files; `task` agents (`[Read, Bash]`) cannot | An Edit with an empty `old_string` created a new file (validated: `tmp/protocol-port/edit-create-probe.md`) |
+| No ported text names a parent-only thing | e.g. lineage bullets, Cascade Search, Inventory Rule Parity, JIRA ticket lines |
+
+## Requirements
+
+### Positive requirements
+
+| Req-ID | Requirement | Impl Step | Test Coverage | Verification |
+|---|---|---|---|---|
+| Req-001 | `docs/coding_standards.md` gains `## Guidance Over Exhaustive Rules` after `## Documentation Standards`, from `66126cc.diff`. Every example is true here: the Cut example cites `lifecycle.py` and `claims.py`; the "Point, do not restate" exception example is a local one (e.g. `claude-review`'s **Content parity** check, `.claude/rules/` against `.github/instructions/`) | S1.1 | none — read | `claimed_by` is cleared in `lifecycle.py` (sourced: 111, 256), stale auto-release is `claims.py:28-71`, `task ledger:touch` exists (`taskfiles/ledger.yml:176`), Content parity is at `claude-review/SKILL.md:53`. No parent-only name remains |
+| Req-030 | Local extension beyond the parent (operator, 2026-10-11): the new section gains the **Draw mechanics, don't narrate them** bullet (P2). It applies only to mechanics a doc itself defines; behaviour owned by code or a tool is still pointed to. Diagrams use Mermaid, which the repo already uses (validated: 5 fences in `docs/vertical_slicing_guide.md` and `docs/local_development.md`) | S1.1 | none — read | The bullet matches P2 and sits with the section's other bullets |
+| Req-002 | `docs/planning_protocol.md`: the Draft step gains the guidance bullet, and Resolution step 6.1 gains the fix-rule sentence. Both keep the Requirements Traceability Map explicit | S1.2 | none — read | Read §2 steps 3 and 6 |
+| Req-003 | The FRR prompt (`verification_protocol.md` §Finding Resolution Review step 2) accepts a cut or generalisation to intent plus a pointer, and still rejects a claim that is wrong or missing a trap | S1.2 | none — read | The prompt has one copy in the tree (sourced), so no mirror changes |
+| Req-004 | `.claude/skills/diff-review/SKILL.md` gets all four of `66126cc`'s hunks: the item 5 extension (item 5 is lines 211–226, between `SHARED:diff-scope` end at 202 and `SHARED:diff-dimensions` start at 242), the normative-cut carve-out in Step 3, the same carve-out in the finding-resolution paragraph (headless: checkpoint unresolved and HALT), and the cross-reference note that the item 5 extension needs no `tdd-refactor.md` change (`66126cc.diff:61-68`; the local paragraph is near `diff-review/SKILL.md:453`) | S1.3 | `tests/scripts/test_reviewer_templates.py` (routed by `ci/test_staged.sh:106`) | The parity test passes; item 5 is outside the `SHARED:` blocks, so `diff.md` needs no edit |
+| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped | S1.4 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
+| Req-006 | `claude-review/SKILL.md` gains the **Guidance Over Exhaustive Rules** check, with its `.github/instructions/` mirror clause and the route to the existing *Exception* (line 98) and report (line 103). "Cascade Search" becomes plain intent (e.g. "and every restated copy") | S1.4 | none — read | Read the check list near line 34; no parent-only name remains |
+| Req-007 | The `CLAUDE.md` Coding Standards Index gains one entry pointing at the new section (P1) | S1.5 | none — read | Read the index |
+| Req-029 | PR 1 commits this folder, `docs/plans/PROTOCOL-PORT-001/`, with its `README.md` lifecycle block and this plan (`docs/plans/README.md:26-59`). Both are committed with status `IN PROGRESS` / approved, not `DRAFT` | S1.5 | none — read | The folder is in PR 1's diff with a current status |
+
+### Negative constraints
+
+| Req-ID | Constraint | Verification |
+|---|---|---|
+| Req-N07 | MUST NOT apply a cut or generalisation that changes what a normative rule requires without operator sign-off | Any such cut appears in the PR body as operator-approved |
+| Req-N08 | MUST NOT write into `repos/` or overwrite the root `plan.md` | Diff paths |
+| Req-N11 | MUST NOT port the parent's `full-pr-reviewer` Lens 4 hunk; it lands with the agent in PR 2a | `.claude/agents/full-pr-reviewer.md` is not in PR 1's diff |
+
+### Accepted residual risks
+
+| Risk-ID | Risk | Mitigation |
+|---|---|---|
+| Risk-002 | `none — read` rows have no automated test | Graded per the Spec Verification deviation |
+| Risk-005 | Edits under `.claude/skills/` may prompt: Bash writes there are sandbox-denied (sourced: session sandbox config); whether Edit prompts is unverified | The operator approves prompts |
+| Risk-006 | Bridge reviewers learn the principle only through the shared preamble's pointer to `docs/coding_standards.md` (sourced: `_invariants.md:8`) | Accepted; editing the invariant block would leak diff-only text into other templates |
+| Risk-008 | Nothing checks Mermaid syntax: `@probelabs/maid` is installed in the `infra-lint` image (sourced: `docker/builders/Dockerfile.infra-lint`) but no lint task calls it (sourced: `git grep`), so a broken diagram would pass lint | Wiring `maid` into `task lint:markdown` is follow-up TODO-0387, outside this PR |
+| Risk-007 | The codex seat cannot run inside the sandbox, and codex writes its review to a file of its own choosing (seen in rounds 1–5) | The main session runs codex with the sandbox disabled (operator-approved each time) and moves the file before the bridge translates it |
+
+## Out of Scope
+
+- `full-pr-reviewer` and every PR 2a / PR 2b change.
+- Sweeping existing docs to apply the principle retroactively.
+- Slice 1a of `UPSTREAM-PORT-001`, and the root `plan.md`.
+
+## Proposed Wording
+
+- **P1 (Req-007), `CLAUDE.md` Coding Standards Index entry:**
+  `- [Guidance Over Exhaustive Rules](./docs/coding_standards.md#guidance-over-exhaustive-rules) — how agent-facing docs and plans state rules: intent, decision criteria, pointers and traps, not a case per rule.`
+
+- **P2 (Req-030), bullet for `## Guidance Over Exhaustive Rules`:**
+  "**Draw mechanics, don't narrate them**: when a doc defines a procedure with states, loops, ordering or several
+  exits (e.g. a review gate's fold loop, a step's verify → checkpoint → commit order), give it as a state or flow
+  diagram (Mermaid) or short decision-level pseudocode, and make that the normative form; prose gives intent, decision
+  criteria and traps. Draw only mechanics the doc owns. For behaviour owned by code or a tool, point to the source
+  instead (e.g. ledger transitions in `src/brownfield_ai/ledger/epics/constants.py`)."
+
+Everything else comes from `66126cc.diff`, adapted per the requirements above.
+
+## Execution Strategy
+
+**Platform:** Claude Code (per-subagent model selection). **Merge strategy:** one PR, branched from `main`.
+
+| Slice | Epic | Complexity | Model tier | Implementer | Reviewer effort tier (Spec + Diff gates) |
+|---|---|---|---|---|---|
+| S1 — PR 1 | `PROTOCOL-PORT-001` | Simple | fast | `general-purpose` (effort medium, its lowest) | `high`¹ |
+
+¹ Raised from the Simple default by the Dual-Model Review Gate floor (`planning_protocol.md:911-914`).
+
+- **Epic lifecycle:** S1.0 runs `task ledger:create -- PROTOCOL-PORT-001 --title "..." --epic-status approved`, then
+  `task ledger:status -- PROTOCOL-PORT-001 --new-status in_progress`. `auto-pr` CREATE later makes
+  `in_progress → in_review`. Traps (sourced):
+  - A plain `backlog → approved` exits 1 without a fast-path artifact (`lifecycle.py:197-202`); `create` checks only
+    that the status is valid (`lifecycle.py:79-81`).
+  - A `plan_snapshot` save rewrites the epic row (`artifacts/mutations.py:111-112`); its `--metadata` defaults
+    `epic_status` to `pending` (`artifacts/cli.py:53`). Every save passes `epic_status` explicitly (the status the
+    epic should hold, or `""` to keep it). A failed save has already superseded the previous snapshot
+    (`artifacts/mutations.py:79-80`).
+  - `ledger:next` returns an `in_progress` epic idle for over 24 hours to `approved` (`claims.py:28-71`), and
+    `step_result` saves do not refresh it. Run `task ledger:touch -- PROTOCOL-PORT-001` with each checkpoint.
+- **Parallelism:** none. Steps run one at a time, because `ci/test_staged.sh:22` checks the whole index.
+- **Step order and commit boundary:** each step reads the working plan, checks scope against `CLAUDE.md`, stages, runs
+  its gates, checkpoints the `step_result`, and only then commits (`auto-commit`, `planning_protocol.md:647-651`) and
+  ticks the step. The index is empty before the next step starts, and Final QA's `git diff <base>...HEAD` sees every
+  step. A step whose gates fail is fixed and re-verified before its checkpoint.
+- **Cost:** direct subagents, not `agent-team`. The PR is one Simple slice run sequentially, so a team adds
+  coordination with no tiering saving (`planning_protocol.md:819-821`).
+- **Cross-family review:** no Complex slice, so §3 does not auto-activate it (`planning_protocol.md:731`). The operator
+  chose Opus + codex for plan review; the Spec Verification and Code Diff Review gates also add the codex seat, run per
+  Risk-007. Say "skip cross-family" to drop it.
+- **Recommended Skill:** none. Implementation is direct subagent delegation (§7); the PR ships through `auto-pr`.
+- **Progress tracking:** on approval, the orchestrator copies this plan to `tmp/protocol-port/guidance-working.md`.
+- **Plan approval (operator, 2026-10-11):** approved after five Opus + codex review rounds on the earlier shared plan,
+  none of whose round 3–5 findings concerned PR 1's content; Req-030 is new since then. The diff's Spec Verification
+  and Code Diff Review gates still run before the PR.
+- **PR protocol (operator):** `auto-pr`, with no automation signals.
+- **Commit protocol (operator):** `auto-commit`.
+
+## Phases
+
+The sub-tasks follow `CLAUDE.md` Principle 13 and `verification_protocol.md:42`, `:182`. Staging uses `task git:add`
+with this step's files only; `qa-lint` and `qa-test` run the gates; a `code-review` agent reads their raw output; a
+`task` agent commits; the `step_result` goes to `PROTOCOL-PORT-001`. `test:staged` may be skipped only per
+Principle 13.
+
+- [ ] S1.0 Create and start epic `PROTOCOL-PORT-001`; copy this plan to `tmp/protocol-port/guidance-working.md`; branch `chore/guidance-over-rules` from `main`.
+- [ ] S1.1 `coding_standards.md` section, including the local diagram bullet (Req-001, Req-030, P2).
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.2 `planning_protocol.md`, `verification_protocol.md` (Req-002, Req-003).
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.3 `diff-review` (Req-004); also run `task lint:reviewer-templates`.
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.4 `docs-review`, `claude-review` (Req-005, Req-006).
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.5 `CLAUDE.md` index entry and this plan folder, with current statuses (Req-007, Req-029, P1).
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] Execute docs-review and claude-review skills to validate structural alignment.
+
+### Final QA
+
+- [ ] Invoke `/protocols`.
+- [ ] `task lint:changed` and `task test:changed`, run by `qa-lint` / `qa-test`.
+- [ ] Spec Verification Gate on this plan's Requirements Traceability Map (all of it: every row here is PR 1's), at the reviewer tier above, with the codex seat. The reviewers receive the plan-file exception and the Spec Verification deviation.
+- [ ] Code Diff Review Gate via the `diff-review` skill, at the reviewer tier above, with the codex seat (memory: invoke the skill, never hand-roll its steps).
+- [ ] Invoke `/protocols`, then the selected PR protocol.
+
+### Close-out (after merge)
+
+- [ ] Set this folder's README lifecycle `Status` to `SHIPPED` and record any material deviation from this plan (`docs/plans/README.md:61-74`); this ships with PR 2a's first step, since `main` is protected. Confirm `PROTOCOL-PORT-001` reaches `completed` (`task ledger:check-reviews`).
