@@ -84,6 +84,7 @@ Perform the following audits:
 1. **Branch Links**: Ensure git branch names (e.g., `origin/main`, `ship/branch`) or untracked/transient files (e.g., `.gitignore`, `plan.md`) are represented strictly as inline backtick code blocks (e.g., `` `origin/main` ``) and NEVER hallucinated as markdown hyperlinks (e.g., ``origin/main``).
 1. **Broken Links**: Scan for broken markdown links (e.g., hallucinated relative structures). Either 1) Fix the broken link if the *correct*, valid relative path is known and physically verified, or 2) Completely remove the broken link and revert it to an inline backtick reference if the proper path cannot be determined.
 1. **Outdated Info**: Remove explicit mentions of deprecated processes, CLI toolings, or removed skill structures. Verify the "Directory Structure" section in [README.md](../../../../README.md) exactly maps to the actual current root and core subdirectories via `ls -la`.
+1. **Over-Specified Rules**: In agent-facing docs, flag precise behavioural claims, "complete" lists and enumerated edge cases that an agent could derive from the code or a linked source. Fix by cutting or generalising to intent plus a pointer, per [docs/coding_standards.md](../../../../docs/coding_standards.md#guidance-over-exhaustive-rules); keep non-derivable traps and copies another rule requires (e.g. the `.github/instructions/` mirrors of `.claude/rules/`). A cut or generalisation that changes what a normative rule (e.g. MUST/NEVER, a gate criterion) requires is a conceptual change: flag it to the User, do not auto-apply.
 
 ## Step 3: Workflow Domain Conformance
 
@@ -153,7 +154,9 @@ Execution Ledger with `{"step": "docs-review-approval", "verdict":
 "auto-headless"}`. If the proposed changes include deletions of files
 containing non-redundant content, fail-closed: checkpoint
 `{"verdict": "fail", "reason": "destructive docs changes require
-interactive approval"}` and halt.
+interactive approval"}` and halt. Never auto-apply a cut or generalisation
+that changes what a normative rule requires, from any step; leave it
+unapplied and list it in the `step_result` checkpoint body.
 
 Once approved:
 
