@@ -33,7 +33,13 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
   read it: the per-step read (Principle 13, `verification_protocol.md:42`) and the Spec Verification Gate's input
   (`verification_protocol.md:959-965`).
 - **Spec Verification deviation:** rows whose Test Coverage is `none — read` are graded on their Verification column
-  instead of requiring a test. This epic only; no protocol text changes.
+  instead of requiring a test. This epic only; no protocol text changes. In Spec Verification round 2 codex rejected
+  the deviation (F1) because the gate's written verdict definitions (`verification_protocol.md:995-1015`) then
+  disagree with this epic's practice; the operator kept the deviation on 2026-10-11, and TODO-0388 tracks amending
+  the gate so rule and practice agree.
+- **Normative change approved:** `diff-review` Step 3's rule that the Orchestrator MUST delegate every finding gains
+  the held-cut exception (Req-004). The operator approved it directly in session on 2026-10-11; the approval is
+  recorded in the S1.7 `step_result`.
 - Steps run sequentially.
 
 ## Safeguards
@@ -65,7 +71,7 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 
 | Req-ID | Constraint | Verification |
 |---|---|---|
-| Req-N07 | MUST NOT apply a cut or generalisation that changes what a normative rule requires without operator sign-off | A read of the diff finds no hunk that cuts or generalises an existing normative rule. Any such cut needs the operator's direct reply in session, recorded in that step's ledger `step_result`; the PR body points to that record rather than serving as the evidence |
+| Req-N07 | MUST NOT apply a cut or generalisation that changes what a normative rule requires without operator sign-off | A read of the diff finds one hunk that changes a normative rule: `diff-review` Step 3's "MUST delegate every finding" gains the held-cut exception (and the matching Critical Invariants pointer). The reviewer checks it against the operator's approval of 2026-10-11 recorded in the S1.7 ledger `step_result`. Any other such hunk needs the same direct sign-off; the PR body points to the record rather than serving as the evidence |
 | Req-N08 | MUST NOT write into `repos/` or overwrite the root `plan.md` | Diff paths |
 | Req-N11 | MUST NOT port the parent's `full-pr-reviewer` Lens 4 hunk; it lands with the agent in the clean-room gate port | `.claude/agents/full-pr-reviewer.md` is not in PR 1's diff |
 
@@ -73,7 +79,7 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 
 | Risk-ID | Risk | Mitigation |
 |---|---|---|
-| Risk-002 | `none — read` rows have no automated test | Graded per the Spec Verification deviation |
+| Risk-002 | `none — read` rows have no automated test | Graded per the Spec Verification deviation; TODO-0388 amends the gate |
 | Risk-005 | Edits under `.claude/skills/` may prompt: Bash writes there are sandbox-denied (sourced: session sandbox config); whether Edit prompts is unverified | The operator approves prompts |
 | Risk-006 | Bridge reviewers learn the principle only through the shared preamble's pointer to `docs/coding_standards.md` (sourced: `_invariants.md:8`) | Accepted; editing the invariant block would leak diff-only text into other templates |
 | Risk-008 | Nothing checks Mermaid syntax: `@probelabs/maid` is installed in the `infra-lint` image (sourced: `docker/builders/Dockerfile.infra-lint`) but no lint task calls it (sourced: `git grep`), so a broken diagram would pass lint | Wiring `maid` into `task lint:markdown` is follow-up TODO-0387, outside this PR |
@@ -177,6 +183,12 @@ Principle 13.
   - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
   - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
 - [ ] S1.6 Fix-ups from Spec Verification round 1 (codex F2–F5, F7): `diff-review` Step 3 item 1 excludes a finding held for the user; the `docs-review` audit covers workflow skill files; this plan cites parent commit `66126cc` and drops claims about plans that do not exist yet; Req-N07's verification needs a recorded operator reply.
+  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.7 Fix-ups from Spec Verification round 2: `diff-review` Step 3 defines what happens to a held cut after the user decides (codex R2-F1); Req-N07 names the approved normative change and its record (R2-F2); the Decisions record the F1 ruling and TODO-0388.
   - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
   - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
   - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.

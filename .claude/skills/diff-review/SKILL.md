@@ -667,11 +667,16 @@ All active reviewers must return APPROVED with no findings that require artifact
 amendments before the gate passes. **ALL findings — including non-blocking notes
 — MUST be resolved.** Do not defer findings as "non-blocking" or "follow-up";
 the Orchestrator MUST delegate every finding to an implementer subagent, except
-a cut or generalisation that changes what a normative rule requires: take that to the user, or in
-headless mode checkpoint it as unresolved and HALT, as for unresolved findings
-below (see [coding_standards.md](../../../docs/coding_standards.md#guidance-over-exhaustive-rules)). If any
-reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED with informational
-observations that imply a code change:
+a cut or generalisation that changes what a normative rule requires: hold that
+for the user, or in headless mode checkpoint it as unresolved and HALT, as for
+unresolved findings below (see
+[coding_standards.md](../../../docs/coding_standards.md#guidance-over-exhaustive-rules)).
+A held cut stays unresolved until the user decides; an approved one becomes a
+`code-change` and follows the steps below (implementer, regression guard, fresh
+re-review), and a rejected one goes to the Finding Resolution Review as
+`no-action`, citing the user's decision. Record the decision in the run's
+checkpoint. If any reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED
+with informational observations that imply a code change:
 
 1. Spawn a `tdd-green` or `general-purpose` implementer subagent (at `fast`
    model tier) per the delegation protocol to resolve the findings, except one
