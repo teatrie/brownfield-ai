@@ -54,7 +54,7 @@ directives are the primary cause of silent violations.
   APPROVED WITH NOTES items — MUST be routed through the
   [Finding Resolution Review](../../../docs/verification_protocol.md#finding-resolution-review).
   The resolution determines the action: `code-change` (delegated to
-  an implementer subagent), `doc-or-todo` (documentation or TODO
+  an implementer subagent, except a normative cut — see Step 3), `doc-or-todo` (documentation or TODO
   capture, still requiring reviewer consensus), or `no-action`
   (validated by reviewers as requiring no change). The Orchestrator
   MUST NOT dismiss, defer, or triage findings as "follow-up" or
@@ -224,6 +224,11 @@ and the per-family mapping.
 >    history *deleted* in this diff was relocated to the PR description or
 >    ledger — you cannot see either, so you would be guessing in both
 >    directions; that obligation rests with the author and the orchestrator.
+>    For agent-facing docs, flag wrong claims, missing non-derivable traps and
+>    over-specified behavioural claims or edge-case lists that read as
+>    complete, per `docs/coding_standards.md` §"Guidance Over Exhaustive Rules";
+>    do not flag a claim already stated as intent plus a pointer for not
+>    enumerating every case.
 > 6. Anti-Faking Duty: inspect for hardcoded stubs, skipped validation steps,
 >    or faked configurations that tests would not catch
 > 7. Linter suppression additions or modifications (`# noqa`, `# type: ignore`,
@@ -478,7 +483,9 @@ gains a review-time guard. The optional **Intent / Background** input added to
 the Step 2 prompt is likewise a review-time gate dimension with no tdd-refactor
 analogue — it aids diff interpretation and sharpens items 4 and 18 at review
 time, not during implementation refactoring; `tdd-refactor.md` needs no
-checklist change.
+checklist change. The item 5 guidance-over-exhaustive-rules extension likewise
+needs no [`tdd-refactor.md`](../../agents/tdd-refactor.md) update:
+`tdd-refactor` refactors code, not agent-facing docs.
 
 #### Cross-Family Pre-flight (User-Requested)
 
@@ -659,7 +666,10 @@ round-specific filename.
 All active reviewers must return APPROVED with no findings that require artifact
 amendments before the gate passes. **ALL findings — including non-blocking notes
 — MUST be resolved.** Do not defer findings as "non-blocking" or "follow-up";
-the Orchestrator MUST delegate every finding to an implementer subagent. If any
+the Orchestrator MUST delegate every finding to an implementer subagent, except
+a cut or generalisation that changes what a normative rule requires: take that to the user, or in
+headless mode checkpoint it as unresolved and HALT, as for unresolved findings
+below (see [coding_standards.md](../../../docs/coding_standards.md#guidance-over-exhaustive-rules)). If any
 reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED with informational
 observations that imply a code change:
 
