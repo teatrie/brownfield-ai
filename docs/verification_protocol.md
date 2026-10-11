@@ -473,7 +473,13 @@ findings. Instead, the following process applies:
    > threat model, if the justification is incorrect, or if a low-cost
    > fix exists that would eliminate the finding entirely. Do not reject
    > findings solely because a theoretical vector exists if the
-   > Orchestrator's threat-model justification is sound."
+   > Orchestrator's threat-model justification is sound. For a documentation
+   > finding that a claim is incomplete, cutting or generalising the claim to
+   > its intent plus a pointer is a valid low-cost fix. Do not reject a
+   > no-action on a claim already at intent plus a pointer because more
+   > enumeration was possible; do reject it if the claim is wrong or omits
+   > a trap the pointed-to source does not reveal (see
+   > [coding_standards.md](coding_standards.md#guidance-over-exhaustive-rules))."
 
 3. **Gate behavior**:
    - **All `no-action` and `doc-or-todo` findings ACCEPTED by all
