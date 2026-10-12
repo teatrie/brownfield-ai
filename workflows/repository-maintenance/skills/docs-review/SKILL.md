@@ -148,18 +148,21 @@ With the introduction of Domain-Driven Design (DDD) in the `workflows/` director
 Present a concise Markdown plan of additions, relocations, and deletions to the user.
 Wait for **explicit User Approval**.
 
-**Headless mode** (`CI=true` or explicit pipeline signal): Auto-approve
-the proposed changes. Checkpoint a `step_result` artifact to the
-Execution Ledger with `{"step": "docs-review-approval", "verdict":
-"auto-headless"}`. If the proposed changes include deletions of files
-containing non-redundant content, fail-closed: checkpoint
-`{"verdict": "fail", "reason": "destructive docs changes require
-interactive approval"}` and halt. Never auto-apply a cut or generalisation
-that changes what a normative rule requires, from any step: leave it
-unapplied, apply the other approved changes and run the lint gate below,
-then checkpoint
-`{"verdict": "fail", "reason": "normative cut held for the user"}`
-listing the held cut(s) in the body, and halt before Step 7.
+**Headless mode** (`CI=true` or explicit pipeline signal) resolves as follows; this is the normative form:
+
+```text
+headless (CI=true or a pipeline signal):
+  checkpoint step_result {"step": "docs-review-approval", "verdict": "auto-headless"}
+  deletes a file with non-redundant content
+                     -> checkpoint {"verdict": "fail", "reason": "destructive docs
+                        changes require interactive approval"}; HALT, apply nothing
+  holds a cut that changes what a normative rule requires (from any step)
+                     -> leave it unapplied; apply the other approved changes and run
+                        the lint gate below; checkpoint {"verdict": "fail", "reason":
+                        "normative cut held for the user"} listing the held cut(s);
+                        HALT before Step 7
+  otherwise          -> auto-approve; continue to "Once approved"
+```
 
 Once approved:
 
