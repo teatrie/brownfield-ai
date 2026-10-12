@@ -482,8 +482,8 @@ each gate) to prevent it from being auto-released. A `step_result`
 checkpoint does not refresh the claim: only `plan_snapshot` saves write
 to SQLite (see
 [mutations.py](../../../../src/brownfield_ai/ledger/artifacts/mutations.py)).
-A `plan_snapshot` save is not a heartbeat either: one without
-`epic_status` in its metadata resets the epic to `pending`.
+A `plan_snapshot` save also refreshes it, but one whose metadata
+omits `epic_status` resets the epic to `pending`.
 
 ## Architecture
 

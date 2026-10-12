@@ -285,4 +285,4 @@ Principle 13. Ticks in this tracked copy lag one commit, because a step's tick c
 
 ### Close-out (after merge)
 
-- [x] Set this folder's README lifecycle `Status` to `SHIPPED` and record any material deviation from this plan (`docs/plans/README.md:61-74`); this ships with the next PR's first step, since `main` is protected. Confirm `PROTOCOL-PORT-001` reaches `completed` (`task ledger:check-reviews`). Done in BACKLOG-001 K01; the epic moves to `completed` after that PR merges.
+- [ ] Set this folder's README lifecycle `Status` to `SHIPPED` and record any material deviation from this plan (`docs/plans/README.md:61-74`); this ships with the next PR's first step, since `main` is protected. Confirm `PROTOCOL-PORT-001` reaches `completed` (`task ledger:check-reviews`). README `Status` set to `SHIPPED` in BACKLOG-001 K01; `completed` is still to be confirmed with `task ledger:check-reviews`.
