@@ -345,7 +345,7 @@ lifecycle with ACID guarantees:
 | `claimed_at` | TEXT | `` | ISO-8601 timestamp of claim (empty if unclaimed) |
 | `title` | TEXT | `` | Epic title or short description |
 | `created_at` | TEXT | — | ISO-8601 creation timestamp |
-| `last_updated_at` | TEXT | — | ISO-8601 timestamp of most recent update (claim, release, status change, checkpoint) |
+| `last_updated_at` | TEXT | — | ISO-8601 timestamp of most recent update (e.g. claim, release, status change, `plan_snapshot` save, `touch`) |
 | `current_prs` | TEXT | `NULL` | Comma-separated PR refs in `{owner}/{repo}#{number}` format. Set when an epic enters `in_review`; cleared on all transitions out of `in_review`. Blocks completion when non-null. |
 
 ## Document ID Format
@@ -417,8 +417,11 @@ the eligibility scan, any plan with `status = 'in_progress'` and
 deadlocks from crashed bots or abandoned work.
 
 `claimed_by` field: populated with a bot/agent identifier (never PII)
-when `next-plan` claims a plan. Cleared when plan is released or
-transitions to `completed`/`abandoned`.
+when `next-plan` claims a plan. `release` and stale auto-release clear
+it; some status changes do too. Check
+[lifecycle.py](../../../../src/brownfield_ai/ledger/epics/lifecycle.py) and
+[claims.py](../../../../src/brownfield_ai/ledger/epics/claims.py) if the
+exact rule matters.
 
 ### Dependency Resolution
 
@@ -472,11 +475,17 @@ maps get superseded on update.
 
 ### Staleness and Updates
 
-Every checkpoint (`save`), status transition, claim, or release updates
-the `last_updated_at` column in SQLite. The `next-plan` command checks
-this timestamp to detect stale claims (older than `stale_hours`). Agents
-should checkpoint artifacts periodically (e.g., after each gate) to
-prevent their claims from being auto-released.
+The `next-plan` command checks the `last_updated_at` column in SQLite
+to detect stale claims (older than `stale_hours`). On a long-running
+claim, run `task ledger:touch -- <epic_id>` periodically (e.g., after
+each gate) to prevent it from being auto-released. A `step_result`
+checkpoint does not refresh the claim: only `plan_snapshot` saves write
+to SQLite (see
+[mutations.py](../../../../src/brownfield_ai/ledger/artifacts/mutations.py)).
+A `plan_snapshot` save also refreshes it, but rewrites the epic's
+index row (e.g. status, priority, dependencies) from its metadata,
+defaults included; see `upsert_epic_index` in
+[lifecycle.py](../../../../src/brownfield_ai/ledger/epics/lifecycle.py).
 
 ## Architecture
 
