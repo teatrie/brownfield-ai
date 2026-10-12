@@ -151,20 +151,22 @@ Wait for **explicit User Approval**.
 **Headless mode** (`CI=true` or explicit pipeline signal) resolves as follows; this is the normative form:
 
 ```text
-headless (CI=true or a pipeline signal):
+headless (CI=true or a pipeline signal);
+"record" = a step_result checkpoint with an epic, else the run's report;
+a fail record lists any held cut(s) and every change already applied,
+Step 1b prunes included:
   deletes a file with non-redundant content
-                     -> checkpoint {"step": "docs-review-approval",
+                     -> record {"step": "docs-review-approval",
                         "verdict": "fail", "reason":
-                        "destructive docs changes require interactive approval"}
-                        listing any held cut(s) and any Step 1b prunes
-                        already applied; HALT
+                        "destructive docs changes require interactive approval"};
+                        HALT
   holds a cut that changes what a normative rule requires (from any step)
                      -> leave it unapplied; auto-approve and apply the other
-                        proposed changes; run the lint gate below; checkpoint
+                        proposed changes; run the lint gate below; record
                         {"step": "docs-review-approval", "verdict": "fail",
-                        "reason": "normative cut held for the user"} listing
-                        the held cut(s); HALT before Step 7
-  otherwise          -> checkpoint step_result {"step": "docs-review-approval",
+                        "reason": "normative cut held for the user"}; HALT
+                        before Step 7
+  otherwise          -> record {"step": "docs-review-approval",
                         "verdict": "auto-headless"}; auto-approve; continue to
                         "Once approved"
 ```
