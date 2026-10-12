@@ -152,16 +152,20 @@ Wait for **explicit User Approval**.
 
 ```text
 headless (CI=true or a pipeline signal):
-  checkpoint step_result {"step": "docs-review-approval", "verdict": "auto-headless"}
   deletes a file with non-redundant content
-                     -> checkpoint {"verdict": "fail", "reason": "destructive docs
-                        changes require interactive approval"}; HALT, apply nothing
+                     -> checkpoint {"step": "docs-review-approval",
+                        "verdict": "fail", "reason":
+                        "destructive docs changes require interactive approval"};
+                        HALT, apply nothing
   holds a cut that changes what a normative rule requires (from any step)
-                     -> leave it unapplied; apply the other approved changes and run
-                        the lint gate below; checkpoint {"verdict": "fail", "reason":
-                        "normative cut held for the user"} listing the held cut(s);
-                        HALT before Step 7
-  otherwise          -> auto-approve; continue to "Once approved"
+                     -> leave it unapplied; auto-approve and apply the other
+                        proposed changes; run the lint gate below; checkpoint
+                        {"step": "docs-review-approval", "verdict": "fail",
+                        "reason": "normative cut held for the user"} listing
+                        the held cut(s); HALT before Step 7
+  otherwise          -> checkpoint step_result {"step": "docs-review-approval",
+                        "verdict": "auto-headless"}; auto-approve; continue to
+                        "Once approved"
 ```
 
 Once approved:

@@ -63,9 +63,9 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 | Req-030 | Local extension beyond the parent (operator, 2026-10-11): the new section gains the **Draw mechanics, don't narrate them** bullet (P2). It applies only to mechanics a doc itself defines; behaviour owned by code or a tool is still pointed to. Diagrams use Mermaid, which the repo already uses (validated: 5 fences in `docs/vertical_slicing_guide.md` and `docs/local_development.md`) | S1.1 | none — read | The bullet matches P2 and sits with the section's other bullets |
 | Req-002 | `docs/planning_protocol.md`: the Draft step gains the guidance bullet, and Resolution step 6.1 gains the fix-rule sentence. Both keep the Requirements Traceability Map explicit | S1.2 | none — read | Read §2 steps 3 and 6 |
 | Req-003 | The FRR prompt (`verification_protocol.md` §Finding Resolution Review step 2) accepts a cut or generalisation to intent plus a pointer, except a cut that changes what a normative rule requires, and still rejects a claim that is wrong or missing a trap | S1.2, S1.13 | none — read | The prompt has one copy in the tree (sourced), so no mirror changes |
-| Req-004 | `.claude/skills/diff-review/SKILL.md` gets all four of `66126cc`'s hunks: the Critical Invariants pointer, the item 5 extension (item 5 is lines 211–226, between `SHARED:diff-scope` end at 202 and `SHARED:diff-dimensions` start at 242), the normative-cut carve-out in Step 3 (headless: checkpoint unresolved and HALT), and the cross-reference note that the item 5 extension needs no `tdd-refactor.md` change (`66126cc.diff:61-68`; the local paragraph is near `diff-review/SKILL.md:453`) | S1.3 | `none — read` (the parity test, `tests/scripts/test_reviewer_templates.py`, guards only the `SHARED:` blocks, which this row does not touch) | Read item 5 and Step 3; the parity test still passes with `diff.md` untouched; bridge reviewers do not get the item 5 extension (Risk-006, TODO-0394) |
-| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped. The audit also covers every `SKILL.md` under `workflows/`, which Step 2's read list does not otherwise include and `claude-review` (scoped to `.claude/`) does not reach; third-party skills (e.g. under `third-party/`) are report-only | S1.4, S1.6, S1.10, S1.11, S1.14 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
-| Req-006 | `claude-review/SKILL.md` gains the **Guidance Over Exhaustive Rules** check, with its `.github/instructions/` mirror clause and the route to the existing *Exception* (line 98) and report (line 103). "Cascade Search" becomes plain intent (e.g. "and every restated copy") | S1.4, S1.13, S1.14 | none — read | Read the check list near line 34; no parent-only name remains |
+| Req-004 | `.claude/skills/diff-review/SKILL.md` gets all four of `66126cc`'s hunks: the Critical Invariants pointer, the item 5 extension (item 5 is lines 211–226, between `SHARED:diff-scope` end at 202 and `SHARED:diff-dimensions` start at 242), the normative-cut carve-out in Step 3 (headless: checkpoint unresolved and HALT), and the cross-reference note that the item 5 extension needs no `tdd-refactor.md` change (`66126cc.diff:61-68`; the local paragraph is near `diff-review/SKILL.md:453`) | S1.3, S1.6, S1.7, S1.8, S1.9, S1.10 | `none — read` (the parity test, `tests/scripts/test_reviewer_templates.py`, guards only the `SHARED:` blocks, which this row does not touch) | Read item 5 and Step 3; the parity test still passes with `diff.md` untouched; bridge reviewers do not get the item 5 extension (Risk-006, TODO-0394) |
+| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped. The audit also covers every `SKILL.md` under `workflows/`, which Step 2's read list does not otherwise include and `claude-review` (scoped to `.claude/`) does not reach; third-party skills (e.g. under `third-party/`) are report-only | S1.4, S1.6, S1.8, S1.10, S1.11, S1.14, S1.15 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
+| Req-006 | `claude-review/SKILL.md` gains the **Guidance Over Exhaustive Rules** check, with its `.github/instructions/` mirror clause and the route to the existing *Exception* (line 98) and report (line 103). "Cascade Search" becomes plain intent (e.g. "and every restated copy") | S1.4, S1.9, S1.13, S1.14 | none — read | Read the check list near line 34; no parent-only name remains |
 | Req-007 | The `CLAUDE.md` Coding Standards Index gains one entry pointing at the new section (P1) | S1.5 | none — read | Read the index |
 | Req-029 | PR 1 commits this folder, `docs/plans/PROTOCOL-PORT-001/`, with its `README.md` lifecycle block and this plan (`docs/plans/README.md:26-59`). Both are committed with status `IN PROGRESS` / approved, not `DRAFT` | S1.5 | none — read | The folder is in PR 1's diff with a current status |
 
@@ -153,86 +153,92 @@ with this step's files only; `qa-lint` and `qa-test` run the gates; a `code-revi
 `task` agent commits; the `step_result` goes to `PROTOCOL-PORT-001`. `test:staged` may be skipped only per
 Principle 13.
 
-- [ ] S1.0 Create and start epic `PROTOCOL-PORT-001`; copy this plan to `tmp/protocol-port/guidance-working.md`; branch `chore/guidance-over-rules` from `main`.
-- [ ] S1.1 `coding_standards.md` section, including the local diagram bullet (Req-001, Req-030, P2).
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.2 `planning_protocol.md`, `verification_protocol.md` (Req-002, Req-003).
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.3 `diff-review` (Req-004); also run `task lint:reviewer-templates`.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.4 `docs-review`, `claude-review` (Req-005, Req-006).
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.5 `CLAUDE.md` index entry and this plan folder, with current statuses (Req-007, Req-029, P1).
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.6 Fix-ups from Spec Verification round 1 (codex F2–F5, F7): `diff-review` Step 3 item 1 excludes a finding held for the user; the `docs-review` audit covers workflow skill files; this plan cites parent commit `66126cc` and drops claims about plans that do not exist yet; Req-N07's verification needs a recorded operator reply.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.7 Fix-ups from Spec Verification round 2: `diff-review` Step 3 defines what happens to a held cut after the user decides (codex R2-F1); Req-N07 names the approved normative change and its record (R2-F2); the Decisions record the F1 ruling and TODO-0388.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.8 Fix-ups from `auto-pr` Step 2b (docs-review and claude-review, operator-approved 2026-10-11): `diff-review` Critical Invariants say a normative cut is first held for the user, matching Step 3; the `docs-review` audit links `.github/instructions/` and `.claude/rules/`.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.9 Fix-ups from Code Diff Review Gate round 1 (operator-approved 2026-10-11): `diff-review` Step 3 gives the held-cut branch as pseudocode and a rejected cut leaves the finding open (codex F2, F3); item 5 links `coding_standards.md` (F4); `claude-review` scopes the mirror to rules; this plan dates its line citations, marks `tmp/` scratch as uncommitted, and notes Req-003 under Req-N07.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.10 Fix-ups from Code Diff Review Gate round 2: the headless held-cut branch records an ad hoc run's cut in the report when there is no epic (codex F2); the `docs-review` audit covers every workflow `SKILL.md`, third-party report-only (codex F3); the Spec-gate citation uses base numbering (Opus F1). Codex's F1 (Spec deviation) stands on the operator's ruling.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.11 Fix-up from Code Diff Review Gate round 3: headless `docs-review` fails closed on a held normative cut (checkpoint `verdict: fail`, halt before Step 7) instead of reporting completion (codex F2). Codex's F1 (Spec deviation) stands on the operator's ruling.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.12 Fix-ups from Code Diff Review Gate round 4: Req-004's test coverage is a read, since the parity test guards only the `SHARED:` blocks (codex F2); the `repo-cli` visibility claim cites `docker-compose.yml` (codex F3). Codex's F1 (Spec deviation) stands on the operator's ruling.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.13 Fix-ups from Code Diff Review Gate round 5: headless `claude-review` ends the run as failed when it holds a normative cut (codex P1); the FRR prompt's cut clause carries the normative-cut caveat (Sonnet note). The bridge-template gap (codex F2) is recorded under Risk-006 and TODO-0394.
-  - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
-  - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
-  - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
-  - [ ] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
-  - [ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.14 Fix-ups from Code Diff Review Gate round 6: `docs-review`'s headless branch is decision-level pseudocode (codex F2, Opus note); Req-004 lists the parent's four hunks correctly (Opus note); `claude-review` clarifies "applied to every restated copy" (Sonnet note). Codex's F1 (Spec deviation) stands on the operator's ruling.
+- [x] S1.0 Create and start epic `PROTOCOL-PORT-001`; copy this plan to `tmp/protocol-port/guidance-working.md`; branch `chore/guidance-over-rules` from `main`.
+- [x] S1.1 (`4c80418`) `coding_standards.md` section, including the local diagram bullet (Req-001, Req-030, P2).
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.2 (`59199b1`) `planning_protocol.md`, `verification_protocol.md` (Req-002, Req-003).
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.3 (`36b5a31`) `diff-review` (Req-004); also run `task lint:reviewer-templates`.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.4 (`5c864b4`) `docs-review`, `claude-review` (Req-005, Req-006).
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.5 (`175bd31`) `CLAUDE.md` index entry and this plan folder, with current statuses (Req-007, Req-029, P1).
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.6 (`db023e1`) Fix-ups from Spec Verification round 1 (codex F2–F5, F7): `diff-review` Step 3 item 1 excludes a finding held for the user; the `docs-review` audit covers workflow skill files; this plan cites parent commit `66126cc` and drops claims about plans that do not exist yet; Req-N07's verification needs a recorded operator reply.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.7 (`46a5060`) Fix-ups from Spec Verification round 2: `diff-review` Step 3 defines what happens to a held cut after the user decides (codex R2-F1); Req-N07 names the approved normative change and its record (R2-F2); the Decisions record the F1 ruling and TODO-0388.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.8 (`456da32`) Fix-ups from `auto-pr` Step 2b (docs-review and claude-review, operator-approved 2026-10-11): `diff-review` Critical Invariants say a normative cut is first held for the user, matching Step 3; the `docs-review` audit links `.github/instructions/` and `.claude/rules/`.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.9 (`bdee8bb`) Fix-ups from Code Diff Review Gate round 1 (operator-approved 2026-10-11): `diff-review` Step 3 gives the held-cut branch as pseudocode and a rejected cut leaves the finding open (codex F2, F3); item 5 links `coding_standards.md` (F4); `claude-review` scopes the mirror to rules; this plan dates its line citations, marks `tmp/` scratch as uncommitted, and notes Req-003 under Req-N07.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.10 (`daecbb5`) Fix-ups from Code Diff Review Gate round 2: the headless held-cut branch records an ad hoc run's cut in the report when there is no epic (codex F2); the `docs-review` audit covers every workflow `SKILL.md`, third-party report-only (codex F3); the Spec-gate citation uses base numbering (Opus F1). Codex's F1 (Spec deviation) stands on the operator's ruling.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.11 (`0fa2ea7`) Fix-up from Code Diff Review Gate round 3: headless `docs-review` fails closed on a held normative cut (checkpoint `verdict: fail`, halt before Step 7) instead of reporting completion (codex F2). Codex's F1 (Spec deviation) stands on the operator's ruling.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.12 (`eb0f50a`) Fix-ups from Code Diff Review Gate round 4: Req-004's test coverage is a read, since the parity test guards only the `SHARED:` blocks (codex F2); the `repo-cli` visibility claim cites `docker-compose.yml` (codex F3). Codex's F1 (Spec deviation) stands on the operator's ruling.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.13 (`dc8cd40`) Fix-ups from Code Diff Review Gate round 5: headless `claude-review` ends the run as failed when it holds a normative cut (codex P1); the FRR prompt's cut clause carries the normative-cut caveat (Sonnet note). The bridge-template gap (codex F2) is recorded under Risk-006 and TODO-0394.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [x] S1.14 (`489182c`) Fix-ups from Code Diff Review Gate round 6: `docs-review`'s headless branch is decision-level pseudocode (codex F2, Opus note); Req-004 lists the parent's four hunks correctly (Opus note); `claude-review` clarifies "applied to every restated copy" (Sonnet note). Codex's F1 (Spec deviation) stands on the operator's ruling.
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.15 Fix-ups from Code Diff Review Gate round 7: headless `docs-review` evaluates its halt conditions before recording `auto-headless` (codex F3); the tracked plan ticks completed steps (codex F2). Codex's F1 (Spec deviation) stands on the operator's ruling. Impl Step cells are swept against the step list; the held-cut branch says "auto-approve and apply the other proposed changes" (Opus notes). Both headless fail records name their step; the Spec-gate note records F6's disposition (S1.15 step review).
   - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
   - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
   - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
@@ -242,9 +248,9 @@ Principle 13.
 
 ### Final QA
 
-- [ ] Invoke `/protocols`.
+- [x] Invoke `/protocols`.
 - [ ] `task lint:changed` and `task test:changed`, run by `qa-lint` / `qa-test`.
-- [ ] Spec Verification Gate on this plan's Requirements Traceability Map (all of it: every row here is PR 1's), at the reviewer tier above, with the codex seat. The reviewers receive the plan-file exception and the Spec Verification deviation.
+- [x] Spec Verification Gate on this plan's Requirements Traceability Map (all of it: every row here is PR 1's), at the reviewer tier above, with the codex seat. The reviewers receive the plan-file exception and the Spec Verification deviation. (round 1 3-of-3: codex REJECTED F1–F7; F2–F5 and F7 fixed in S1.6, F6 accepted as no-action by all three seats in round 2; round 2: Opus/Sonnet APPROVED, codex REJECTED F1 + R2-F1/R2-F2; F1 kept by operator ruling, R2-F1/R2-F2 fixed in S1.7)
 - [ ] Code Diff Review Gate via the `diff-review` skill, at the reviewer tier above, with the codex seat (memory: invoke the skill, never hand-roll its steps).
 - [ ] Invoke `/protocols`, then the selected PR protocol.
 
