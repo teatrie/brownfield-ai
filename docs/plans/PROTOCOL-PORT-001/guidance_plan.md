@@ -1,4 +1,4 @@
-Status: Approved v6 — operator approved without a further review round; implementation in progress (2026-10-11)
+Status: Shipped — merged as PR #62 (`ace450b`). This is the plan as executed; unchecked boxes record their state at merge time.
 
 # Plan — PR 1: port "Guidance Over Exhaustive Rules" (`PROTOCOL-PORT-001`)
 
@@ -285,4 +285,4 @@ Principle 13. Ticks in this tracked copy lag one commit, because a step's tick c
 
 ### Close-out (after merge)
 
-- [ ] Set this folder's README lifecycle `Status` to `SHIPPED` and record any material deviation from this plan (`docs/plans/README.md:61-74`); this ships with the next PR's first step, since `main` is protected. Confirm `PROTOCOL-PORT-001` reaches `completed` (`task ledger:check-reviews`).
+- [x] Set this folder's README lifecycle `Status` to `SHIPPED` and record any material deviation from this plan (`docs/plans/README.md:61-74`); this ships with the next PR's first step, since `main` is protected. Confirm `PROTOCOL-PORT-001` reaches `completed` (`task ledger:check-reviews`). Done in BACKLOG-001 K01; the epic moves to `completed` after that PR merges.
