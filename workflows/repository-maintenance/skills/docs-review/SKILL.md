@@ -156,7 +156,8 @@ headless (CI=true or a pipeline signal):
                      -> checkpoint {"step": "docs-review-approval",
                         "verdict": "fail", "reason":
                         "destructive docs changes require interactive approval"}
-                        listing any held cut(s); HALT, apply nothing
+                        listing any held cut(s) and any Step 1b prunes
+                        already applied; HALT
   holds a cut that changes what a normative rule requires (from any step)
                      -> leave it unapplied; auto-approve and apply the other
                         proposed changes; run the lint gate below; checkpoint

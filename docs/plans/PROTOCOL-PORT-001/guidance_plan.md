@@ -42,6 +42,10 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 - **Normative change approved:** `diff-review` Step 3's rule that the Orchestrator MUST delegate every finding gains
   the held-cut exception (Req-004). The operator approved it directly in session on 2026-10-11; the approval is
   recorded in the S1.7 `step_result`.
+- **Spec Verification Gate not re-run after S1.7 (operator, 2026-10-11):** the Spec Verification Gate is not re-run
+  after its round-2 fixes (S1.7); the Code Diff Review Gate, which re-runs after each fix-up, reviews those fixes
+  instead. This departs from `verification_protocol.md` §Spec Verification Gate's rule that a rejection triggers a
+  fresh full gate; the decision is recorded in the S1.17 `step_result`.
 - Steps run sequentially.
 
 ## Safeguards
@@ -63,8 +67,8 @@ Lens 4 hunk belongs to the clean-room gate port, not this PR.
 | Req-030 | Local extension beyond the parent (operator, 2026-10-11): the new section gains the **Draw mechanics, don't narrate them** bullet (P2). It applies only to mechanics a doc itself defines; behaviour owned by code or a tool is still pointed to. Diagrams use Mermaid, which the repo already uses (validated: 5 fences in `docs/vertical_slicing_guide.md` and `docs/local_development.md`) | S1.1 | none — read | The bullet matches P2 and sits with the section's other bullets |
 | Req-002 | `docs/planning_protocol.md`: the Draft step gains the guidance bullet, and Resolution step 6.1 gains the fix-rule sentence. Both keep the Requirements Traceability Map explicit | S1.2 | none — read | Read §2 steps 3 and 6 |
 | Req-003 | The FRR prompt (`verification_protocol.md` §Finding Resolution Review step 2) accepts a cut or generalisation to intent plus a pointer, except a cut that changes what a normative rule requires, and still rejects a claim that is wrong or missing a trap | S1.2, S1.13 | none — read | The prompt has one copy in the tree (sourced), so no mirror changes |
-| Req-004 | `.claude/skills/diff-review/SKILL.md` gets all four of `66126cc`'s hunks: the Critical Invariants pointer, the item 5 extension (item 5 is lines 211–226, between `SHARED:diff-scope` end at 202 and `SHARED:diff-dimensions` start at 242), the normative-cut carve-out in Step 3 (headless: checkpoint unresolved and HALT), and the cross-reference note that the item 5 extension needs no `tdd-refactor.md` change (`66126cc.diff:61-68`; the local paragraph is near `diff-review/SKILL.md:453`) | S1.3, S1.6, S1.7, S1.8, S1.9, S1.10, S1.16 | `none — read` (the parity test, `tests/scripts/test_reviewer_templates.py`, guards only the `SHARED:` blocks, which this row does not touch) | Read item 5 and Step 3; the parity test still passes with `diff.md` untouched; bridge reviewers do not get the item 5 extension (Risk-006, TODO-0394) |
-| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped. The audit also covers every `SKILL.md` under `workflows/`, which Step 2's read list does not otherwise include and `claude-review` (scoped to `.claude/`) does not reach; third-party skills (e.g. under `third-party/`) are report-only | S1.4, S1.6, S1.8, S1.10, S1.11, S1.14, S1.15, S1.16 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
+| Req-004 | `.claude/skills/diff-review/SKILL.md` gets all four of `66126cc`'s hunks: the Critical Invariants pointer, the item 5 extension (item 5 is lines 211–226, between `SHARED:diff-scope` end at 202 and `SHARED:diff-dimensions` start at 242), the normative-cut carve-out in Step 3 (headless: record unresolved and HALT), and the cross-reference note that the item 5 extension needs no `tdd-refactor.md` change (`66126cc.diff:61-68`; the local paragraph is near `diff-review/SKILL.md:453`) | S1.3, S1.6, S1.7, S1.8, S1.9, S1.10, S1.16 | `none — read` (the parity test, `tests/scripts/test_reviewer_templates.py`, guards only the `SHARED:` blocks, which this row does not touch) | Read item 5 and Step 3; the parity test still passes with `diff.md` untouched; bridge reviewers do not get the item 5 extension (Risk-006, TODO-0394) |
+| Req-005 | `docs-review/SKILL.md` gains the **Over-Specified Rules** audit and the headless guard. The parent's "Step 4 lineage bullets" example is replaced with a local audited copy (e.g. the `.github/instructions/` mirror) or dropped. The audit also covers every `SKILL.md` under `workflows/`, which Step 2's read list does not otherwise include and `claude-review` (scoped to `.claude/`) does not reach; third-party skills (e.g. under `third-party/`) are report-only | S1.4, S1.6, S1.8, S1.10, S1.11, S1.14, S1.15, S1.16, S1.17 | none — read | Read Step 2 and the headless paragraph (near line 155); no parent-only name remains |
 | Req-006 | `claude-review/SKILL.md` gains the **Guidance Over Exhaustive Rules** check, with its `.github/instructions/` mirror clause and the route to the existing *Exception* (line 98) and report (line 103). "Cascade Search" becomes plain intent (e.g. "and every restated copy") | S1.4, S1.9, S1.13, S1.14 | none — read | Read the check list near line 34; no parent-only name remains |
 | Req-007 | The `CLAUDE.md` Coding Standards Index gains one entry pointing at the new section (P1) | S1.5 | none — read | Read the index |
 | Req-029 | PR 1 commits this folder, `docs/plans/PROTOCOL-PORT-001/`, with its `README.md` lifecycle block and this plan (`docs/plans/README.md:26-59`). Both are committed with status `IN PROGRESS` / approved, not `DRAFT` | S1.5 | none — read | The folder is in PR 1's diff with a current status |
@@ -151,7 +155,8 @@ Everything else comes from parent commit `66126cc`, adapted per the requirements
 The sub-tasks follow `CLAUDE.md` Principle 13 and `verification_protocol.md:42`, `:182`. Staging uses `task git:add`
 with this step's files only; `qa-lint` and `qa-test` run the gates; a `code-review` agent reads their raw output; a
 `task` agent commits; the `step_result` goes to `PROTOCOL-PORT-001`. `test:staged` may be skipped only per
-Principle 13.
+Principle 13. Ticks in this tracked copy lag one commit, because a step's tick carries its own commit hash; the ledger
+`step_result` for each step is the source of truth.
 
 - [x] S1.0 Create and start epic `PROTOCOL-PORT-001`; copy this plan to `tmp/protocol-port/guidance-working.md`; branch `chore/guidance-over-rules` from `main`.
 - [x] S1.1 (`4c80418`) `coding_standards.md` section, including the local diagram bullet (Req-001, Req-030, P2).
@@ -244,7 +249,13 @@ Principle 13.
   - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
   - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
   - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
-- [ ] S1.16 Fix-up from Code Diff Review Gate round 8: `diff-review`'s Headless Mode section and its unresolved-findings headless bullet checkpoint with an epic and report otherwise, matching the held-cut pseudocode (codex F2). Codex's F1 (Spec deviation) stands on the operator's ruling. A destructive-deletion halt also lists any held cut; the Spec-gate note records that the gate was not re-run after S1.7 (Opus notes).
+- [x] S1.16 (`b968cd6`) Fix-up from Code Diff Review Gate round 8: `diff-review`'s Headless Mode section and its unresolved-findings headless bullet checkpoint with an epic and report otherwise, matching the held-cut pseudocode (codex F2). Codex's F1 (Spec deviation) stands on the operator's ruling. A destructive-deletion halt also lists any held cut; the Spec-gate note records that the gate was not re-run after S1.7 (Opus notes).
+  - [x] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
+  - [x] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
+  - [x] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
+  - [x] Sub-task: Checkpoint the `step_result` and run `task ledger:touch -- PROTOCOL-PORT-001`; only then commit, and tick this step in the working copy.
+  - [x] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.
+- [ ] S1.17 Fix-ups from Code Diff Review Gate round 9: the Spec-gate Final QA item states it was executed, did not pass, and was not re-run after S1.7, with the Spec no-re-run decision recorded in Decisions (codex F1, step review); docs-review's destructive halt no longer claims "apply nothing" (codex F2); Req-004 says "record"; the Phases preamble says ticks lag one commit (Opus notes). The destructive halt's fail record also lists any Step 1b prunes already applied (step review).
   - [ ] Sub-task: Read `tmp/protocol-port/guidance-working.md` and confirm this step's scope.
   - [ ] Sub-task: Parse [CLAUDE.md](../../../CLAUDE.md) to verify strict adherence to architectural standards/limits.
   - [ ] Sub-task: Explicitly stage changed files (git add) and run task test:staged and task lint:staged to ensure pipeline gates still pass.
@@ -256,7 +267,7 @@ Principle 13.
 
 - [x] Invoke `/protocols`.
 - [ ] `task lint:changed` and `task test:changed`, run by `qa-lint` / `qa-test`.
-- [x] Spec Verification Gate on this plan's Requirements Traceability Map (all of it: every row here is PR 1's), at the reviewer tier above, with the codex seat. The reviewers receive the plan-file exception and the Spec Verification deviation. (round 1 3-of-3: codex REJECTED F1–F7; F2–F5 and F7 fixed in S1.6, F6 accepted as no-action by all three seats in round 2; round 2: Opus/Sonnet APPROVED, codex REJECTED F1 + R2-F1/R2-F2; F1 kept by operator ruling, R2-F1/R2-F2 fixed in S1.7; not re-run after S1.7, per the operator's decision to run each check once — the Code Diff Review Gate reviewed the S1.7 fixes)
+- [x] Spec Verification Gate on this plan's Requirements Traceability Map (all of it: every row here is PR 1's), at the reviewer tier above, with the codex seat. The reviewers receive the plan-file exception and the Spec Verification deviation. (executed, not passed; not re-run after S1.7, per the Spec no-re-run decision in Decisions — round 1 codex REJECTED F1–F7, F2–F5 and F7 fixed in S1.6, F6 accepted as no-action by all three seats; round 2 Opus/Sonnet APPROVED, codex REJECTED F1 + R2-F1/R2-F2; F1 kept by operator ruling as a recorded deviation (TODO-0388); R2-F1/R2-F2 fixed in S1.7 and reviewed by the Code Diff Review Gate, not by a fresh Spec round)
 - [ ] Code Diff Review Gate via the `diff-review` skill, at the reviewer tier above, with the codex seat (memory: invoke the skill, never hand-roll its steps).
 - [ ] Invoke `/protocols`, then the selected PR protocol.
 
