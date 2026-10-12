@@ -155,8 +155,8 @@ headless (CI=true or a pipeline signal):
   deletes a file with non-redundant content
                      -> checkpoint {"step": "docs-review-approval",
                         "verdict": "fail", "reason":
-                        "destructive docs changes require interactive approval"};
-                        HALT, apply nothing
+                        "destructive docs changes require interactive approval"}
+                        listing any held cut(s); HALT, apply nothing
   holds a cut that changes what a normative rule requires (from any step)
                      -> leave it unapplied; auto-approve and apply the other
                         proposed changes; run the lint gate below; checkpoint

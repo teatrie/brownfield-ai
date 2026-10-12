@@ -35,10 +35,12 @@ non-interactive execution.
 In headless mode, if the BLOCKED resolution loop (Step 3) exhausts all retry
 attempts without achieving APPROVED from all active reviewers, the skill MUST:
 
-1. Checkpoint a `step_result` artifact to the Execution Ledger with
-   `verdict: fail` and the full reviewer findings in the body.
+1. With an epic, checkpoint a `step_result` artifact to the Execution Ledger
+   with `verdict: fail` and the full reviewer findings in the body; without one
+   (ad hoc), put those findings in the run's report.
 2. Halt execution immediately. Do NOT proceed past the gate.
-3. The next session (human or bot) resumes via `execution-ledger resume`.
+3. With an epic, the next session (human or bot) resumes via
+   `execution-ledger resume`.
 
 In interactive mode, the skill presents unresolved findings to the user for
 manual resolution after exhausting retry attempts.
@@ -769,8 +771,9 @@ rounds.
 
 - **Interactive mode**: Present the unresolved findings to the user and request
   manual intervention.
-- **Headless mode**: Checkpoint a `step_result` artifact with `verdict: fail`
-  and the full findings, then HALT. Do not proceed past the gate.
+- **Headless mode**: With an epic, checkpoint a `step_result` artifact with
+  `verdict: fail` and the full findings; without one, put them in the run's
+  report. Then HALT. Do not proceed past the gate.
 
 ### Step 4: Ledger Checkpoint (conditional)
 
