@@ -382,6 +382,7 @@ To prevent context loss and provide shared visibility across sessions, project t
      - `[ ] Sub-task: Invoke /protocols to re-anchor on core rules before delegating the next phase.`
 
      Per-step `task test:staged` verification remains universal in both decomposition modes (CLAUDE.md Principle 13 is unchanged). The conditionality introduced by vertical slicing is solely about whether a separate test domain wave exists in the plan structure — not about whether per-step verification runs.
+   - **Guidance over exhaustive rules**: In doc text the plan proposes, and in plan prose describing existing behaviour, give intent, decision criteria and a pointer to the source of truth rather than a rule per case; keep what an agent cannot derive (e.g. traps, command forms, non-obvious steps). This does not relax the Requirements Traceability Map below: its requirements, edge cases and architectural rules stay explicit, even when what the plan builds is doc text. See [coding_standards.md](coding_standards.md#guidance-over-exhaustive-rules).
    - **Final QA Phase (Mandatory)**: The Planner MUST append a final
      QA phase to every plan that produces code or documentation changes:
      (0) invoke `/protocols` to re-anchor the Orchestrator on core
@@ -561,7 +562,7 @@ To prevent context loss and provide shared visibility across sessions, project t
    which bridge agents successfully reviewed the original plan.
 
 6. **Resolution**: The Planner reads all reviews and resolves findings:
-   1. Read all reviews and resolve ALL findings — critical, significant, AND minor.
+   1. Read all reviews and resolve ALL findings — critical, significant, AND minor. Resolve a finding that a doc-text proposal, or plan prose describing existing behaviour, is incomplete by the fix rule in [coding_standards.md](coding_standards.md#guidance-over-exhaustive-rules). This does not apply to a requirement, edge case or architectural rule missing from the Requirements Traceability Map.
    2. For BLOCKED verdicts, address the blockers with plan edits and re-submit to a fresh Dual-Model Review. The full review cycle restarts — all reviewers must pass, not just the previously blocking one — because amendments may introduce new issues visible only to another reviewer.
    3. For APPROVED WITH NOTES verdicts, the Planner MUST apply the [Finding Resolution Review](verification_protocol.md#finding-resolution-review) process. Findings the Planner believes require plan edits are incorporated into the proposed wording. Findings the Planner believes require no action are submitted to the resolution review for independent validation — the Planner MUST NOT self-dismiss them.
    4. Every finding resolved via plan edit must have a corresponding change in the Proposed Wording section of `plan.md` before the gate can pass.

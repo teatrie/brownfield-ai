@@ -35,10 +35,12 @@ non-interactive execution.
 In headless mode, if the BLOCKED resolution loop (Step 3) exhausts all retry
 attempts without achieving APPROVED from all active reviewers, the skill MUST:
 
-1. Checkpoint a `step_result` artifact to the Execution Ledger with
-   `verdict: fail` and the full reviewer findings in the body.
+1. With an epic, checkpoint a `step_result` artifact to the Execution Ledger
+   with `verdict: fail` and the full reviewer findings in the body; without one
+   (ad hoc), put those findings in the run's report.
 2. Halt execution immediately. Do NOT proceed past the gate.
-3. The next session (human or bot) resumes via `execution-ledger resume`.
+3. With an epic, the next session (human or bot) resumes via
+   `execution-ledger resume`.
 
 In interactive mode, the skill presents unresolved findings to the user for
 manual resolution after exhausting retry attempts.
@@ -54,7 +56,8 @@ directives are the primary cause of silent violations.
   APPROVED WITH NOTES items — MUST be routed through the
   [Finding Resolution Review](../../../docs/verification_protocol.md#finding-resolution-review).
   The resolution determines the action: `code-change` (delegated to
-  an implementer subagent), `doc-or-todo` (documentation or TODO
+  an implementer subagent; a normative cut is first held for the
+  user — see Step 3), `doc-or-todo` (documentation or TODO
   capture, still requiring reviewer consensus), or `no-action`
   (validated by reviewers as requiring no change). The Orchestrator
   MUST NOT dismiss, defer, or triage findings as "follow-up" or
@@ -224,6 +227,12 @@ and the per-family mapping.
 >    history *deleted* in this diff was relocated to the PR description or
 >    ledger — you cannot see either, so you would be guessing in both
 >    directions; that obligation rests with the author and the orchestrator.
+>    For agent-facing docs, flag wrong claims, missing non-derivable traps and
+>    over-specified behavioural claims or edge-case lists that read as
+>    complete, per
+>    [`docs/coding_standards.md`](../../../docs/coding_standards.md#guidance-over-exhaustive-rules)
+>    §"Guidance Over Exhaustive Rules"; do not flag a claim already stated as
+>    intent plus a pointer for not enumerating every case.
 > 6. Anti-Faking Duty: inspect for hardcoded stubs, skipped validation steps,
 >    or faked configurations that tests would not catch
 > 7. Linter suppression additions or modifications (`# noqa`, `# type: ignore`,
@@ -478,7 +487,9 @@ gains a review-time guard. The optional **Intent / Background** input added to
 the Step 2 prompt is likewise a review-time gate dimension with no tdd-refactor
 analogue — it aids diff interpretation and sharpens items 4 and 18 at review
 time, not during implementation refactoring; `tdd-refactor.md` needs no
-checklist change.
+checklist change. The item 5 guidance-over-exhaustive-rules extension likewise
+needs no [`tdd-refactor.md`](../../agents/tdd-refactor.md) update:
+`tdd-refactor` refactors code, not agent-facing docs.
 
 #### Cross-Family Pre-flight (User-Requested)
 
@@ -659,12 +670,30 @@ round-specific filename.
 All active reviewers must return APPROVED with no findings that require artifact
 amendments before the gate passes. **ALL findings — including non-blocking notes
 — MUST be resolved.** Do not defer findings as "non-blocking" or "follow-up";
-the Orchestrator MUST delegate every finding to an implementer subagent. If any
-reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED with informational
-observations that imply a code change:
+the Orchestrator MUST delegate every finding to an implementer subagent, except
+a cut or generalisation that changes what a normative rule requires (see
+[coding_standards.md](../../../docs/coding_standards.md#guidance-over-exhaustive-rules)).
+A held cut resolves as follows:
+
+```text
+held cut (a finding whose fix would change what a normative rule requires);
+"record" = the run's checkpoint with an epic, else its report:
+  headless   -> leave it unapplied; record it, with the round's other open
+                findings, as unresolved; HALT, as for unresolved findings below
+  otherwise  -> ask the user; record the decision
+    approved -> it becomes a code-change: the steps below
+                (implementer, regression guard, fresh re-review)
+    rejected -> the finding stays open: choose another fix, or file no-action
+                with a justification that stands without the cut
+```
+
+If any reviewer returns BLOCKED, APPROVED WITH NOTES, or APPROVED
+with informational observations that imply a code change:
 
 1. Spawn a `tdd-green` or `general-purpose` implementer subagent (at `fast`
-   model tier) per the delegation protocol to resolve the findings. The invoking
+   model tier) per the delegation protocol to resolve the findings, except one
+   held for the user under the exception above, which is not sent to the
+   implementer. The invoking
    agent MUST NOT resolve findings directly — this is a delegation boundary.
 
 > **Experimentation advisory**: If any reviewer flags that experiments or
@@ -742,8 +771,9 @@ rounds.
 
 - **Interactive mode**: Present the unresolved findings to the user and request
   manual intervention.
-- **Headless mode**: Checkpoint a `step_result` artifact with `verdict: fail`
-  and the full findings, then HALT. Do not proceed past the gate.
+- **Headless mode**: With an epic, checkpoint a `step_result` artifact with
+  `verdict: fail` and the full findings; without one, put them in the run's
+  report. Then HALT. Do not proceed past the gate.
 
 ### Step 4: Ledger Checkpoint (conditional)
 

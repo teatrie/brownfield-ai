@@ -84,6 +84,7 @@ Perform the following audits:
 1. **Branch Links**: Ensure git branch names (e.g., `origin/main`, `ship/branch`) or untracked/transient files (e.g., `.gitignore`, `plan.md`) are represented strictly as inline backtick code blocks (e.g., `` `origin/main` ``) and NEVER hallucinated as markdown hyperlinks (e.g., ``origin/main``).
 1. **Broken Links**: Scan for broken markdown links (e.g., hallucinated relative structures). Either 1) Fix the broken link if the *correct*, valid relative path is known and physically verified, or 2) Completely remove the broken link and revert it to an inline backtick reference if the proper path cannot be determined.
 1. **Outdated Info**: Remove explicit mentions of deprecated processes, CLI toolings, or removed skill structures. Verify the "Directory Structure" section in [README.md](../../../../README.md) exactly maps to the actual current root and core subdirectories via `ls -la`.
+1. **Over-Specified Rules**: In agent-facing docs, flag precise behavioural claims, "complete" lists and enumerated edge cases that an agent could derive from the code or a linked source. Fix by cutting or generalising to intent plus a pointer, per [docs/coding_standards.md](../../../../docs/coding_standards.md#guidance-over-exhaustive-rules); keep non-derivable traps and copies another rule requires (e.g. the [.github/instructions/](../../../../.github/instructions/) mirrors of [.claude/rules/](../../../../.claude/rules/)). A cut or generalisation that changes what a normative rule (e.g. MUST/NEVER, a gate criterion) requires is a conceptual change: flag it to the User, do not auto-apply. This audit also covers every `SKILL.md` under `workflows/`, which the read list above does not otherwise include; third-party skills (e.g. under `third-party/`) are report-only.
 
 ## Step 3: Workflow Domain Conformance
 
@@ -147,13 +148,28 @@ With the introduction of Domain-Driven Design (DDD) in the `workflows/` director
 Present a concise Markdown plan of additions, relocations, and deletions to the user.
 Wait for **explicit User Approval**.
 
-**Headless mode** (`CI=true` or explicit pipeline signal): Auto-approve
-the proposed changes. Checkpoint a `step_result` artifact to the
-Execution Ledger with `{"step": "docs-review-approval", "verdict":
-"auto-headless"}`. If the proposed changes include deletions of files
-containing non-redundant content, fail-closed: checkpoint
-`{"verdict": "fail", "reason": "destructive docs changes require
-interactive approval"}` and halt.
+**Headless mode** (`CI=true` or explicit pipeline signal) resolves as follows; this is the normative form:
+
+```text
+headless (CI=true or a pipeline signal);
+"record" = a step_result checkpoint with an epic, else the run's report;
+a fail record lists any held cut(s) and every change already applied,
+Step 1b prunes included:
+  deletes a file with non-redundant content
+                     -> record {"step": "docs-review-approval",
+                        "verdict": "fail", "reason":
+                        "destructive docs changes require interactive approval"};
+                        HALT
+  holds a cut that changes what a normative rule requires (from any step)
+                     -> leave it unapplied; auto-approve and apply the other
+                        proposed changes; run the lint gate below; record
+                        {"step": "docs-review-approval", "verdict": "fail",
+                        "reason": "normative cut held for the user"}; HALT
+                        before Step 7
+  otherwise          -> record {"step": "docs-review-approval",
+                        "verdict": "auto-headless"}; auto-approve; continue to
+                        "Once approved"
+```
 
 Once approved:
 

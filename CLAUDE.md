@@ -38,6 +38,7 @@ scope unless the user asks for it explicitly.
 
 - [Coding Standards](./docs/coding_standards.md) — Formatting, SOLID, layouts, Doc rules. Python standards scoped via [.claude/rules/lang.python.md](./.claude/rules/lang.python.md).
 - [Glossary](./docs/glossary.md) — Canonical terminology for orchestration hierarchy, agent roles, and model tiers.
+- [Guidance Over Exhaustive Rules](./docs/coding_standards.md#guidance-over-exhaustive-rules) — how agent-facing docs and plans state rules: intent, decision criteria, pointers and traps, not a case per rule.
 
 ## Key Repositories
 
