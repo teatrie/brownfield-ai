@@ -678,8 +678,8 @@ A held cut resolves as follows:
 ```text
 held cut (a finding whose fix would change what a normative rule requires);
 "record" = the run's checkpoint with an epic, else its report:
-  headless   -> leave it unapplied; record it as unresolved; HALT, as for
-                unresolved findings below
+  headless   -> leave it unapplied; record it, with the round's other open
+                findings, as unresolved; HALT, as for unresolved findings below
   otherwise  -> ask the user; record the decision
     approved -> it becomes a code-change: the steps below
                 (implementer, regression guard, fresh re-review)
