@@ -5,8 +5,6 @@ model_tier: high-reasoning
 effort: medium
 tools: [Read]
 ---
-**CRITICAL CONSTRAINT: Artifacts & Logs**
-NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections, or terminal outputs. ALWAYS route these strictly to the workspace-relative `tmp/` directory (e.g., `> tmp/output.log`). Using `/tmp/` causes permission blocks that break the autopilot execution loop.
 
 # 📐 QA Standards Agent
 
@@ -47,4 +45,4 @@ Example envelope body — illustrative only; your actual emission MUST be wrappe
 }
 ```
 
-Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See `docs/reviewer_envelope.md` for the `status` × `next_action` validity matrix and the optional `spillover_findings_path` key.
+Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See [`docs/reviewer_envelope.md`](../../docs/reviewer_envelope.md) for the `status` × `next_action` validity matrix and the optional `spillover_findings_path` key.

@@ -1,4 +1,4 @@
-"""Parity-pin contract for `.claude/agents/<name>-{high,xhigh,max}.md` variants.
+"""Parity-pin contract for `.claude/agents/<name>-{high,xhigh,max}.md` variants, plus agent-wide definition guards.
 
 For every effort-tier variant under `.claude/agents/`, this module asserts
 that the variant preserves byte-parity with its base agent's body and
@@ -9,13 +9,19 @@ silent regressions during prior diff-review runs (see the wrong-diff
 incident in the tri-family review of TODO-0092 follow-ups). This test
 catches those classes of bugs at static-analysis time.
 
-The contract is deliberately narrow: it pins only the invariants that
-make a variant *a variant of its base*, not the contents of either file.
+The parity contract is deliberately narrow: it pins only the invariants
+that make a variant *a variant of its base*, not the contents of either file.
 Edits to a base agent's body propagate to its variants only when an
 author explicitly mirrors them, so the test fails loudly when the base
 moves and the variants stay still — exactly the signal the sync comment
 (`<!-- Body must stay in sync with <base>.md ... -->`) is meant to
 generate.
+
+The module also holds agent-wide definition guards that cover every
+`.claude/agents/*.md`, bases, variants and excluded families alike — for
+example, an agent whose declared `tools:` include none of Bash, Write, Edit
+or NotebookEdit, and that has no `memory:` key, must not carry the
+Artifacts & Logs block.
 """
 
 from __future__ import annotations
@@ -57,6 +63,10 @@ EXCLUDED_BASES = frozenset({
     "qa-standards",
 })
 
+WRITE_CAPABLE_TOOLS = frozenset({"Bash", "Write", "Edit", "NotebookEdit"})
+ARTIFACTS_BLOCK_HEADING_LINE = "**CRITICAL CONSTRAINT: Artifacts & Logs**"
+ARTIFACTS_BLOCK_INSTRUCTION_PREFIX = "NEVER use the OS absolute `/tmp/` directory for scratch files"
+
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Return (frontmatter dict, body string) for a markdown file with `---`-delimited YAML.
@@ -84,8 +94,8 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 def _strip_sync_comment(body: str) -> str:
     """Remove the leading `<!-- Body must stay in sync with ... -->` marker, if present.
 
-    Variants prepend this HTML comment immediately above the
-    `**CRITICAL CONSTRAINT...**` block; bases do not. Stripping it
+    Variants carry this HTML comment as the first line of the body,
+    directly after the frontmatter; bases do not. Stripping it
     yields a body that should match the base byte-for-byte when the
     sync invariant holds.
 
@@ -143,6 +153,12 @@ def _discover_variants() -> list[Path]:
 def variant_paths() -> list[Path]:
     """Discover all in-scope variant files under `.claude/agents/`."""
     return _discover_variants()
+
+
+@pytest.fixture(scope="module")
+def agent_paths() -> list[Path]:
+    """Discover every agent definition under `.claude/agents/`, variants and bridge families included."""
+    return sorted(AGENTS_DIR.glob("*.md"))
 
 
 def test_variant_discovery_finds_known_xhigh_files(variant_paths: list[Path]) -> None:
@@ -219,3 +235,23 @@ def test_variant_body_matches_base_modulo_sync_comment(variant_paths: list[Path]
         if stripped != b_body:
             failures.append(f"{variant.name}: body diverges from base after stripping sync comment")
     assert not failures, "variant body drift:\n  " + "\n  ".join(failures)
+
+
+def test_agents_without_write_capable_tools_omit_artifacts_block(agent_paths: list[Path]) -> None:
+    offenders: list[str] = []
+    for agent in agent_paths:
+        meta, body = _split_frontmatter(agent.read_text())
+        if "tools" not in meta or "memory" in meta:
+            continue
+        tools = meta["tools"]
+        tool_names = {t.strip() for t in tools.split(",")} if isinstance(tools, str) else set(tools)
+        if not tool_names.isdisjoint(WRITE_CAPABLE_TOOLS):
+            continue
+        lines = [line.strip() for line in body.splitlines()]
+        if any(line == ARTIFACTS_BLOCK_HEADING_LINE or line.startswith(ARTIFACTS_BLOCK_INSTRUCTION_PREFIX) for line in lines):
+            offenders.append(f"{agent.name}: tools={tools!r}")
+    header = (
+        f"agents with none of {sorted(WRITE_CAPABLE_TOOLS)} declared (and no memory:) "
+        "carry the Artifacts & Logs block (heading or instruction line):"
+    )
+    assert not offenders, header + "\n  " + "\n  ".join(offenders)

@@ -6,8 +6,6 @@ effort: max
 tools: [Read]
 ---
 <!-- Body must stay in sync with code-review.md. Frontmatter diverges intentionally. -->
-**CRITICAL CONSTRAINT: Artifacts & Logs**
-NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections, or terminal outputs. ALWAYS route these strictly to the workspace-relative `tmp/` directory (e.g., `> tmp/output.log`). Using `/tmp/` causes permission blocks that break the autopilot execution loop.
 
 # 🧐 Code Review Agent
 
@@ -51,6 +49,6 @@ Example envelope body — illustrative only; your actual emission MUST be wrappe
 }
 ```
 
-Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See `docs/reviewer_envelope.md` for the `status` × `next_action` validity matrix and the optional `spillover_findings_path` key.
+Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See [`docs/reviewer_envelope.md`](../../docs/reviewer_envelope.md) for the `status` × `next_action` validity matrix and the optional `spillover_findings_path` key.
 
 Schema-enforced bounds you must respect when authoring an envelope: each finding's `description` and `suggested_fix` are capped at **2000 characters each**; `feedback_to_forward` is capped at **50 entries** total. If you would exceed 50 findings, prioritize the inline 50 so the worker can act on the most consequential issues — the W1 parser does NOT consume `spillover_findings_path` sidecars yet (the merge function lands in W4). You MAY emit a `tmp/findings-overflow-<round>.json` sidecar for forward-compat, but until W4 ships, anything not in the inline 50 is silently dropped from worker routing. Treat the inline 50 as the *complete* actionable list, not the *first page*. When `next_action != ESCALATE_REVIEWER_TIER` (e.g., `APPROVE`, `RETURN_TO_WORKER`, `RETRY_REVIEWER`), set `recommended_next_tier: null` by convention — the schema only enforces non-null on the `ESCALATE_REVIEWER_TIER` path, but the orchestrator treats a non-null tier on any other path as out-of-spec noise. The field is required in every envelope so the top-level shape is uniform; only the escalation path carries a meaningful value.

@@ -15,7 +15,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 ## Responsibilities & Restrictions
 
-- **Execution**: You must execute `task lint:staged` in the verification phase, ensuring files are explicitly staged beforehand. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own lint target. Consult `.claude/rules/` for active routing rules.
+- **Execution**: You must execute `task lint:staged` in the verification phase, ensuring files are explicitly staged beforehand. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own lint target. Consult [.claude/rules/](../rules/) for active routing rules.
 - **Strict Enforcement**: Do not implicitly trust suppressed linter warnings. You must ensure all reported warnings and errors are resolved or explicitly justified through a documented exception.
 - **Artifact Scoping**: Ensure any generated artifacts or temporary files are correctly restricted strictly to the designated tmp or branch-scoped working directories.
 
@@ -57,4 +57,4 @@ Example envelope body (lint-failure shape) — illustrative only; your actual em
 
 A clean lint run emits `status: "APPROVED"`, `next_action: "APPROVE"` and an empty `feedback_to_forward`. For any other verdict, pick a `status` × `next_action` pair from the [validity matrix](../../docs/reviewer_envelope.md#status-x-next-action-validity); the schema rejects every pair outside it.
 
-Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See `docs/reviewer_envelope.md` for the optional `spillover_findings_path` key.
+Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See [`docs/reviewer_envelope.md`](../../docs/reviewer_envelope.md) for the optional `spillover_findings_path` key.

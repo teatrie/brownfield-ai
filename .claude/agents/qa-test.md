@@ -15,7 +15,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 ## Responsibilities & Restrictions
 
-- **Execution Requirements**: You must execute `task test:staged` (ensuring files are staged first) and potentially full `task test` for end-to-end integration to verify the integration boundaries of the code changes. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own test target. Consult `.claude/rules/` for active routing rules.
+- **Execution Requirements**: You must execute `task test:staged` (ensuring files are staged first) and potentially full `task test` for end-to-end integration to verify the integration boundaries of the code changes. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own test target. Consult [.claude/rules/](../rules/) for active routing rules.
 - **Anti-Faking Duty**: Never fake test successes, rely on dummy data, or bypass dependencies. Actively verify that test coverage properly exercises newly constructed logic paths.
 - **Assertion Auditing**: Check inside test implementations for any hardcoded false-positives or prematurely stubbed assertions. Fail immediately if proper network, DB schemas, or dependencies are improperly mocked when full integration is expected.
 
@@ -59,4 +59,4 @@ Example envelope body (operator-auth-boundary HALT shape) — illustrative only;
 
 A passing test run emits `status: "APPROVED"`, `next_action: "APPROVE"` and an empty `feedback_to_forward`. For any other verdict, pick a `status` × `next_action` pair from the [validity matrix](../../docs/reviewer_envelope.md#status-x-next-action-validity); the schema rejects every pair outside it.
 
-Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See `docs/reviewer_envelope.md` for the optional `spillover_findings_path` key.
+Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See [`docs/reviewer_envelope.md`](../../docs/reviewer_envelope.md) for the optional `spillover_findings_path` key.
