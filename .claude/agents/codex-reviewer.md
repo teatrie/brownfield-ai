@@ -230,9 +230,7 @@ NOTICE: <model> <effort> returned <status>; falling back to gpt-5.3-codex high (
 Auth-class failures (`401`, `403`, "invalid api key", etc.) are
 non-retriable: the `ERROR_CLASS="auth"` branch in
 `scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with
-`error_class=auth`, neither retries nor downgrades the model, and
-**exits 0**. The process exit status is therefore not a failure
-signal on this path — read `tmp/codex-exit.json` to detect it.
+`error_class=auth` and neither retries nor downgrades the model.
 
 If `MODEL` is unset the wrapper passes no `-m` at all, so there is no
 caller-selected model to step down from and the fallback is a no-op —
@@ -257,22 +255,31 @@ from the gate without treating it as an infrastructure failure.
 Triggers:
 
 - `OPENAI_API_KEY` env var missing (non-OAuth path)
-- `codex` CLI binary absent
+- `codex` CLI binary absent at pre-flight (`mode: none`, see
+  `scripts/agent-cli/codex-preflight-tiered.sh`); a binary missing
+  once the wrapper runs is a `CODEX_ERROR`
 
 ### CODEX_ERROR
 
 Infrastructure failure signal. The calling agent degrades to the
 standard Dual-Model Review Gate, excluding the Codex verdict.
 
-Triggers:
+The wrapper exits non-zero on every `CODEX_ERROR`: a non-zero exit
+means no review was produced, and the reason is in
+`tmp/codex-exit.json`. `CODEX_UNAVAILABLE` exits 0 — it is the
+documented "bridge unavailable" outcome, not a failed review.
+
+Triggers include, e.g.:
 
 - Auth failure: HTTP 401/403 or stderr contains auth errors
-  — no retry and no downgrade; the wrapper exits 0, so
-  `tmp/codex-exit.json` is the only outcome signal
+  — no retry and no downgrade
+- OS-level denial (e.g. `Operation not permitted`): fails the same
+  way on every attempt, so it is not retried
 - Transient failure: timeout, non-zero exit without auth message
   — retry once, then emit `CODEX_ERROR`
 - CLI crash: non-zero exit with unrecognized error — classify as
   transient, retry once
+- Empty output: the CLI exited 0 but wrote no review
 
 ### Exit Artifact
 

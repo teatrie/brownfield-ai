@@ -290,6 +290,28 @@ def test_codex_review_uses_container_wrapper() -> None:
     )
 
 
+def test_codex_review_tasks_do_not_mask_the_wrapper_exit_status() -> None:
+    """The codex review aliases must exit with the wrapper's own status.
+
+    The wrapper exits non-zero whenever no review was produced, and callers
+    gate on the alias's status; an ``ignore_error`` or an ``||`` fallback in
+    the recipe would turn every failed review into a pass.
+    """
+    data = _load_taskfile()
+    offenders: list[str] = []
+    for task_name in ("review:codex", "review:codex:local"):
+        task_body = data["tasks"].get(task_name)
+        assert isinstance(task_body, dict), f"{task_name} must be defined"
+        if task_body.get("ignore_error"):
+            offenders.append(f"{task_name} sets ignore_error")
+        for cmd in task_body.get("cmds", []):
+            if isinstance(cmd, dict) and cmd.get("ignore_error"):
+                offenders.append(f"{task_name} has a cmd with ignore_error: {cmd!r}")
+        if "||" in _joined_cmds(task_name):
+            offenders.append(f"{task_name} cmds contain an || fallback: {_joined_cmds(task_name)!r}")
+    assert not offenders, "Codex review aliases must not mask the wrapper's exit status: " + "; ".join(offenders)
+
+
 def test_local_tasks_preserve_execution_context_env() -> None:
     """Host-mode review tasks set the execution-context marker env var.
 

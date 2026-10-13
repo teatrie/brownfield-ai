@@ -12,6 +12,8 @@
 #     reviewer template + DIFF_FILE prompt on stdin as the sole subject.
 #   Output written to tmp/codex-review-output-<ROUND>.md.
 #   Signals written to tmp/codex-exit.json on unavailability or error.
+#   Exit status is non-zero whenever no review was produced (every
+#   CODEX_ERROR); CODEX_UNAVAILABLE exits 0.
 
 set -euo pipefail
 
@@ -225,6 +227,20 @@ cat "$TEMPLATE_PATH" "$SANITIZED_SUBJECT" > "$COMBINED_PROMPT"
 # Invoke Codex CLI — output captured to tmp files, never piped into eval.
 # ---------------------------------------------------------------------------
 EXIT_CODE=0
+RETRIED=false
+
+# A zero exit that leaves -o empty produced no review, so it is reported as
+# CODEX_ERROR rather than as a success.
+require_review_output() {
+  if [ ! -s "${OUTPUT_FILE}" ]; then
+    echo "Error: Codex produced empty output" >&2
+    jq -n --argjson exit_code "$EXIT_CODE" \
+          --argjson retried "$RETRIED" \
+          '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"empty_output",stderr_excerpt:"codex exited without writing the review output artifact"}' \
+          > tmp/codex-exit.json
+    exit 1
+  fi
+}
 
 run_codex() {
   # Clear the output artifact before EVERY attempt. The path is reused across
@@ -235,7 +251,7 @@ run_codex() {
   # destructive step behind the template-existence guard, which aborts before
   # any call can reach this line.
   if ! rm -f "${OUTPUT_FILE}"; then
-    echo "FATAL: cannot clear ${OUTPUT_FILE} - its directory is not writable" >&2
+    echo "FATAL: cannot clear ${OUTPUT_FILE}" >&2
     printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"output_clear_failed","stderr_excerpt":"cannot clear the review output artifact"}\n' > tmp/codex-exit.json
     exit 1
   fi
@@ -295,6 +311,18 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
   fi
 
+  # An OS-level denial (e.g. a sandbox blocking a syscall) fails identically
+  # on every attempt, so it is terminal and never retried. An HTTP 401/403
+  # that happens to say "permission denied" is left to the auth check below.
+  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "operation not permitted|permission denied|os error 1([^0-9]|$)" \
+      && ! printf "%s\n" "$STDERR_EXCERPT" | grep -qE "(^|[^0-9])(401|403)([^0-9]|$)"; then
+    jq -n --argjson exit_code "$EXIT_CODE" \
+          --arg stderr_excerpt "$STDERR_EXCERPT" \
+          '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"sandbox_denied",stderr_excerpt:$stderr_excerpt}' \
+          > tmp/codex-exit.json
+    exit 1
+  fi
+
   ERROR_CLASS="transient"
   # Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth
   # NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
@@ -316,7 +344,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
           --arg stderr_excerpt "$STDERR_EXCERPT" \
           '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"auth",stderr_excerpt:$stderr_excerpt}' \
           > tmp/codex-exit.json
-    exit 0
+    exit 1
   fi
 
   # HIGH-tier model transient failure -> MEDIUM tier fallback.
@@ -363,6 +391,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     echo "NOTICE: ${MODEL} ${EFFORT:-default} returned ${_status_hit}; falling back to gpt-5.3-codex high (MEDIUM tier)." >&2
     MODEL="gpt-5.3-codex"
     EFFORT_OVERRIDE="high"
+    RETRIED=true
     set +e
     run_codex
     EXIT_CODE=$?
@@ -380,9 +409,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
       exit 1
     fi
     # Fallback succeeded — skip remaining error handling
-    if [ ! -s "${OUTPUT_FILE}" ]; then
-      echo "Warning: Codex produced empty output" >&2
-    fi
+    require_review_output
     exit 0
   fi
 
@@ -402,6 +429,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
       # Opt-in: retry once with EFFORT=high. Prominent stderr notice.
       echo "NOTICE: Codex rejected EFFORT=xhigh; EFFORT_FALLBACK_ON_REJECT=1 is set — retrying once with EFFORT=high." >&2
       EFFORT_OVERRIDE="high"
+      RETRIED=true
       set +e
       run_codex
       EXIT_CODE=$?
@@ -432,6 +460,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     # Transient — retry once after a short delay
     sleep 5
 
+    RETRIED=true
     set +e
     run_codex
     EXIT_CODE=$?
@@ -445,12 +474,9 @@ if [ "$EXIT_CODE" -ne 0 ]; then
             --arg stderr_excerpt "$STDERR_EXCERPT" \
             '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"transient",stderr_excerpt:$stderr_excerpt}' \
             > tmp/codex-exit.json
-      exit 0
+      exit 1
     fi
   fi
 fi
 
-# Guard against silent success with no output
-if [ ! -s "${OUTPUT_FILE}" ]; then
-  echo "Warning: Codex produced empty output" >&2
-fi
+require_review_output

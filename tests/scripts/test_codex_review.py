@@ -19,10 +19,15 @@ The wrapper takes its subject as ``REVIEW_TYPE=<enum>`` +
 - Output-artifact hygiene: every attempt starts from a cleared ``-o`` file,
   so no attempt can return a predecessor's partial review as its verdict.
 - Auth-failure cache invalidation and missing-binary handling.
+- Exit status: every ``CODEX_ERROR`` exits non-zero — sandbox denial, auth,
+  exhausted retry and empty output included — through the wrapper and
+  through the task alias's ``cli-args-to-env.sh`` exec; ``CODEX_UNAVAILABLE``
+  exits 0.
 
 All tests use a PATH-prepended fake ``codex`` shim that captures argv plus
-stdin to a log file, and run the wrapper from a throwaway workspace root
-under ``tmp_path`` so no invocation writes into the real repository.
+stdin to a log file and, unless scripted otherwise, writes a review to the
+``-o`` path on a zero exit. They run the wrapper from a throwaway workspace
+root under ``tmp_path`` so no invocation writes into the real repository.
 ``DIFF_FILE``-level path-containment tests live in
 ``tests/scripts/test_wrapper_sanitation.py`` and are not duplicated here.
 """
@@ -39,6 +44,11 @@ import pytest
 
 WORKSPACE: Path = Path(__file__).resolve().parents[2]
 REVIEW_SCRIPT: str = str(WORKSPACE / "scripts" / "agent-cli" / "codex-review.sh")
+CLI_ARGS_SHIM: str = str(WORKSPACE / "scripts" / "agent-cli" / "cli-args-to-env.sh")
+
+# What a shim call that exits zero writes to ``-o`` unless scripted otherwise:
+# the wrapper reports a zero exit with an empty ``-o`` as a failed review.
+_SHIM_REVIEW_PAYLOAD: str = "VERDICT: review written by the codex shim"
 
 _SHIM_HELPER: str = """import json
 import sys
@@ -58,11 +68,10 @@ with open(log_path, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(record) + "\\n")
 """
 
-# Companion helper for the sequence shim: writes the caller-scripted payload
-# to whatever path the wrapper passed to ``-o``. The base shim writes no
-# output artifact at all, so on its own it cannot express the two cases a
-# retry has to keep apart — an attempt that leaves a partial file behind
-# before failing, and an attempt that exits zero having written nothing. A
+# Companion helper for both shims: writes the caller-scripted payload to
+# whatever path the wrapper passed to ``-o``. Scripting it per call is what
+# lets a retry test keep apart an attempt that leaves a partial file behind
+# before failing and an attempt that exits zero having written nothing. A
 # blank payload for a call means that call writes nothing.
 _SHIM_OUTPUT_HELPER: str = """import sys
 
@@ -119,6 +128,7 @@ def _install_shim(
     exit_code: int = 0,
     stderr_text: str = "",
     log_path: Path | None = None,
+    output_payload: str | None = None,
 ) -> Path:
     """Install a fake ``codex`` shim at ``tmp_path/bin/codex``.
 
@@ -126,6 +136,10 @@ def _install_shim(
     (``_shim_helper.py``) to sidestep deep shell-escape nesting. Writes one
     record per invocation capturing argv and stdin, then exits ``exit_code``
     after optionally emitting ``stderr_text`` on stderr.
+
+    ``output_payload`` is what each call writes to its ``-o`` path; ``None``
+    means ``_SHIM_REVIEW_PAYLOAD`` on a zero exit and nothing otherwise, and
+    ``""`` means nothing at all.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -136,7 +150,16 @@ def _install_shim(
     if stderr_text:
         escaped = stderr_text.replace("'", "'\\''")
         stderr_line = f"printf '%s\\n' '{escaped}' >&2\n"
-    shim_body = f'#!/usr/bin/env bash\nset -eu\npython3 {helper_path!s} {log_file!s} "$@"\n{stderr_line}exit {exit_code}\n'
+    if output_payload is None:
+        output_payload = _SHIM_REVIEW_PAYLOAD if exit_code == 0 else ""
+    output_line = ""
+    if output_payload:
+        output_helper_path = bin_dir / "_shim_output_helper.py"
+        output_helper_path.write_text(_SHIM_OUTPUT_HELPER)
+        payloads_file = bin_dir / "output_payloads.txt"
+        payloads_file.write_text(output_payload + "\n")
+        output_line = f'python3 {output_helper_path!s} {payloads_file!s} 0 "$@"\n'
+    shim_body = f'#!/usr/bin/env bash\nset -eu\npython3 {helper_path!s} {log_file!s} "$@"\n{output_line}{stderr_line}exit {exit_code}\n'
     shim = bin_dir / "codex"
     shim.write_text(shim_body)
     shim.chmod(shim.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -198,6 +221,43 @@ def _run_review(
     the test's own workspace root — there is deliberately no override, so no
     test can direct the wrapper's writes at the real repository.
     """
+    return subprocess.run(
+        ["bash", REVIEW_SCRIPT, *(args or [])],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=_isolated_env(tmp_path, env_overrides),
+        cwd=str(_workspace_root(tmp_path)),
+    )
+
+
+def _run_review_via_task_alias(
+    tmp_path: Path,
+    env_overrides: dict[str, str],
+    cli_args: list[str],
+    *,
+    timeout: int = 15,
+) -> subprocess.CompletedProcess[str]:
+    """Execute the command ``agent:review:codex:local`` runs, minus Task itself.
+
+    The alias execs ``cli-args-to-env.sh codex-review.sh {{.CLI_ARGS}}``, so
+    its exit status is whatever that pair returns; ``cli_args`` stands in for
+    the ``KEY=value`` tokens Task would expand there.
+    """
+    return subprocess.run(
+        [CLI_ARGS_SHIM, REVIEW_SCRIPT, *cli_args],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=_isolated_env(tmp_path, env_overrides),
+        cwd=str(_workspace_root(tmp_path)),
+    )
+
+
+def _isolated_env(tmp_path: Path, env_overrides: dict[str, str]) -> dict[str, str]:
+    """Build the wrapper's whole environment from ``env_overrides`` alone."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     env: dict[str, str] = {
@@ -212,15 +272,7 @@ def _run_review(
     }
     for key, value in env_overrides.items():
         env[key] = value
-    return subprocess.run(
-        ["bash", REVIEW_SCRIPT, *(args or [])],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=env,
-        cwd=str(_workspace_root(tmp_path)),
-    )
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -764,11 +816,15 @@ class TestOutputFromAnEarlierAttemptCannotBeReadAsTheRetrysVerdict:
         output_file.write_text(self._EARLIER_ROUND_PAYLOAD + "\n")
         # The transient branch sleeps 5s before its retry.
         result = _run_review(tmp_path, env_overrides=env, timeout=40)
-        assert result.returncode == 0, result.stderr
+        assert result.returncode != 0, f"a retry that exits zero having written nothing produced no review; stderr={result.stderr!r}"
         records = _read_shim_log(log)
         assert len(records) == 2, (
             f"expected an initial call plus one retry, got {len(records)}; without both this is not the retry-success path"
         )
+        exit_json = _read_exit_json(tmp_path)
+        assert exit_json.get("signal") == "CODEX_ERROR", f"empty output must be reported as a failed review; got {exit_json!r}"
+        assert exit_json.get("error_class") == "empty_output", f"got {exit_json!r}"
+        assert exit_json.get("retried") is True, f"the second call was a retry; got {exit_json!r}"
         surviving = output_file.read_text() if output_file.exists() else ""
         assert self._PARTIAL_PAYLOAD not in surviving, (
             f"the successful attempt wrote no output, so the failed attempt's partial file must have been cleared before it ran; surviving output={surviving!r}"
@@ -777,7 +833,7 @@ class TestOutputFromAnEarlierAttemptCannotBeReadAsTheRetrysVerdict:
             f"an earlier run's review at the same round-stamped path must not be returned as this run's; surviving output={surviving!r}"
         )
         assert "Codex produced empty output" in result.stderr, (
-            f"with nothing written by the successful attempt the run must report empty output; a warning-free exit means the non-empty check read someone else's file. stderr={result.stderr!r}"
+            f"with nothing written by the successful attempt the run must report empty output; a silent exit means the non-empty check read someone else's file. stderr={result.stderr!r}"
         )
 
     def test_a_retry_that_writes_output_keeps_its_own(self, tmp_path: Path) -> None:
@@ -1079,8 +1135,8 @@ class TestXhighRejectionHandling:
             stderr_text="Error: connection timeout",
             extra_env={"EFFORT_FALLBACK_ON_REJECT": "1"},
         )
-        assert result.returncode == 0, (
-            f"an exhausted transient retry reports itself through the signal and exits 0; stderr={result.stderr!r}"
+        assert result.returncode != 0, (
+            f"an exhausted transient retry produced no review, so it must exit non-zero as well as write its signal; stderr={result.stderr!r}"
         )
         assert len(records) == 2, f"expected 2 shim calls (initial + transient retry), got {len(records)}"
         exit_json = _read_exit_json(tmp_path)
@@ -1110,20 +1166,21 @@ def _install_shim_with_sequence(
     the shim can mimic a server returning 429 first, then success on retry.
 
     ``output_payloads`` optionally scripts what each call writes to its ``-o``
-    path; a blank entry (or a call past the end of the list) writes nothing,
-    which is what every other caller here gets.
+    path; a blank entry (or a call past the end of the list) writes nothing.
+    Unscripted, each call whose exit code is zero writes
+    ``_SHIM_REVIEW_PAYLOAD`` and every other call writes nothing.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     helper_path = bin_dir / "_shim_helper.py"
     helper_path.write_text(_SHIM_HELPER)
-    output_line = ""
-    if output_payloads is not None:
-        output_helper_path = bin_dir / "_shim_output_helper.py"
-        output_helper_path.write_text(_SHIM_OUTPUT_HELPER)
-        payloads_file = bin_dir / "output_payloads.txt"
-        payloads_file.write_text("\n".join(output_payloads) + "\n")
-        output_line = f'python3 {output_helper_path!s} {payloads_file!s} "$_n" "$@"\n'
+    if output_payloads is None:
+        output_payloads = [_SHIM_REVIEW_PAYLOAD if code == 0 else "" for code in exit_codes]
+    output_helper_path = bin_dir / "_shim_output_helper.py"
+    output_helper_path.write_text(_SHIM_OUTPUT_HELPER)
+    payloads_file = bin_dir / "output_payloads.txt"
+    payloads_file.write_text("\n".join(output_payloads) + "\n")
+    output_line = f'python3 {output_helper_path!s} {payloads_file!s} "$_n" "$@"\n'
     state_file = bin_dir / "call_counter.txt"
     state_file.write_text("0")
     codes_file = bin_dir / "exit_codes.txt"
@@ -1354,7 +1411,7 @@ class TestHighTier429_503Fallback:
             ],
             model=None,
         )
-        # Transient classification + retry exhausted; exit 0 per wrapper behavior.
+        assert result.returncode != 0, f"an exhausted transient retry must exit non-zero; stderr={result.stderr!r}"
         assert "falling back to gpt-5.3-codex" not in result.stderr
         assert len(records) == 2  # initial + transient retry
 
@@ -1365,7 +1422,7 @@ class TestHighTier429_503Fallback:
             exit_codes=[1],
             stderr_texts=["Error: 401 Unauthorized: bad token"],
         )
-        assert result.returncode == 0, f"a classified auth failure exits 0 having written its signal; stderr={result.stderr!r}"
+        assert result.returncode != 0, f"a classified auth failure produced no review, so it must exit non-zero; stderr={result.stderr!r}"
         assert len(records) == 1  # auth failure is terminal, no retries
         exit_json = _read_exit_json(tmp_path)
         assert exit_json.get("signal") == "CODEX_ERROR"
@@ -1397,3 +1454,104 @@ class TestHighTier429_503Fallback:
             extra_env={"PREFLIGHT_CACHE_FILE": str(cache_file)},
         )
         assert not cache_file.exists(), "preflight cache should be invalidated after missing-binary failure"
+
+
+# ---------------------------------------------------------------------------
+# Exit status: a run that produced no review exits non-zero
+# ---------------------------------------------------------------------------
+
+
+class TestSandboxDenialIsTerminal:
+    """An OS-level denial is its own class: never retried, never ``transient``.
+
+    Its wording matches neither the auth nor the retry patterns, so without a
+    class of its own it falls through to the transient retry — a 5s sleep and
+    a second call that fails identically — and is reported as a transient
+    outage, inviting a re-dispatch into the same denial.
+    """
+
+    @pytest.mark.parametrize(
+        ("stderr_text", "extra_env"),
+        [
+            ("Error: sandbox_apply: Operation not permitted (os error 1)", {}),
+            ("Error: failed to open session file: Permission denied (os error 13)", {}),
+            ("Error: sandbox_apply: Operation not permitted (os error 1)", {"MODEL": "gpt-5.4"}),
+        ],
+        ids=["os_error_1", "permission_denied", "os_error_1_with_high_tier_model"],
+    )
+    def test_os_denial_exits_non_zero_after_one_call(
+        self,
+        tmp_path: Path,
+        stderr_text: str,
+        extra_env: dict[str, str],
+    ) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text=stderr_text, log_path=log)
+        env = _default_env(bin_dir, tmp_path)
+        env.update(extra_env)
+        result = _run_review(tmp_path, env_overrides=env, timeout=30)
+        assert result.returncode != 0, f"a denied run produced no review; stderr={result.stderr!r}"
+        assert len(_read_shim_log(log)) == 1, "a denial recurs on every attempt, so it must not be retried"
+        exit_json = _read_exit_json(tmp_path)
+        assert exit_json.get("signal") == "CODEX_ERROR"
+        assert exit_json.get("error_class") == "sandbox_denied", f"got {exit_json!r}"
+        assert exit_json.get("retried") is False
+
+    def test_http_403_permission_denied_stays_auth(self, tmp_path: Path) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: 403 Forbidden: permission denied for this model", log_path=log)
+        result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
+        assert result.returncode != 0
+        assert len(_read_shim_log(log)) == 1
+        assert _read_exit_json(tmp_path).get("error_class") == "auth", (
+            "an API-level 403 is a credential problem, not a local denial; it must keep the auth class and its cache invalidation"
+        )
+
+
+class TestEmptyOutputIsAFailedReview:
+    """A zero exit that writes nothing to ``-o`` is not a review."""
+
+    def test_first_call_success_with_no_output_exits_non_zero(self, tmp_path: Path) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, log_path=log, output_payload="")
+        result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
+        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+        assert len(_read_shim_log(log)) == 1
+        exit_json = _read_exit_json(tmp_path)
+        assert exit_json.get("signal") == "CODEX_ERROR", f"got {exit_json!r}"
+        assert exit_json.get("error_class") == "empty_output", f"got {exit_json!r}"
+        assert exit_json.get("retried") is False
+
+
+class TestTaskAliasPropagatesTheWrappersExitStatus:
+    """``agent:review:codex:local`` must fail when the wrapper fails.
+
+    A caller gating on the alias sees only the status of
+    ``cli-args-to-env.sh codex-review.sh``; anything between the two that
+    swallowed it would score a missing review as a pass.
+    """
+
+    _CLI_ARGS: tuple[str, ...] = ("ROUND=1", "EFFORT=high", "REVIEW_TYPE=diff", "DIFF_FILE=tmp/qa-diff.txt")
+
+    def _alias_env(self, bin_dir: Path, tmp_path: Path) -> dict[str, str]:
+        """Env as Task supplies it: the alias's static marker, with no caller values."""
+        env = _default_env(bin_dir, tmp_path)
+        env.pop("REVIEW_TYPE")
+        env.pop("DIFF_FILE")
+        return env
+
+    def test_failed_review_fails_the_alias(self, tmp_path: Path) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: 401 Unauthorized: bad token", log_path=log)
+        result = _run_review_via_task_alias(tmp_path, self._alias_env(bin_dir, tmp_path), list(self._CLI_ARGS))
+        assert result.returncode != 0, f"the alias must surface the failed review; stderr={result.stderr!r}"
+        assert len(_read_shim_log(log)) == 1, "the CLI must have been reached through the shim"
+        assert _read_exit_json(tmp_path).get("signal") == "CODEX_ERROR"
+
+    def test_completed_review_passes_the_alias(self, tmp_path: Path) -> None:
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim(tmp_path, log_path=log)
+        result = _run_review_via_task_alias(tmp_path, self._alias_env(bin_dir, tmp_path), list(self._CLI_ARGS))
+        assert result.returncode == 0, result.stderr
+        assert len(_read_shim_log(log)) == 1
+        assert not (_workspace_root(tmp_path) / "tmp" / "codex-exit.json").exists()
