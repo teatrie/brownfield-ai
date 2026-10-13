@@ -57,6 +57,9 @@ EXCLUDED_BASES = frozenset({
     "qa-standards",
 })
 
+FILE_WRITING_TOOLS = frozenset({"Bash", "Write", "Edit"})
+ARTIFACTS_BLOCK_HEADING = "Artifacts & Logs"
+
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Return (frontmatter dict, body string) for a markdown file with `---`-delimited YAML.
@@ -145,6 +148,12 @@ def variant_paths() -> list[Path]:
     return _discover_variants()
 
 
+@pytest.fixture(scope="module")
+def agent_paths() -> list[Path]:
+    """Discover every agent definition under `.claude/agents/`, variants and bridge families included."""
+    return sorted(AGENTS_DIR.glob("*.md"))
+
+
 def test_variant_discovery_finds_known_xhigh_files(variant_paths: list[Path]) -> None:
     """Sanity: the discovery walk finds at least the six in-scope Epic-2 xhigh variants.
 
@@ -219,3 +228,18 @@ def test_variant_body_matches_base_modulo_sync_comment(variant_paths: list[Path]
         if stripped != b_body:
             failures.append(f"{variant.name}: body diverges from base after stripping sync comment")
     assert not failures, "variant body drift:\n  " + "\n  ".join(failures)
+
+
+def test_agents_without_file_writing_tools_omit_artifacts_block(agent_paths: list[Path]) -> None:
+    offenders: list[str] = []
+    for agent in agent_paths:
+        meta, body = _split_frontmatter(agent.read_text())
+        # An agent with no `tools:` key inherits every tool, so it can write files.
+        if "tools" not in meta:
+            continue
+        tools = meta["tools"]
+        tool_names = {t.strip() for t in tools.split(",")} if isinstance(tools, str) else set(tools)
+        if tool_names.isdisjoint(FILE_WRITING_TOOLS) and ARTIFACTS_BLOCK_HEADING in body:
+            offenders.append(f"{agent.name}: tools={tools!r}")
+    header = f"agents with none of {sorted(FILE_WRITING_TOOLS)} carry the {ARTIFACTS_BLOCK_HEADING!r} block:"
+    assert not offenders, header + "\n  " + "\n  ".join(offenders)
