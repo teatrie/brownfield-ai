@@ -287,23 +287,29 @@ class Envelope:
         envelope.
         """
         body = asdict(self)
-        body["feedback_to_forward"] = [_finding_to_dict(item) for item in body["feedback_to_forward"]]
+        body["feedback_to_forward"] = [_drop_unset_optional_keys(item) for item in body["feedback_to_forward"]]
         return body
 
 
-def _normalize_finding_dict(item: dict[str, Any]) -> dict[str, Any]:
-    """Return ``item`` with an integral-float ``confidence`` cast to ``int``.
+def _integral_float_to_int(value: Any) -> Any:
+    """Return an integral ``float`` as ``int`` and any other value unchanged.
 
-    The schema's draft 2020-12 ``integer`` type accepts ``8.0``, but
-    :attr:`Finding.confidence` is an ``int``.
+    The schema's draft 2020-12 ``integer`` type accepts ``8.0``, but the
+    envelope's integer fields are typed ``int``.
     """
-    confidence = item.get("confidence")
-    if isinstance(confidence, float) and confidence.is_integer():
-        return {**item, "confidence": int(confidence)}
-    return item
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
 
 
-def _finding_to_dict(finding: dict[str, Any]) -> dict[str, Any]:
+def _normalize_finding_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """Return ``item`` with an integral-float ``confidence`` cast to ``int``."""
+    if "confidence" not in item:
+        return item
+    return {**item, "confidence": _integral_float_to_int(item["confidence"])}
+
+
+def _drop_unset_optional_keys(finding: dict[str, Any]) -> dict[str, Any]:
     """Drop the unset optional keys from an ``asdict`` finding dict."""
     return {key: value for key, value in finding.items() if not (key in _FINDING_OPTIONAL_FIELDS and value is None)}
 
@@ -753,7 +759,7 @@ def _validate(body: str) -> Envelope:
         "agent_id": parsed["agent_id"],
         "agent_family": parsed["agent_family"],
         "agent_effort_tier": parsed["agent_effort_tier"],
-        "round": parsed["round"],
+        "round": _integral_float_to_int(parsed["round"]),
         "status": parsed["status"],
         "next_action": parsed["next_action"],
         "feedback_to_forward": parsed.get("feedback_to_forward", []),

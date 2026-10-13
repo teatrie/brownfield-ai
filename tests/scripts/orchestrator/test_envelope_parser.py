@@ -216,24 +216,17 @@ def test_finding_confidence_in_range_accepted(
     example_b: dict[str, Any],
     confidence: int,
 ) -> None:
-    """[TODO-0375] A finding's optional integer ``confidence`` in 1-10 validates."""
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = confidence
     validator.validate(envelope)
 
 
 @pytest.mark.parametrize("confidence", [0, 11, 5.5, "7", True, None])
-def test_finding_confidence_invalid_rejected(
+def test_finding_confidence_invalid_rejected_by_its_own_constraint(
     validator: jsonschema.Draft202012Validator,
     example_b: dict[str, Any],
     confidence: Any,
 ) -> None:
-    """[TODO-0375] ``confidence`` outside 1-10, non-integer, string, boolean or null fails its own constraint.
-
-    Asserting the failing keyword and path pins the rejection on the
-    ``confidence`` property; an ``additionalProperties`` rejection of an
-    undeclared key would not satisfy it.
-    """
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = confidence
     with pytest.raises(jsonschema.ValidationError) as excinfo:
@@ -254,8 +247,7 @@ def _parse_example(envelope: dict[str, Any]) -> envelope_parser.ParseResult:
     )
 
 
-def test_finding_confidence_propagates_through_parser(example_b: dict[str, Any]) -> None:
-    """[TODO-0375] A scored finding parses, exposes ``confidence``, and keeps it through ``to_dict``."""
+def test_finding_confidence_survives_parse_and_to_dict(example_b: dict[str, Any]) -> None:
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = 8
     result = _parse_example(envelope)
@@ -265,14 +257,12 @@ def test_finding_confidence_propagates_through_parser(example_b: dict[str, Any])
 
 
 def test_finding_confidence_absent_parses_to_none(example_b: dict[str, Any]) -> None:
-    """[TODO-0375] An unscored finding parses with ``confidence is None``."""
     result = _parse_example(example_b)
     assert result.envelope is not None
     assert result.envelope.feedback_to_forward[0].confidence is None
 
 
 def test_finding_integral_float_confidence_parses_to_int(example_b: dict[str, Any]) -> None:
-    """[TODO-0375] ``confidence: 8.0`` passes the schema's ``integer`` type and is stored as ``int`` 8."""
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = 8.0
     result = _parse_example(envelope)
@@ -282,8 +272,16 @@ def test_finding_integral_float_confidence_parses_to_int(example_b: dict[str, An
     assert type(confidence) is int
 
 
-def test_finding_confidence_out_of_range_raises_parse_error(example_b: dict[str, Any]) -> None:
-    """[TODO-0375] An out-of-range ``confidence`` raises ``EnvelopeParseError`` caused by its ``maximum`` bound."""
+def test_integral_float_round_parses_to_int(example_b: dict[str, Any]) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["round"] = 2.0
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    assert result.envelope.round == 2
+    assert type(result.envelope.round) is int
+
+
+def test_finding_confidence_above_maximum_raises_parse_error(example_b: dict[str, Any]) -> None:
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = 11
     with pytest.raises(envelope_parser.EnvelopeParseError) as excinfo:
@@ -298,7 +296,6 @@ def test_to_dict_minimal_finding_round_trips_through_schema(
     validator: jsonschema.Draft202012Validator,
     example_b: dict[str, Any],
 ) -> None:
-    """[TODO-0375] A finding with only required keys survives parse -> ``to_dict`` -> schema validation."""
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"] = [{"severity": "minor", "description": "Unscored finding with no location."}]
     result = _parse_example(envelope)
@@ -312,11 +309,10 @@ def test_to_dict_minimal_finding_round_trips_through_schema(
     assert body["halt_trigger"] is None
 
 
-def test_to_dict_emits_set_optional_finding_fields(
+def test_to_dict_keeps_set_and_omits_unset_optional_finding_fields(
     validator: jsonschema.Draft202012Validator,
     example_b: dict[str, Any],
 ) -> None:
-    """[TODO-0375] ``to_dict`` keeps set optional finding fields, omits unset ones, and stays schema-valid."""
     envelope = json.loads(json.dumps(example_b))
     finding = envelope["feedback_to_forward"][0]
     finding["confidence"] = 8
