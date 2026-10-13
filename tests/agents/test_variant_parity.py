@@ -239,7 +239,7 @@ def test_agents_without_file_writing_tools_omit_artifacts_block(agent_paths: lis
     offenders: list[str] = []
     for agent in agent_paths:
         meta, body = _split_frontmatter(agent.read_text())
-        # An agent with no `tools:` key inherits every tool, so it can write files.
+        # No `tools:` key inherits every tool available to subagents (Write included): https://code.claude.com/docs/en/sub-agents
         if "tools" not in meta:
             continue
         tools = meta["tools"]
