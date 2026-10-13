@@ -352,23 +352,31 @@ On fallback, `tmp/gemini-exit.json` contains:
 
 ## Output Contract
 
-On success, return raw text from `tmp/gemini-review-output-<N>.md`
-(where N is the current round number).
-Do NOT summarize, filter, or interpret. The calling agent extracts
-the verdict.
-
-On `GEMINI_FALLBACK` (exit code 3), do NOT return output.
-Instead, proceed to the next fallback chain step.
 On `GEMINI_UNAVAILABLE` from pre-flight, report it inline as the
 Pre-flight Sequence describes.
-On `GEMINI_ERROR`, report `GEMINI_ERROR` itself as the terminal signal;
-any `tmp/gemini-exit.json` contents you include are diagnostic context only.
-Whenever you return `tmp/gemini-exit.json`, whether the wrapper raised
-`GEMINI_UNAVAILABLE` or as `GEMINI_ERROR` context, return it with the
-alias's exit status, and say the file may be from an earlier run
-because the wrapper does not clear it; the calling agent judges whether
-it is this run's reason.
-Do not return partial review output alongside error signals.
+
+The wrapper can write `tmp/gemini-exit.json` and still exit 0 (see
+`scripts/agent-cli/gemini-review.sh`), so exit status 0 alone is not
+success. After the alias returns, Read `tmp/gemini-exit.json`:
+
+- Exit status 3 (`GEMINI_FALLBACK`): proceed to the next fallback chain
+  step if one remains. When none remains, the chain is exhausted: report
+  `GEMINI_ERROR` itself as the terminal signal, with any
+  `tmp/gemini-exit.json` contents as diagnostic context only.
+- File absent and exit status 0: success. Return raw text from
+  `tmp/gemini-review-output-<N>.md` (where N is the current round number).
+  Do NOT summarize, filter, or interpret. The calling agent extracts
+  the verdict.
+- File present, any other exit status: the run failed. Return the
+  file's signal (e.g. `GEMINI_UNAVAILABLE`) and contents with the
+  alias's exit status.
+- File absent and exit status non-zero: the run failed. Report
+  `GEMINI_ERROR` with the exit status.
+
+Whenever you return `tmp/gemini-exit.json` contents, say the file may be
+from an earlier run because the wrapper does not clear it, so a stale
+file excludes this seat until someone removes it.
+On any outcome other than success, return no review output, partial or complete.
 
 All artifacts written during a run:
 

@@ -196,28 +196,30 @@ If the retry exit code is also non-zero, emit `COPILOT_ERROR` and stop. Auth err
 
 ### Exit Artifact
 
-The wrapper writes `tmp/copilot-exit.json` when a review fails or copilot is unavailable (see
-`scripts/agent-cli/copilot-review.sh`). Read it; do not write it.
-Return the alias's exit status with the file's contents, and say the
-file may be from an earlier run because the wrapper does not clear it;
-the calling agent judges whether it is this run's reason.
+The wrapper writes `tmp/copilot-exit.json` when a review fails or Copilot is unavailable, sometimes
+with exit status 0 (see `scripts/agent-cli/copilot-review.sh`). Read it; do not write it.
+After the alias returns, Read `tmp/copilot-exit.json`:
+
+- File absent and exit status 0: the run succeeded; return the review output as the Output Contract describes.
+- File present, whatever the exit status: the run failed. Return the file's signal and contents with
+  the alias's exit status, and say the file may be from an earlier run because the wrapper does not
+  clear it, so a stale file excludes this seat until someone removes it.
+- File absent and exit status non-zero: the run failed. Report `COPILOT_ERROR` with the exit status.
+
+On a failed run, return no review output, partial or complete.
 
 ---
 
 ## Output Contract
 
-On success, return the raw text from `tmp/copilot-review-output-<N>.md`
+On success, as Exit Artifact defines it, return the raw text from `tmp/copilot-review-output-<N>.md`
 (where N is the current round number) to the calling agent.
 Do NOT summarize, filter, or interpret the content. The calling agent is responsible for verdict extraction.
 
 On `COPILOT_UNAVAILABLE` from pre-flight, report it inline as the
-Pre-flight Sequence describes; when the wrapper raised it, return
-`tmp/copilot-exit.json` as Exit Artifact describes.
-
-On a `COPILOT_ERROR` signal (runtime failures: auth failure during review, transient failure after retry),
-return the alias's exit status and `tmp/copilot-exit.json` as Exit Artifact describes.
-
-Do not return partial review output alongside any error signal.
+Pre-flight Sequence describes. Report every failure after the alias
+returns, including the wrapper's `COPILOT_UNAVAILABLE` and `COPILOT_ERROR`,
+as Exit Artifact describes.
 
 All artifacts written during a run:
 

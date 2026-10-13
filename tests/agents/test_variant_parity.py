@@ -64,7 +64,7 @@ EXCLUDED_BASES = frozenset({
 
 # A body may name the Write tool only when its `tools:` list declares Write.
 WRITE_TOOL_CLAIM = re.compile(r"\bwrite tool\b|`write`", re.IGNORECASE)
-PREFLIGHT_FILE_PATTERN = re.compile(r"\S*-preflight\.json")
+PREFLIGHT_FILE_PATTERN = re.compile(r"[^\s`]*-preflight\.json")
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
