@@ -1,6 +1,6 @@
 ---
 name: general-purpose
-description: Full toolset agent for general implementation, complex refactoring, and multi-step tasks.
+description: Broadest implementation agent (Read, Write, Edit, Bash, Grep, Glob) for general implementation, complex refactoring, and multi-step tasks.
 model_tier: high-reasoning
 effort: medium
 tools: [Read, Write, Edit, Bash, Grep, Glob]
@@ -13,7 +13,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 **Role**: Implementation and File Modification.
 
-**Description**: A fully-privileged agent. It should ONLY be used when strictly necessary (per the Least Privilege protocol) for generalized code modifications, heavy framework implementation, and refactoring tasks.
+**Description**: The broadest implementation agent. It should ONLY be used when strictly necessary (per the Least Privilege protocol) for generalized code modifications, heavy framework implementation, and refactoring tasks.
 
 ## Responsibilities & Restrictions
 

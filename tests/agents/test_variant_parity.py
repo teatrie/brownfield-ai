@@ -19,10 +19,11 @@ generate.
 
 The module also guards every agent's declared `tools:` list against the
 docs that describe it: no agent may declare `SendMessage` (CLAUDE.md
-Principle 18 rests on that) or `Search` (not a Claude Code tool), and the
-union of all declared tools must stay within the "restricted to subsets
-of ..." clause that Principle 18 and `docs/delegation_protocol.md` §3 both
-state. The guards live here so the `.claude/agents/` test routing runs
+Principle 18 rests on that) or `Search` (not a Claude Code tool), the
+union of all declared tools must equal the "restricted to subsets of ..."
+clause that Principle 18 and `docs/delegation_protocol.md` §3 both state,
+and each family in `PINNED_FAMILY_TOOLS` must declare exactly its pinned
+list. The guards live here so the `.claude/agents/` test routing runs
 them on every agent edit.
 """
 
@@ -70,6 +71,16 @@ EXCLUDED_BASES = frozenset({
     "copilot-reviewer",
     "qa-standards",
 })
+
+# Exact `tools:` list per implementation family, pinned so a grant cannot be
+# silently removed. These agents create files, and CLAUDE.md §10 requires the
+# Write tool for that (heredocs and Bash redirection are rejected).
+PINNED_FAMILY_TOOLS: dict[str, list[str]] = {
+    "general-purpose": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
+    "tdd-red": ["Read", "Write", "Edit", "Bash"],
+    "tdd-green": ["Read", "Write", "Edit", "Bash"],
+    "tdd-refactor": ["Read", "Write", "Edit", "Bash"],
+}
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -284,11 +295,26 @@ def test_no_agent_declares_forbidden_tool(forbidden_tool: str) -> None:
     assert not offenders, f"agents declaring {forbidden_tool!r}: {offenders}"
 
 
-def test_declared_tools_are_documented_in_principle_18() -> None:
-    """Every tool any agent declares must appear in CLAUDE.md Principle 18's tool clause."""
+@pytest.mark.parametrize("family", sorted(PINNED_FAMILY_TOOLS))
+def test_pinned_family_declares_exact_tools(family: str) -> None:
+    """Every file of a pinned family (base and each variant) must declare exactly its pinned `tools:` list."""
+    expected = PINNED_FAMILY_TOOLS[family]
+    declared = _declared_tools()
+    family_files = [f"{family}.md", *(f"{family}{suffix}.md" for suffix in VARIANT_SUFFIXES)]
+    missing = [name for name in family_files if name not in declared]
+    assert not missing, f"{family}: pinned family files not found: {missing}"
+    offenders = [f"{name}: {declared[name]!r}" for name in family_files if declared[name] != expected]
+    assert not offenders, f"{family}: expected tools {expected!r}, got:\n  " + "\n  ".join(offenders)
+
+
+def test_declared_tools_match_principle_18() -> None:
+    """The union of all declared tools must equal CLAUDE.md Principle 18's tool clause."""
     declared = {tool for tools in _declared_tools().values() for tool in tools}
-    undocumented = declared - _documented_tools(CLAUDE_MD)
-    assert not undocumented, f"agent tools missing from CLAUDE.md {TOOLS_CLAUSE_MARKER!r} clause: {sorted(undocumented)}"
+    documented = _documented_tools(CLAUDE_MD)
+    assert declared == documented, (
+        f"tool clause drift: declared but undocumented {sorted(declared - documented)}, "
+        f"documented but declared by no agent {sorted(documented - declared)}"
+    )
 
 
 def test_principle_18_tool_clause_matches_delegation_protocol() -> None:

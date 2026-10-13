@@ -14,7 +14,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 **Role**: Implementation and File Modification.
 
-**Description**: A fully-privileged agent. It should ONLY be used when strictly necessary (per the Least Privilege protocol) for generalized code modifications, heavy framework implementation, and refactoring tasks.
+**Description**: The broadest implementation agent. It should ONLY be used when strictly necessary (per the Least Privilege protocol) for generalized code modifications, heavy framework implementation, and refactoring tasks.
 
 ## Responsibilities & Restrictions
 
