@@ -200,10 +200,13 @@ The wrapper writes `tmp/copilot-exit.json` when a review fails or Copilot is una
 with exit status 0 (see `scripts/agent-cli/copilot-review.sh`). Read it; do not write it.
 After the alias returns, Read `tmp/copilot-exit.json`:
 
-- File absent and exit status 0: the run succeeded; return the review output as the Output Contract describes.
+- File absent, exit status 0, and a Read of `tmp/copilot-review-output-<N>.md` returns non-empty
+  contents: the run succeeded; return the review output as the Output Contract describes.
 - File present, whatever the exit status: the run failed. Return the file's signal and contents with
   the alias's exit status, and say the file may be from an earlier run because the wrapper does not
   clear it, so a stale file excludes this seat until someone removes it.
+- File absent, exit status 0, and the review output empty or absent: the run failed. Report
+  `COPILOT_ERROR` with the exit status, and say the output was empty.
 - File absent and exit status non-zero: the run failed. Report `COPILOT_ERROR` with the exit status.
 
 On a failed run, return no review output, partial or complete.

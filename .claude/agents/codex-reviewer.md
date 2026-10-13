@@ -309,18 +309,23 @@ raised before any invocation (e.g. argument validation,
 
 ## Output Contract
 
-On success, return raw text from `tmp/codex-review-output-<N>.md`
-(where N is the current round number).
-Do NOT summarize, filter, or interpret. The calling agent extracts
-the verdict.
-
 On `CODEX_UNAVAILABLE` from pre-flight, report it inline as the
-Pre-flight Sequence describes; when the wrapper raised it, return
-`tmp/codex-exit.json` only.
-On `CODEX_ERROR` or any non-zero exit, return the alias's exit status
-and stderr, plus the contents of `tmp/codex-exit.json` if the file
-exists (read it with the Read tool). The wrapper clears that file
-before it writes any signal, so when stderr shows the wrapper stopped
+Pre-flight Sequence describes.
+
+After the alias returns, Read `tmp/codex-exit.json`:
+
+- File present: no review was produced. Return the file's signal
+  (e.g. `CODEX_UNAVAILABLE`) and contents with the alias's exit status
+  and stderr.
+- File absent, exit status 0, and a Read of this mode's review output
+  file (see the artifacts table below) returns non-empty contents:
+  success. Return that raw text. Do NOT summarize, filter, or
+  interpret. The calling agent extracts the verdict.
+- Otherwise: report `CODEX_ERROR` with the exit status and stderr, and
+  say so when the output was empty.
+
+The wrapper clears `tmp/codex-exit.json` before it writes any signal,
+so when stderr shows the wrapper stopped
 before clearing that file (e.g. a `cli-args-to-env:` rejection, or a
 `FATAL:` from the wrapper's `tmp/` checks at the top of
 `scripts/agent-cli/codex-review.sh`), any file present is from an earlier

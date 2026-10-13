@@ -359,17 +359,20 @@ The wrapper can write `tmp/gemini-exit.json` and still exit 0 (see
 `scripts/agent-cli/gemini-review.sh`), so exit status 0 alone is not
 success. After the alias returns, Read `tmp/gemini-exit.json`:
 
-- Exit status 3 (`GEMINI_FALLBACK`): proceed to the next fallback chain
-  step if one remains. When none remains, the chain is exhausted: report
-  `GEMINI_ERROR` itself as the terminal signal, with any
-  `tmp/gemini-exit.json` contents as diagnostic context only.
-- File absent and exit status 0: success. Return raw text from
-  `tmp/gemini-review-output-<N>.md` (where N is the current round number).
-  Do NOT summarize, filter, or interpret. The calling agent extracts
-  the verdict.
-- File present, any other exit status: the run failed. Return the
-  file's signal (e.g. `GEMINI_UNAVAILABLE`) and contents with the
-  alias's exit status.
+- File present with signal `GEMINI_FALLBACK` (non-zero exit): proceed
+  to the next fallback chain step if one remains; otherwise report
+  `GEMINI_ERROR` itself as the terminal signal, with the file contents
+  as diagnostic context only.
+- File absent, exit status 0, and a Read of this mode's review output
+  file (see the artifacts table below) returns non-empty contents:
+  success. Return that raw text. Do NOT summarize, filter, or
+  interpret. The calling agent extracts the verdict.
+- File present in any other case: the run failed. Return the file's
+  signal (e.g. `GEMINI_UNAVAILABLE`) and contents with the alias's
+  exit status.
+- File absent, exit status 0, and the review output empty or absent:
+  the run failed. Report `GEMINI_ERROR` with the exit status, and say
+  the output was empty.
 - File absent and exit status non-zero: the run failed. Report
   `GEMINI_ERROR` with the exit status.
 
