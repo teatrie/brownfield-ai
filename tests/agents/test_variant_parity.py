@@ -19,8 +19,9 @@ generate.
 
 The module also holds agent-wide definition guards that cover every
 `.claude/agents/*.md`, bases, variants and excluded families alike — for
-example, a read-only agent (an explicit `tools:` list within Read, Grep and
-Glob, and no `memory:` key) must not carry the Artifacts & Logs block.
+example, an agent whose declared `tools:` include none of Bash, Write, Edit
+or NotebookEdit, and that has no `memory:` key, must not carry the
+Artifacts & Logs block.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ EXCLUDED_BASES = frozenset({
     "qa-standards",
 })
 
-READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob"})
+WRITE_CAPABLE_TOOLS = frozenset({"Bash", "Write", "Edit", "NotebookEdit"})
 ARTIFACTS_BLOCK_HEADING_LINE = "**CRITICAL CONSTRAINT: Artifacts & Logs**"
 ARTIFACTS_BLOCK_INSTRUCTION_PREFIX = "NEVER use the OS absolute `/tmp/` directory for scratch files"
 
@@ -236,7 +237,7 @@ def test_variant_body_matches_base_modulo_sync_comment(variant_paths: list[Path]
     assert not failures, "variant body drift:\n  " + "\n  ".join(failures)
 
 
-def test_read_only_agents_omit_artifacts_block(agent_paths: list[Path]) -> None:
+def test_agents_without_write_capable_tools_omit_artifacts_block(agent_paths: list[Path]) -> None:
     offenders: list[str] = []
     for agent in agent_paths:
         meta, body = _split_frontmatter(agent.read_text())
@@ -244,13 +245,13 @@ def test_read_only_agents_omit_artifacts_block(agent_paths: list[Path]) -> None:
             continue
         tools = meta["tools"]
         tool_names = {t.strip() for t in tools.split(",")} if isinstance(tools, str) else set(tools)
-        if not tool_names <= READ_ONLY_TOOLS:
+        if not tool_names.isdisjoint(WRITE_CAPABLE_TOOLS):
             continue
         lines = [line.strip() for line in body.splitlines()]
         if any(line == ARTIFACTS_BLOCK_HEADING_LINE or line.startswith(ARTIFACTS_BLOCK_INSTRUCTION_PREFIX) for line in lines):
             offenders.append(f"{agent.name}: tools={tools!r}")
     header = (
-        f"read-only agents (tools within {sorted(READ_ONLY_TOOLS)}, no memory:) "
+        f"agents with none of {sorted(WRITE_CAPABLE_TOOLS)} declared (and no memory:) "
         "carry the Artifacts & Logs block (heading or instruction line):"
     )
     assert not offenders, header + "\n  " + "\n  ".join(offenders)
