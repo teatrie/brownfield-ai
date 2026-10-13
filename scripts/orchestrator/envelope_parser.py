@@ -259,7 +259,7 @@ class Envelope:
             if isinstance(item, Finding):
                 coerced.append(item)
             elif isinstance(item, dict):
-                coerced.append(Finding(**item))
+                coerced.append(Finding(**_normalize_finding_dict(item)))
             else:
                 msg = f"feedback_to_forward items must be Finding or dict, got {type(item).__name__}"
                 raise TypeError(msg)
@@ -289,6 +289,18 @@ class Envelope:
         body = asdict(self)
         body["feedback_to_forward"] = [_finding_to_dict(item) for item in body["feedback_to_forward"]]
         return body
+
+
+def _normalize_finding_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """Return ``item`` with an integral-float ``confidence`` cast to ``int``.
+
+    The schema's draft 2020-12 ``integer`` type accepts ``8.0``, but
+    :attr:`Finding.confidence` is an ``int``.
+    """
+    confidence = item.get("confidence")
+    if isinstance(confidence, float) and confidence.is_integer():
+        return {**item, "confidence": int(confidence)}
+    return item
 
 
 def _finding_to_dict(finding: dict[str, Any]) -> dict[str, Any]:

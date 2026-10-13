@@ -216,19 +216,10 @@ def test_finding_confidence_in_range_accepted(
     example_b: dict[str, Any],
     confidence: int,
 ) -> None:
-    """A finding's optional integer ``confidence`` in 1-10 validates."""
+    """[TODO-0375] A finding's optional integer ``confidence`` in 1-10 validates."""
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = confidence
     validator.validate(envelope)
-
-
-def test_finding_confidence_absent_accepted(
-    validator: jsonschema.Draft202012Validator,
-    example_b: dict[str, Any],
-) -> None:
-    """A finding without ``confidence`` stays valid; the key is optional."""
-    assert "confidence" not in example_b["feedback_to_forward"][0]
-    validator.validate(example_b)
 
 
 @pytest.mark.parametrize("confidence", [0, 11, 5.5, "7", True, None])
@@ -237,14 +228,21 @@ def test_finding_confidence_invalid_rejected(
     example_b: dict[str, Any],
     confidence: Any,
 ) -> None:
-    """``confidence`` outside 1-10, non-integer, string, boolean or null fails validation."""
+    """[TODO-0375] ``confidence`` outside 1-10, non-integer, string, boolean or null fails its own constraint.
+
+    Asserting the failing keyword and path pins the rejection on the
+    ``confidence`` property; an ``additionalProperties`` rejection of an
+    undeclared key would not satisfy it.
+    """
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = confidence
-    with pytest.raises(jsonschema.ValidationError):
+    with pytest.raises(jsonschema.ValidationError) as excinfo:
         validator.validate(envelope)
+    assert excinfo.value.validator in {"minimum", "maximum", "type"}
+    assert list(excinfo.value.path)[-1] == "confidence"
 
 
-def _parse_example(envelope: dict[str, Any]) -> Any:
+def _parse_example(envelope: dict[str, Any]) -> envelope_parser.ParseResult:
     """Wrap ``envelope`` in a discriminated fence and run it through ``parse_or_fallback``."""
     output = "# Review\n\n```json envelope\n" + json.dumps(envelope) + "\n```\n"
     return envelope_parser.parse_or_fallback(
@@ -257,7 +255,7 @@ def _parse_example(envelope: dict[str, Any]) -> Any:
 
 
 def test_finding_confidence_propagates_through_parser(example_b: dict[str, Any]) -> None:
-    """A scored finding parses, exposes ``confidence``, and keeps it through ``to_dict``."""
+    """[TODO-0375] A scored finding parses, exposes ``confidence``, and keeps it through ``to_dict``."""
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = 8
     result = _parse_example(envelope)
@@ -267,25 +265,40 @@ def test_finding_confidence_propagates_through_parser(example_b: dict[str, Any])
 
 
 def test_finding_confidence_absent_parses_to_none(example_b: dict[str, Any]) -> None:
-    """An unscored finding parses with ``confidence is None``."""
+    """[TODO-0375] An unscored finding parses with ``confidence is None``."""
     result = _parse_example(example_b)
     assert result.envelope is not None
     assert result.envelope.feedback_to_forward[0].confidence is None
 
 
+def test_finding_integral_float_confidence_parses_to_int(example_b: dict[str, Any]) -> None:
+    """[TODO-0375] ``confidence: 8.0`` passes the schema's ``integer`` type and is stored as ``int`` 8."""
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = 8.0
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    confidence = result.envelope.feedback_to_forward[0].confidence
+    assert confidence == 8
+    assert type(confidence) is int
+
+
 def test_finding_confidence_out_of_range_raises_parse_error(example_b: dict[str, Any]) -> None:
-    """An out-of-range ``confidence`` makes the parser raise ``EnvelopeParseError``."""
+    """[TODO-0375] An out-of-range ``confidence`` raises ``EnvelopeParseError`` caused by its ``maximum`` bound."""
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"][0]["confidence"] = 11
-    with pytest.raises(envelope_parser.EnvelopeParseError):
+    with pytest.raises(envelope_parser.EnvelopeParseError) as excinfo:
         _parse_example(envelope)
+    cause = excinfo.value.cause
+    assert isinstance(cause, jsonschema.ValidationError)
+    assert cause.validator == "maximum"
+    assert list(cause.path)[-1] == "confidence"
 
 
 def test_to_dict_minimal_finding_round_trips_through_schema(
     validator: jsonschema.Draft202012Validator,
     example_b: dict[str, Any],
 ) -> None:
-    """A finding with only required keys survives parse -> ``to_dict`` -> schema validation."""
+    """[TODO-0375] A finding with only required keys survives parse -> ``to_dict`` -> schema validation."""
     envelope = json.loads(json.dumps(example_b))
     envelope["feedback_to_forward"] = [{"severity": "minor", "description": "Unscored finding with no location."}]
     result = _parse_example(envelope)
@@ -303,15 +316,23 @@ def test_to_dict_emits_set_optional_finding_fields(
     validator: jsonschema.Draft202012Validator,
     example_b: dict[str, Any],
 ) -> None:
-    """Optional finding fields that carry a value are kept by ``to_dict``."""
+    """[TODO-0375] ``to_dict`` keeps set optional finding fields, omits unset ones, and stays schema-valid."""
     envelope = json.loads(json.dumps(example_b))
-    envelope["feedback_to_forward"][0]["confidence"] = 8
-    envelope["feedback_to_forward"][0]["blocking"] = False
+    finding = envelope["feedback_to_forward"][0]
+    finding["confidence"] = 8
+    finding["blocking"] = False
+    del finding["suggested_fix"]
     result = _parse_example(envelope)
     assert result.envelope is not None
     body = result.envelope.to_dict()
+    emitted = body["feedback_to_forward"][0]
+    assert emitted["confidence"] == 8
+    assert emitted["blocking"] is False
+    assert emitted["file_path"] == finding["file_path"]
+    assert emitted["line_range"] == finding["line_range"]
+    assert emitted["rule_id"] == finding["rule_id"]
+    assert "suggested_fix" not in emitted
     validator.validate(body)
-    assert body["feedback_to_forward"] == [envelope["feedback_to_forward"][0]]
 
 
 # ---------------------------------------------------------------------------
