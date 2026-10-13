@@ -245,7 +245,7 @@ write_codex_error() {
 require_review_output() {
   if ! grep -qs '[^[:space:]]' "${OUTPUT_FILE}"; then
     echo "Error: Codex produced empty output" >&2
-    write_codex_error empty_output "codex exited without writing the review output artifact"
+    write_codex_error empty_output "codex exited 0 but the review output artifact is missing or blank"
   fi
 }
 

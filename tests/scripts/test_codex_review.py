@@ -1456,7 +1456,7 @@ class TestHighTier429_503Fallback:
         )
         assert result.returncode == 0, result.stderr
         assert len(records) == 2, "the connection timeout must route to the HIGH-tier fallback"
-        assert _read_exit_json(tmp_path).get("error_class") != "auth"
+        assert "falling back to gpt-5.3-codex high" in result.stderr, f"stderr={result.stderr!r}"
 
     def test_401_inside_a_uuid_segment_is_not_auth(self, tmp_path: Path) -> None:
         """A 401 bounded by a hyphen on one side and a letter on the other is not a status code."""
@@ -1528,88 +1528,103 @@ class TestHighTier429_503Fallback:
 # ---------------------------------------------------------------------------
 
 
-class TestSandboxDenialIsTerminal:
-    """An OS-level denial is its own class: never retried, never ``transient``.
+# An OS-level denial is its own class: never retried, never ``transient``. Its
+# wording matches neither the auth nor the retry patterns, so without a class
+# of its own it falls through to the transient retry — a 5s sleep and a second
+# call that fails identically — and is reported as a transient outage, inviting
+# a re-dispatch into the same denial.
 
-    Its wording matches neither the auth nor the retry patterns, so without a
-    class of its own it falls through to the transient retry — a 5s sleep and
-    a second call that fails identically — and is reported as a transient
-    outage, inviting a re-dispatch into the same denial.
-    """
 
-    @pytest.mark.parametrize(
-        ("stderr_text", "extra_env"),
-        [
-            ("Error: sandbox_apply: Operation not permitted (os error 1)", {}),
-            ("Error: failed to open session file: Permission denied (os error 13)", {}),
-            # Carries a HIGH-tier fallback token, so it pins the denial check
-            # ahead of the fallback rather than only ahead of the transient retry.
-            ("Error: Operation not permitted (os error 1): connection timeout", {"MODEL": "gpt-5.4"}),
-            # 401 inside an id is not a status code, so auth must not claim it.
-            ("request id abc401def: Operation not permitted (os error 1)", {}),
-        ],
-        ids=["os_error_1", "permission_denied", "os_error_1_with_high_tier_model", "401_inside_an_id"],
+@pytest.mark.parametrize(
+    ("stderr_text", "extra_env"),
+    [
+        ("Error: sandbox_apply: Operation not permitted (os error 1)", {}),
+        ("Error: failed to open session file: Permission denied (os error 13)", {}),
+        # Carries a HIGH-tier fallback token, so it pins the denial check
+        # ahead of the fallback rather than only ahead of the transient retry.
+        ("Error: Operation not permitted (os error 1): connection timeout", {"MODEL": "gpt-5.4"}),
+        # 401 inside an id is not a status code, so auth must not claim it.
+        ("request id abc401def: Operation not permitted (os error 1)", {}),
+    ],
+    ids=["os_error_1", "permission_denied", "os_error_1_with_high_tier_model", "401_inside_an_id"],
+)
+def test_os_denial_exits_non_zero_after_one_call(
+    tmp_path: Path,
+    stderr_text: str,
+    extra_env: dict[str, str],
+) -> None:
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text=stderr_text, log_path=log)
+    env = _default_env(bin_dir, tmp_path)
+    env.update(extra_env)
+    result = _run_review(tmp_path, env_overrides=env, timeout=30)
+    assert result.returncode != 0, f"a denied run produced no review; stderr={result.stderr!r}"
+    assert len(_read_shim_log(log)) == 1, "a denial recurs on every attempt, so it must not be retried"
+    exit_json = _read_exit_json(tmp_path)
+    assert exit_json.get("signal") == "CODEX_ERROR"
+    assert exit_json.get("error_class") == "sandbox_denied", f"got {exit_json!r}"
+    assert exit_json.get("retried") is False
+
+
+def test_permission_denied_without_an_os_marker_is_not_sandbox_denied(tmp_path: Path) -> None:
+    """A remote API can say "permission denied" with no status; without an OS marker it is retried."""
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: model access: permission denied", log_path=log)
+    result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path), timeout=30)
+    assert result.returncode != 0
+    assert len(_read_shim_log(log)) == 2, "with no OS marker the failure is not terminal, so it takes the retry"
+    assert _read_exit_json(tmp_path).get("error_class") == "transient"
+
+
+def test_os_error_number_with_a_denial_prefix_is_not_sandbox_denied(tmp_path: Path) -> None:
+    """``os error 111`` starts with ``os error 1`` but is a refused connection, so it takes the retry."""
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim_with_sequence(
+        tmp_path,
+        exit_codes=[1, 1],
+        stderr_texts=["Error: Connection refused (os error 111)", "Error: Connection refused (os error 111)"],
+        log_path=log,
     )
-    def test_os_denial_exits_non_zero_after_one_call(
-        self,
-        tmp_path: Path,
-        stderr_text: str,
-        extra_env: dict[str, str],
-    ) -> None:
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text=stderr_text, log_path=log)
-        env = _default_env(bin_dir, tmp_path)
-        env.update(extra_env)
-        result = _run_review(tmp_path, env_overrides=env, timeout=30)
-        assert result.returncode != 0, f"a denied run produced no review; stderr={result.stderr!r}"
-        assert len(_read_shim_log(log)) == 1, "a denial recurs on every attempt, so it must not be retried"
-        exit_json = _read_exit_json(tmp_path)
-        assert exit_json.get("signal") == "CODEX_ERROR"
-        assert exit_json.get("error_class") == "sandbox_denied", f"got {exit_json!r}"
-        assert exit_json.get("retried") is False
+    result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path), timeout=30)
+    assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+    assert len(_read_shim_log(log)) == 2, "a refused connection is not terminal, so it takes the retry"
+    assert _read_exit_json(tmp_path).get("error_class") == "transient"
 
-    def test_permission_denied_without_an_os_marker_is_not_sandbox_denied(self, tmp_path: Path) -> None:
-        """A remote API can say "permission denied" with no status; without an OS marker it is retried."""
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: model access: permission denied", log_path=log)
-        result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path), timeout=30)
-        assert result.returncode != 0
-        assert len(_read_shim_log(log)) == 2, "with no OS marker the failure is not terminal, so it takes the retry"
-        assert _read_exit_json(tmp_path).get("error_class") == "transient"
 
-    def test_http_403_permission_denied_stays_auth(self, tmp_path: Path) -> None:
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: 403 Forbidden: permission denied for this model", log_path=log)
-        result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
-        assert result.returncode != 0
-        assert len(_read_shim_log(log)) == 1
-        assert _read_exit_json(tmp_path).get("error_class") == "auth", (
-            "an API-level 403 is a credential problem, not a local denial; it must keep the auth class and its cache invalidation"
-        )
-
-    @pytest.mark.parametrize(
-        "stderr_text",
-        [
-            "Error: invalid API key: Permission denied",
-            "unauthorized: operation not permitted",
-            "Error: authentication failed: Operation not permitted (os error 1)",
-        ],
-        ids=["invalid_api_key", "unauthorized", "authentication"],
+def test_http_403_permission_denied_stays_auth(tmp_path: Path) -> None:
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: 403 Forbidden: permission denied for this model", log_path=log)
+    result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
+    assert result.returncode != 0
+    assert len(_read_shim_log(log)) == 1
+    assert _read_exit_json(tmp_path).get("error_class") == "auth", (
+        "an API-level 403 is a credential problem, not a local denial; it must keep the auth class and its cache invalidation"
     )
-    def test_auth_wording_with_denial_wording_stays_auth(self, tmp_path: Path, stderr_text: str) -> None:
-        log = tmp_path / "calls.log"
-        cache_file = tmp_path / "codex-preflight-cache.json"
-        cache_file.write_text('{"mode":"local","codex":{"cli":true}}\n')
-        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text=stderr_text, log_path=log)
-        env = _default_env(bin_dir, tmp_path)
-        env["PREFLIGHT_CACHE_FILE"] = str(cache_file)
-        result = _run_review(tmp_path, env_overrides=env)
-        assert result.returncode != 0
-        assert len(_read_shim_log(log)) == 1
-        assert _read_exit_json(tmp_path).get("error_class") == "auth", (
-            "stderr the auth classifier recognizes is a credential problem even when it also reads as a denial"
-        )
-        assert not cache_file.exists(), "the auth class must invalidate the preflight cache"
+
+
+@pytest.mark.parametrize(
+    "stderr_text",
+    [
+        "Error: invalid API key: Permission denied",
+        "unauthorized: operation not permitted",
+        "Error: authentication failed: Operation not permitted (os error 1)",
+    ],
+    ids=["invalid_api_key", "unauthorized", "authentication"],
+)
+def test_auth_wording_with_denial_wording_stays_auth(tmp_path: Path, stderr_text: str) -> None:
+    log = tmp_path / "calls.log"
+    cache_file = tmp_path / "codex-preflight-cache.json"
+    cache_file.write_text('{"mode":"local","codex":{"cli":true}}\n')
+    bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text=stderr_text, log_path=log)
+    env = _default_env(bin_dir, tmp_path)
+    env["PREFLIGHT_CACHE_FILE"] = str(cache_file)
+    result = _run_review(tmp_path, env_overrides=env)
+    assert result.returncode != 0
+    assert len(_read_shim_log(log)) == 1
+    assert _read_exit_json(tmp_path).get("error_class") == "auth", (
+        "stderr the auth classifier recognizes is a credential problem even when it also reads as a denial"
+    )
+    assert not cache_file.exists(), "the auth class must invalidate the preflight cache"
 
 
 _SANDBOX_DENIAL_STDERR = "Error: sandbox_apply: Operation not permitted (os error 1)"
@@ -1636,166 +1651,166 @@ _RETRY_SITES: dict[str, tuple[str, dict[str, str], str]] = {
 }
 
 
-class TestSecondAttemptFailureIsClassifiedLikeTheFirst:
-    """A retry that fails is classified by its own stderr, auth before denial.
-
-    Each retry site has a class of its own, but a second attempt can fail for a
-    terminal cause the first did not show. Reporting a denial under a retry
-    class invites a re-dispatch into the same denial, and reporting an auth
-    failure that way leaves the stale preflight cache in place.
-    """
-
-    def _run_site(
-        self,
-        tmp_path: Path,
-        site: str,
-        second_stderr: str,
-        *,
-        extra_env: dict[str, str] | None = None,
-    ) -> tuple[subprocess.CompletedProcess[str], list[dict], dict[str, object]]:
-        """Fail the first attempt into ``site`` and the second with ``second_stderr``."""
-        first_stderr, site_env, _ = _RETRY_SITES[site]
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim_with_sequence(
-            tmp_path,
-            exit_codes=[1, 1],
-            stderr_texts=[first_stderr, second_stderr],
-            log_path=log,
-        )
-        env = _default_env(bin_dir, tmp_path)
-        env.update(site_env)
-        if extra_env:
-            env.update(extra_env)
-        result = _run_review(tmp_path, env_overrides=env, timeout=30)
-        return result, _read_shim_log(log), _read_exit_json(tmp_path)
-
-    @pytest.mark.parametrize("site", list(_RETRY_SITES))
-    def test_second_attempt_denial_is_sandbox_denied(self, tmp_path: Path, site: str) -> None:
-        result, records, exit_json = self._run_site(tmp_path, site, _SANDBOX_DENIAL_STDERR)
-        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
-        assert len(records) == 2, f"expected the first attempt and one retry, got {len(records)}"
-        assert exit_json.get("signal") == "CODEX_ERROR"
-        assert exit_json.get("error_class") == "sandbox_denied", f"got {exit_json!r}"
-        assert exit_json.get("retried") is True, f"two calls were made, so the retry must be reported; got {exit_json!r}"
-
-    @pytest.mark.parametrize("site", list(_RETRY_SITES))
-    def test_second_attempt_auth_failure_is_auth_and_invalidates_the_cache(self, tmp_path: Path, site: str) -> None:
-        cache_file = tmp_path / "codex-preflight-cache.json"
-        cache_file.write_text('{"mode":"local","codex":{"cli":true}}\n')
-        result, records, exit_json = self._run_site(
-            tmp_path,
-            site,
-            _AUTH_FAILURE_STDERR,
-            extra_env={"PREFLIGHT_CACHE_FILE": str(cache_file)},
-        )
-        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
-        assert len(records) == 2
-        assert exit_json.get("error_class") == "auth", f"got {exit_json!r}"
-        assert exit_json.get("retried") is True
-        assert not cache_file.exists(), "an auth failure on the retry must invalidate the preflight cache"
-
-    @pytest.mark.parametrize("site", list(_RETRY_SITES))
-    def test_second_attempt_other_failure_keeps_the_site_class(self, tmp_path: Path, site: str) -> None:
-        """Control: ``internal error`` matches no terminal class, so the class assertion holds with or without classifying the retry; pairs with ``test_second_attempt_denial_is_sandbox_denied``."""
-        result, records, exit_json = self._run_site(tmp_path, site, "Error: internal error")
-        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
-        assert len(records) == 2
-        assert exit_json.get("error_class") == _RETRY_SITES[site][2], f"got {exit_json!r}"
-        assert exit_json.get("retried") is True
+# A retry that fails is classified by its own stderr, auth before denial. Each
+# retry site has a class of its own, but a second attempt can fail for a
+# terminal cause the first did not show. Reporting a denial under a retry class
+# invites a re-dispatch into the same denial, and reporting an auth failure that
+# way leaves the stale preflight cache in place.
 
 
-class TestEmptyOutputIsAFailedReview:
-    """A zero exit that writes nothing to ``-o`` is not a review."""
-
-    def test_first_call_success_with_no_output_exits_non_zero(self, tmp_path: Path) -> None:
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim(tmp_path, log_path=log, output_payload="")
-        result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
-        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
-        assert len(_read_shim_log(log)) == 1
-        exit_json = _read_exit_json(tmp_path)
-        assert exit_json.get("signal") == "CODEX_ERROR", f"got {exit_json!r}"
-        assert exit_json.get("error_class") == "empty_output", f"got {exit_json!r}"
-        assert exit_json.get("retried") is False
-
-    def test_whitespace_only_output_exits_non_zero(self, tmp_path: Path) -> None:
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim(tmp_path, log_path=log, output_payload="\n  \n")
-        result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
-        output_file = _workspace_root(tmp_path) / "tmp" / "codex-review-output-1.md"
-        written = output_file.read_text() if output_file.exists() else ""
-        assert written and not written.strip(), f"precondition: the shim must have written whitespace only; got {written!r}"
-        assert result.returncode != 0, f"whitespace is not a review; stderr={result.stderr!r}"
-        exit_json = _read_exit_json(tmp_path)
-        assert exit_json.get("signal") == "CODEX_ERROR", f"got {exit_json!r}"
-        assert exit_json.get("error_class") == "empty_output", f"got {exit_json!r}"
-
-
-class TestOutputClearFailureOnARetry:
-    """A failure to clear ``-o`` before a retry reports that a retry was under way."""
-
-    @pytest.mark.skipif(
-        os.geteuid() == 0,
-        reason="root bypasses the write bit, so chmod cannot make the rm fail",
+def _run_site(
+    tmp_path: Path,
+    site: str,
+    second_stderr: str,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], list[dict[str, object]], dict[str, object]]:
+    """Fail the first attempt into ``site`` and the second with ``second_stderr``."""
+    first_stderr, site_env, _ = _RETRY_SITES[site]
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim_with_sequence(
+        tmp_path,
+        exit_codes=[1, 1],
+        stderr_texts=[first_stderr, second_stderr],
+        log_path=log,
     )
-    def test_output_clear_failed_on_the_retry_reports_retried(self, tmp_path: Path) -> None:
-        log = tmp_path / "calls.log"
-        # Container routing puts -o under agent-review/; the first call leaves a
-        # partial file there and locks the directory, so the retry's clear fails.
-        bin_dir = _install_shim(
-            tmp_path,
-            exit_code=1,
-            stderr_text="Error: connection timeout",
-            log_path=log,
-            output_payload="partial verdict",
-            extra_command="chmod 555 agent-review",
-        )
-        env = _default_env(bin_dir, tmp_path)
-        env.pop("CODEX_EXECUTION_CONTEXT")
-        agent_review = _workspace_root(tmp_path) / "agent-review"
-        try:
-            result = _run_review(tmp_path, env_overrides=env, timeout=30)
-        finally:
-            agent_review.chmod(0o755)
-        assert result.returncode != 0, f"stderr={result.stderr!r}"
-        assert len(_read_shim_log(log)) == 1, "the retry must stop at the clear, before reaching the CLI"
-        exit_json = _read_exit_json(tmp_path)
-        assert exit_json.get("error_class") == "output_clear_failed", f"got {exit_json!r}"
-        assert exit_json.get("exit_code") == 1, f"got {exit_json!r}"
-        assert exit_json.get("retried") is True, f"the clear failed on the retry; got {exit_json!r}"
+    env = _default_env(bin_dir, tmp_path)
+    env.update(site_env)
+    if extra_env:
+        env.update(extra_env)
+    result = _run_review(tmp_path, env_overrides=env, timeout=30)
+    return result, _read_shim_log(log), _read_exit_json(tmp_path)
 
 
-class TestShimPassesTheWrappersFailure:
-    """``cli-args-to-env.sh codex-review.sh`` must exit non-zero when the wrapper does.
+@pytest.mark.parametrize("site", list(_RETRY_SITES))
+def test_second_attempt_denial_is_sandbox_denied(tmp_path: Path, site: str) -> None:
+    result, records, exit_json = _run_site(tmp_path, site, _SANDBOX_DENIAL_STDERR)
+    assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+    assert len(records) == 2, f"expected the first attempt and one retry, got {len(records)}"
+    assert exit_json.get("signal") == "CODEX_ERROR"
+    assert exit_json.get("error_class") == "sandbox_denied", f"got {exit_json!r}"
+    assert exit_json.get("retried") is True, f"two calls were made, so the retry must be reported; got {exit_json!r}"
 
-    This runs the shim + wrapper pair directly, not Task. A shim that swallowed
-    the wrapper's status would score a missing review as a pass; that the
-    ``agent:review:codex:local`` recipe is this bare pair is pinned by the
-    static guard in ``test_agent_cli_taskfile.py``.
-    """
 
-    _CLI_ARGS: tuple[str, ...] = ("ROUND=1", "EFFORT=high", "REVIEW_TYPE=diff", "DIFF_FILE=tmp/qa-diff.txt")
+@pytest.mark.parametrize("site", list(_RETRY_SITES))
+def test_second_attempt_auth_failure_is_auth_and_invalidates_the_cache(tmp_path: Path, site: str) -> None:
+    cache_file = tmp_path / "codex-preflight-cache.json"
+    cache_file.write_text('{"mode":"local","codex":{"cli":true}}\n')
+    result, records, exit_json = _run_site(
+        tmp_path,
+        site,
+        _AUTH_FAILURE_STDERR,
+        extra_env={"PREFLIGHT_CACHE_FILE": str(cache_file)},
+    )
+    assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+    assert len(records) == 2
+    assert exit_json.get("error_class") == "auth", f"got {exit_json!r}"
+    assert exit_json.get("retried") is True
+    assert not cache_file.exists(), "an auth failure on the retry must invalidate the preflight cache"
 
-    def _alias_env(self, bin_dir: Path, tmp_path: Path) -> dict[str, str]:
-        """The alias's static ``env:`` marker with no caller values; those arrive as ``_CLI_ARGS``."""
-        env = _default_env(bin_dir, tmp_path)
-        env.pop("REVIEW_TYPE")
-        env.pop("DIFF_FILE")
-        return env
 
-    def test_failed_review_fails_the_shim_pair(self, tmp_path: Path) -> None:
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: 401 Unauthorized: bad token", log_path=log)
-        result = _run_review_via_shim(tmp_path, self._alias_env(bin_dir, tmp_path), list(self._CLI_ARGS))
-        assert result.returncode != 0, f"the shim pair must surface the failed review; stderr={result.stderr!r}"
-        assert len(_read_shim_log(log)) == 1, "the CLI must have been reached through the shim"
-        assert _read_exit_json(tmp_path).get("signal") == "CODEX_ERROR"
+@pytest.mark.parametrize("site", list(_RETRY_SITES))
+def test_second_attempt_other_failure_keeps_the_site_class(tmp_path: Path, site: str) -> None:
+    """Control: ``internal error`` matches no terminal class, so the class assertion holds with or without classifying the retry; pairs with ``test_second_attempt_denial_is_sandbox_denied``."""
+    result, records, exit_json = _run_site(tmp_path, site, "Error: internal error")
+    assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+    assert len(records) == 2
+    assert exit_json.get("error_class") == _RETRY_SITES[site][2], f"got {exit_json!r}"
+    assert exit_json.get("retried") is True
 
-    def test_completed_review_passes_the_shim_pair(self, tmp_path: Path) -> None:
-        """Control: passes whatever the wrapper does on failure; pairs with ``test_failed_review_fails_the_shim_pair``."""
-        log = tmp_path / "calls.log"
-        bin_dir = _install_shim(tmp_path, log_path=log)
-        result = _run_review_via_shim(tmp_path, self._alias_env(bin_dir, tmp_path), list(self._CLI_ARGS))
-        assert result.returncode == 0, result.stderr
-        assert len(_read_shim_log(log)) == 1
-        assert not (_workspace_root(tmp_path) / "tmp" / "codex-exit.json").exists()
+
+# A zero exit that writes nothing to ``-o`` is not a review.
+
+
+def test_first_call_success_with_no_output_exits_non_zero(tmp_path: Path) -> None:
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim(tmp_path, log_path=log, output_payload="")
+    result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
+    assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+    assert len(_read_shim_log(log)) == 1
+    exit_json = _read_exit_json(tmp_path)
+    assert exit_json.get("signal") == "CODEX_ERROR", f"got {exit_json!r}"
+    assert exit_json.get("error_class") == "empty_output", f"got {exit_json!r}"
+    assert exit_json.get("exit_code") == 0, f"the CLI exited 0, and exit_code records the CLI's status; got {exit_json!r}"
+    assert exit_json.get("retried") is False
+
+
+def test_whitespace_only_output_exits_non_zero(tmp_path: Path) -> None:
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim(tmp_path, log_path=log, output_payload="\n  \n")
+    result = _run_review(tmp_path, env_overrides=_default_env(bin_dir, tmp_path))
+    output_file = _workspace_root(tmp_path) / "tmp" / "codex-review-output-1.md"
+    written = output_file.read_text() if output_file.exists() else ""
+    assert written and not written.strip(), f"precondition: the shim must have written whitespace only; got {written!r}"
+    assert result.returncode != 0, f"whitespace is not a review; stderr={result.stderr!r}"
+    exit_json = _read_exit_json(tmp_path)
+    assert exit_json.get("signal") == "CODEX_ERROR", f"got {exit_json!r}"
+    assert exit_json.get("error_class") == "empty_output", f"got {exit_json!r}"
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="root bypasses the write bit, so chmod cannot make the rm fail",
+)
+def test_output_clear_failed_on_the_retry_reports_retried(tmp_path: Path) -> None:
+    """A failure to clear ``-o`` before a retry reports that a retry was under way."""
+    log = tmp_path / "calls.log"
+    # Container routing puts -o under agent-review/; the first call leaves a
+    # partial file there and locks the directory, so the retry's clear fails.
+    bin_dir = _install_shim(
+        tmp_path,
+        exit_code=1,
+        stderr_text="Error: connection timeout",
+        log_path=log,
+        output_payload="partial verdict",
+        extra_command="chmod 555 agent-review",
+    )
+    env = _default_env(bin_dir, tmp_path)
+    env.pop("CODEX_EXECUTION_CONTEXT")
+    agent_review = _workspace_root(tmp_path) / "agent-review"
+    try:
+        result = _run_review(tmp_path, env_overrides=env, timeout=30)
+    finally:
+        agent_review.chmod(0o755)
+    assert result.returncode != 0, f"stderr={result.stderr!r}"
+    assert len(_read_shim_log(log)) == 1, "the retry must stop at the clear, before reaching the CLI"
+    exit_json = _read_exit_json(tmp_path)
+    assert exit_json.get("error_class") == "output_clear_failed", f"got {exit_json!r}"
+    assert exit_json.get("exit_code") == 1, f"got {exit_json!r}"
+    assert exit_json.get("retried") is True, f"the clear failed on the retry; got {exit_json!r}"
+
+
+# ``cli-args-to-env.sh codex-review.sh`` must exit non-zero when the wrapper
+# does. These run the shim + wrapper pair directly, not Task. A shim that
+# swallowed the wrapper's status would score a missing review as a pass; that
+# the ``agent:review:codex:local`` recipe is this bare pair is pinned by the
+# static guard in ``test_agent_cli_taskfile.py``.
+
+_ALIAS_CLI_ARGS: tuple[str, ...] = ("ROUND=1", "EFFORT=high", "REVIEW_TYPE=diff", "DIFF_FILE=tmp/qa-diff.txt")
+
+
+def _alias_env(bin_dir: Path, tmp_path: Path) -> dict[str, str]:
+    """The alias's static ``env:`` marker with no caller values; those arrive as ``_ALIAS_CLI_ARGS``."""
+    env = _default_env(bin_dir, tmp_path)
+    env.pop("REVIEW_TYPE")
+    env.pop("DIFF_FILE")
+    return env
+
+
+def test_failed_review_fails_the_shim_pair(tmp_path: Path) -> None:
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text="Error: 401 Unauthorized: bad token", log_path=log)
+    result = _run_review_via_shim(tmp_path, _alias_env(bin_dir, tmp_path), list(_ALIAS_CLI_ARGS))
+    assert result.returncode != 0, f"the shim pair must surface the failed review; stderr={result.stderr!r}"
+    assert len(_read_shim_log(log)) == 1, "the CLI must have been reached through the shim"
+    assert _read_exit_json(tmp_path).get("signal") == "CODEX_ERROR"
+
+
+def test_completed_review_passes_the_shim_pair(tmp_path: Path) -> None:
+    """Control: passes whatever the wrapper does on failure; pairs with ``test_failed_review_fails_the_shim_pair``."""
+    log = tmp_path / "calls.log"
+    bin_dir = _install_shim(tmp_path, log_path=log)
+    result = _run_review_via_shim(tmp_path, _alias_env(bin_dir, tmp_path), list(_ALIAS_CLI_ARGS))
+    assert result.returncode == 0, result.stderr
+    assert len(_read_shim_log(log)) == 1
+    assert not (_workspace_root(tmp_path) / "tmp" / "codex-exit.json").exists()

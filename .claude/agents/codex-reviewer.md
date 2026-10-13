@@ -303,6 +303,12 @@ On failure, `tmp/codex-exit.json` contains:
 }
 ```
 
+`exit_code` is the exit status of the `codex exec` call that ended
+the run (0 for `empty_output`), except for failures raised before
+that attempt's call ran — `output_clear_failed` (on a first attempt
+or a retry), `arg_validation`, `template_missing`, `secrets_guard` —
+which record the wrapper's own 1.
+
 ---
 
 ## Output Contract

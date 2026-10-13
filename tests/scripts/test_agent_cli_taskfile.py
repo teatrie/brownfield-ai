@@ -302,13 +302,14 @@ CODEX_REVIEW_ALIAS_ALLOWED_KEYS: dict[str, frozenset[str]] = {
 }
 
 
-def _exit_status_masking_offenders(tasks: dict) -> list[str]:
-    """Return why each codex review alias in ``tasks`` could pass on a failed wrapper run.
+def _exit_status_masking_offenders(tasks: dict[str, object]) -> list[str]:
+    """Return how each codex review alias in ``tasks`` departs from its bare shim invocation.
 
     Each alias must run exactly one plain-string cmd equal, after whitespace
     normalisation, to its shim invocation. A mapping cmd is rejected
     outright: that is the form that carries a cmd-level ``ignore_error``.
-    Task-level keys are allowlisted: any key that could skip the cmd or mask its status is rejected.
+    Task-level keys outside the allowlist are rejected: a satisfied
+    ``status:`` skips the cmd and go-task exits 0.
     """
     offenders: list[str] = []
     for task_name, expected in CODEX_REVIEW_ALIAS_COMMANDS.items():
@@ -337,14 +338,15 @@ def test_codex_review_tasks_do_not_mask_the_wrapper_exit_status() -> None:
     """The codex review aliases must fail whenever the wrapper fails.
 
     The wrapper exits non-zero whenever no review was produced, and callers
-    gate on the alias's status. Task fails the alias (with its own exit code)
-    when its cmd exits non-zero, so the recipe must be the bare shim
-    invocation: an ``ignore_error``, a trailing ``; true`` or ``|| true``, or
-    a further cmd after it would turn a failed review into a pass.
+    gate on the alias's status. go-task exits non-zero (observed: 201, not
+    the cmd's own status) when a cmd fails, including one followed by
+    ``; true``, and runs no later cmd. A cmd-level ``ignore_error`` or a
+    trailing ``|| true`` (both observed: exit 0) turns a failed review into
+    a pass, so the recipe must be the bare shim invocation.
 
     Baseline: this reads the recipe text only, so it passes whatever the
     wrapper exits; pairs with ``test_exit_status_guard_rejects_masking_recipes``
-    and ``test_codex_review.py::TestShimPassesTheWrappersFailure``.
+    and ``test_codex_review.py::test_failed_review_fails_the_shim_pair``.
     """
     offenders = _exit_status_masking_offenders(_load_taskfile()["tasks"])
     assert not offenders, "Codex review aliases must not mask a failed wrapper run: " + "; ".join(offenders)
@@ -363,8 +365,8 @@ def test_codex_review_tasks_do_not_mask_the_wrapper_exit_status() -> None:
     ],
     ids=["semicolon_true", "or_true", "second_cmd", "cmd_ignore_error", "task_ignore_error", "task_status", "task_platforms"],
 )
-def test_exit_status_guard_rejects_masking_recipes(task_name: str, mutation: dict) -> None:
-    """The guard above must fail on each recipe shape that would mask a failed run."""
+def test_exit_status_guard_rejects_masking_recipes(task_name: str, mutation: dict[str, object]) -> None:
+    """The guard above must reject each recipe shape that departs from the bare shim invocation."""
     tasks = copy.deepcopy(_load_taskfile()["tasks"])
     tasks[task_name].update(mutation)
     assert _exit_status_masking_offenders(tasks), f"guard accepted a masking recipe for {task_name}: {mutation!r}"
