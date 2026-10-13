@@ -63,7 +63,7 @@ EXCLUDED_BASES = frozenset({
 })
 
 FILE_WRITING_TOOLS = frozenset({"Bash", "Write", "Edit"})
-ARTIFACTS_BLOCK_HEADING = "Artifacts & Logs"
+ARTIFACTS_BLOCK_HEADING_LINE = "**CRITICAL CONSTRAINT: Artifacts & Logs**"
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -244,7 +244,8 @@ def test_agents_without_file_writing_tools_omit_artifacts_block(agent_paths: lis
             continue
         tools = meta["tools"]
         tool_names = {t.strip() for t in tools.split(",")} if isinstance(tools, str) else set(tools)
-        if tool_names.isdisjoint(FILE_WRITING_TOOLS) and ARTIFACTS_BLOCK_HEADING in body:
+        carries_block = any(line.strip() == ARTIFACTS_BLOCK_HEADING_LINE for line in body.splitlines())
+        if tool_names.isdisjoint(FILE_WRITING_TOOLS) and carries_block:
             offenders.append(f"{agent.name}: tools={tools!r}")
-    header = f"agents with none of {sorted(FILE_WRITING_TOOLS)} carry the {ARTIFACTS_BLOCK_HEADING!r} block:"
+    header = f"agents with none of {sorted(FILE_WRITING_TOOLS)} carry the {ARTIFACTS_BLOCK_HEADING_LINE!r} block:"
     assert not offenders, header + "\n  " + "\n  ".join(offenders)
