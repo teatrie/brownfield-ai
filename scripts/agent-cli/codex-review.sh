@@ -298,57 +298,57 @@ run_codex() {
   codex exec "${cmd_args[@]}" < "$COMBINED_PROMPT" 2>| "${ERR_FILE}"
 }
 
+read_stderr_excerpt() {
+  STDERR_EXCERPT=""
+  if [ -f "${ERR_FILE}" ]; then
+    STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
+  fi
+}
+
+# Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth
+# NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
+# excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
+# `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
+# where the codex binary was uninstalled while the preflight cache was
+# still asserting `mode: local` — same invalidation path as auth errors,
+# since both indicate the cached verdict is wrong.
+_AUTH_PATTERN='authenticat|401|403|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory'
+
+# Writes the signal and exits 1 when STDERR_EXCERPT is an auth failure or an
+# OS-level denial; returns otherwise. Every failed attempt, first or retry,
+# goes through here so a terminal cause is never reported under a retry class.
+# Auth is checked first so its cache invalidation runs even when the message
+# also says "permission denied". A denial (e.g. a sandbox blocking a syscall)
+# fails identically on every attempt, so it is never retried.
+exit_if_terminal_failure() {
+  local error_class
+  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_AUTH_PATTERN"; then
+    error_class="auth"
+    # Make the next preflight re-check rather than serve the stale `local`
+    # verdict that led here.
+    rm -f "${PREFLIGHT_CACHE_FILE:-tmp/.codex-preflight-cache.json}" 2>/dev/null || true
+  elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "operation not permitted|permission denied|os error 1([^0-9]|$)"; then
+    error_class="sandbox_denied"
+  else
+    return 0
+  fi
+  jq -n --argjson exit_code "$EXIT_CODE" \
+        --argjson retried "$RETRIED" \
+        --arg error_class "$error_class" \
+        --arg stderr_excerpt "$STDERR_EXCERPT" \
+        '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:$error_class,stderr_excerpt:$stderr_excerpt}' \
+        > tmp/codex-exit.json
+  exit 1
+}
+
 set +e
 run_codex
 EXIT_CODE=$?
 set -e
 
 if [ "$EXIT_CODE" -ne 0 ]; then
-
-  # Inspect stderr to classify the error
-  STDERR_EXCERPT=""
-  if [ -f "${ERR_FILE}" ]; then
-    STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-  fi
-
-  # Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth
-  # NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
-  # excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
-  # `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
-  # where the codex binary was uninstalled while the preflight cache was
-  # still asserting `mode: local` — same invalidation path as auth errors,
-  # since both indicate the cached verdict is wrong.
-  _AUTH_PATTERN='authenticat|401|403|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory'
-
-  # An OS-level denial (e.g. a sandbox blocking a syscall) fails identically
-  # on every attempt, so it is terminal and never retried. Any stderr the auth
-  # pattern matches is left to the auth check below, so its cache
-  # invalidation runs even when the message also says "permission denied".
-  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "operation not permitted|permission denied|os error 1([^0-9]|$)" \
-      && ! printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_AUTH_PATTERN"; then
-    jq -n --argjson exit_code "$EXIT_CODE" \
-          --arg stderr_excerpt "$STDERR_EXCERPT" \
-          '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"sandbox_denied",stderr_excerpt:$stderr_excerpt}' \
-          > tmp/codex-exit.json
-    exit 1
-  fi
-
-  ERROR_CLASS="transient"
-  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_AUTH_PATTERN"; then
-    ERROR_CLASS="auth"
-  fi
-
-  if [ "$ERROR_CLASS" = "auth" ]; then
-    # Auth errors are non-retriable. Invalidate the preflight cache so
-    # the next preflight re-checks rather than serving the stale `local`
-    # verdict that led us here.
-    rm -f "${PREFLIGHT_CACHE_FILE:-tmp/.codex-preflight-cache.json}" 2>/dev/null || true
-    jq -n --argjson exit_code "$EXIT_CODE" \
-          --arg stderr_excerpt "$STDERR_EXCERPT" \
-          '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"auth",stderr_excerpt:$stderr_excerpt}' \
-          > tmp/codex-exit.json
-    exit 1
-  fi
+  read_stderr_excerpt
+  exit_if_terminal_failure
 
   # HIGH-tier model transient failure -> MEDIUM tier fallback.
   # When MODEL is gpt-5.4 (or any non-default the orchestrator passed) and
@@ -401,10 +401,8 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     set -e
     unset EFFORT_OVERRIDE
     if [ "$EXIT_CODE" -ne 0 ]; then
-      STDERR_EXCERPT=""
-      if [ -f "${ERR_FILE}" ]; then
-        STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-      fi
+      read_stderr_excerpt
+      exit_if_terminal_failure
       jq -n --argjson exit_code "$EXIT_CODE" \
             --arg stderr_excerpt "$STDERR_EXCERPT" \
             '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"high_tier_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
@@ -439,10 +437,8 @@ if [ "$EXIT_CODE" -ne 0 ]; then
       set -e
       unset EFFORT_OVERRIDE
       if [ "$EXIT_CODE" -ne 0 ]; then
-        STDERR_EXCERPT=""
-        if [ -f "${ERR_FILE}" ]; then
-          STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-        fi
+        read_stderr_excerpt
+        exit_if_terminal_failure
         jq -n --argjson exit_code "$EXIT_CODE" \
               --arg stderr_excerpt "$STDERR_EXCERPT" \
               '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"xhigh_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
@@ -469,10 +465,8 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     EXIT_CODE=$?
     set -e
     if [ "$EXIT_CODE" -ne 0 ]; then
-      STDERR_EXCERPT=""
-      if [ -f "${ERR_FILE}" ]; then
-        STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-      fi
+      read_stderr_excerpt
+      exit_if_terminal_failure
       jq -n --argjson exit_code "$EXIT_CODE" \
             --arg stderr_excerpt "$STDERR_EXCERPT" \
             '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"transient",stderr_excerpt:$stderr_excerpt}' \

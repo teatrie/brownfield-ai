@@ -1532,6 +1532,97 @@ class TestSandboxDenialIsTerminal:
         assert not cache_file.exists(), "the auth class must invalidate the preflight cache"
 
 
+_SANDBOX_DENIAL_STDERR = "Error: sandbox_apply: Operation not permitted (os error 1)"
+_AUTH_FAILURE_STDERR = "Error: 401 Unauthorized: bad token"
+
+# Each retry site: its first-attempt stderr, the env that routes that stderr to
+# it, and the class it reports when the second attempt fails for another reason.
+_RETRY_SITES: dict[str, tuple[str, dict[str, str], str]] = {
+    "high_tier_fallback": (
+        "Error: 429 Too Many Requests",
+        {"MODEL": "gpt-5.4"},
+        "high_tier_fallback_failed",
+    ),
+    "xhigh_fallback": (
+        "Error: unknown variant xhigh for model_reasoning_effort",
+        {"EFFORT": "xhigh", "EFFORT_FALLBACK_ON_REJECT": "1"},
+        "xhigh_fallback_failed",
+    ),
+    "transient_retry": (
+        "Error: connection timeout",
+        {},
+        "transient",
+    ),
+}
+
+
+class TestSecondAttemptFailureIsClassifiedLikeTheFirst:
+    """A retry that fails is classified by its own stderr, auth before denial.
+
+    Each retry site has a class of its own, but a second attempt can fail for a
+    terminal cause the first did not show. Reporting a denial under a retry
+    class invites a re-dispatch into the same denial, and reporting an auth
+    failure that way leaves the stale preflight cache in place.
+    """
+
+    def _run_site(
+        self,
+        tmp_path: Path,
+        site: str,
+        second_stderr: str,
+        *,
+        extra_env: dict[str, str] | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], list[dict], dict[str, object]]:
+        """Fail the first attempt into ``site`` and the second with ``second_stderr``."""
+        first_stderr, site_env, _ = _RETRY_SITES[site]
+        log = tmp_path / "calls.log"
+        bin_dir = _install_shim_with_sequence(
+            tmp_path,
+            exit_codes=[1, 1],
+            stderr_texts=[first_stderr, second_stderr],
+            log_path=log,
+        )
+        env = _default_env(bin_dir, tmp_path)
+        env.update(site_env)
+        if extra_env:
+            env.update(extra_env)
+        result = _run_review(tmp_path, env_overrides=env, timeout=30)
+        return result, _read_shim_log(log), _read_exit_json(tmp_path)
+
+    @pytest.mark.parametrize("site", list(_RETRY_SITES))
+    def test_second_attempt_denial_is_sandbox_denied(self, tmp_path: Path, site: str) -> None:
+        result, records, exit_json = self._run_site(tmp_path, site, _SANDBOX_DENIAL_STDERR)
+        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+        assert len(records) == 2, f"expected the first attempt and one retry, got {len(records)}"
+        assert exit_json.get("signal") == "CODEX_ERROR"
+        assert exit_json.get("error_class") == "sandbox_denied", f"got {exit_json!r}"
+        assert exit_json.get("retried") is True, f"two calls were made, so the retry must be reported; got {exit_json!r}"
+
+    @pytest.mark.parametrize("site", list(_RETRY_SITES))
+    def test_second_attempt_auth_failure_is_auth_and_invalidates_the_cache(self, tmp_path: Path, site: str) -> None:
+        cache_file = tmp_path / "codex-preflight-cache.json"
+        cache_file.write_text('{"mode":"local","codex":{"cli":true}}\n')
+        result, records, exit_json = self._run_site(
+            tmp_path,
+            site,
+            _AUTH_FAILURE_STDERR,
+            extra_env={"PREFLIGHT_CACHE_FILE": str(cache_file)},
+        )
+        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+        assert len(records) == 2
+        assert exit_json.get("error_class") == "auth", f"got {exit_json!r}"
+        assert exit_json.get("retried") is True
+        assert not cache_file.exists(), "an auth failure on the retry must invalidate the preflight cache"
+
+    @pytest.mark.parametrize("site", list(_RETRY_SITES))
+    def test_second_attempt_other_failure_keeps_the_site_class(self, tmp_path: Path, site: str) -> None:
+        result, records, exit_json = self._run_site(tmp_path, site, "Error: internal error")
+        assert result.returncode != 0, f"no review was produced; stderr={result.stderr!r}"
+        assert len(records) == 2
+        assert exit_json.get("error_class") == _RETRY_SITES[site][2], f"got {exit_json!r}"
+        assert exit_json.get("retried") is True
+
+
 class TestEmptyOutputIsAFailedReview:
     """A zero exit that writes nothing to ``-o`` is not a review."""
 
