@@ -57,4 +57,4 @@ Example envelope body (lint-failure shape) — illustrative only; your actual em
 
 A clean lint run emits `status: "APPROVED"`, `next_action: "APPROVE"` and an empty `feedback_to_forward`. For any other verdict, pick a `status` × `next_action` pair from the [validity matrix](../../docs/reviewer_envelope.md#status-x-next-action-validity); the schema rejects every pair outside it.
 
-Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See `docs/reviewer_envelope.md` for the optional `spillover_findings_path` key.
+Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See [`docs/reviewer_envelope.md`](../../docs/reviewer_envelope.md) for the optional `spillover_findings_path` key.
