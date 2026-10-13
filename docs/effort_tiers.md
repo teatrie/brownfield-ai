@@ -132,8 +132,9 @@ HIGH-tier invocation (EFFORT in {high,xhigh,max} or MODEL override = HIGH)
           │
           ├─ Codex (wrapper-level): MODEL=gpt-5.4 <e> → MODEL=gpt-5.3-codex + reasoning=high
           │     │
-          │     ├─ success → done (NOTICE on stderr)
-          │     └─ failure → CODEX_ERROR (error_class=high_tier_fallback_failed)
+          │     ├─ success → done (NOTICE on stderr); empty output is a CODEX_ERROR
+          │     └─ failure → CODEX_ERROR (e.g. high_tier_fallback_failed;
+          │                  see .claude/agents/codex-reviewer.md)
           │
           ├─ Gemini (wrapper-level): gemini-3.1-pro-<e> → gemini-3-flash-high
           │     │

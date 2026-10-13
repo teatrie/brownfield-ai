@@ -255,7 +255,8 @@ from the gate without treating it as an infrastructure failure.
 Triggers:
 
 - `OPENAI_API_KEY` env var missing (non-OAuth path)
-- `codex` CLI binary absent at pre-flight (`mode: none`, see
+- no local `codex` CLI and no `OPENAI_API_KEY` at pre-flight
+  (`mode: none`, see
   `scripts/agent-cli/codex-preflight-tiered.sh`); a binary missing
   once the wrapper runs is a `CODEX_ERROR`
 
@@ -267,7 +268,9 @@ standard Dual-Model Review Gate, excluding the Codex verdict.
 The wrapper exits non-zero on every `CODEX_ERROR`: a non-zero exit
 means no review was produced, and the reason is in
 `tmp/codex-exit.json`. `CODEX_UNAVAILABLE` exits 0 — it is the
-documented "bridge unavailable" outcome, not a failed review.
+documented "bridge unavailable" outcome, not a failed review — so
+after exit 0 `tmp/codex-exit.json` may still hold the wrapper's own
+`CODEX_UNAVAILABLE` (missing token).
 
 Triggers include, e.g.:
 
@@ -304,7 +307,8 @@ On success, return raw text from `tmp/codex-review-output-<N>.md`
 Do NOT summarize, filter, or interpret. The calling agent extracts
 the verdict.
 
-On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only.
+On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only, or
+`tmp/codex-exit.json` when the wrapper raised it.
 On `CODEX_ERROR`, return `tmp/codex-exit.json` only.
 Do not return partial review output alongside error signals.
 
@@ -319,7 +323,7 @@ All artifacts written during a run:
 | `agent-review/<WS>-codex-review-output-<ID>.md` | Raw output from Codex CLI (container mode) |
 | `tmp/codex-review-err.txt` | Stderr from Codex CLI (local mode) |
 | `agent-review/<WS>-codex-review-err-<ID>.txt` | Stderr from Codex CLI (container mode) |
-| `tmp/codex-exit.json` | Structured exit signal on error |
+| `tmp/codex-exit.json` | Structured exit signal on error, or the wrapper's `CODEX_UNAVAILABLE` |
 
 ---
 

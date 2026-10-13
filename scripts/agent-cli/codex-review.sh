@@ -12,8 +12,7 @@
 #     reviewer template + DIFF_FILE prompt on stdin as the sole subject.
 #   Output written to tmp/codex-review-output-<ROUND>.md.
 #   Signals written to tmp/codex-exit.json on unavailability or error.
-#   Exit status is non-zero whenever no review was produced (every
-#   CODEX_ERROR); CODEX_UNAVAILABLE exits 0.
+#   Exit status is non-zero on every CODEX_ERROR; CODEX_UNAVAILABLE exits 0.
 
 set -euo pipefail
 
