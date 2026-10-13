@@ -235,6 +235,15 @@ def test_finding_confidence_invalid_rejected_by_its_own_constraint(
     assert list(excinfo.value.path)[-1] == "confidence"
 
 
+def test_schema_finding_keys_match_finding_dataclass_fields(schema: dict[str, Any]) -> None:
+    schema_keys = set(schema["properties"]["feedback_to_forward"]["items"]["properties"])
+    assert schema_keys == {f.name for f in dataclasses.fields(envelope_parser.Finding)}
+
+
+def test_schema_top_level_keys_match_envelope_dataclass_fields(schema: dict[str, Any]) -> None:
+    assert set(schema["properties"]) == {f.name for f in dataclasses.fields(envelope_parser.Envelope)}
+
+
 def _parse_example(envelope: dict[str, Any]) -> envelope_parser.ParseResult:
     """Wrap ``envelope`` in a discriminated fence and run it through ``parse_or_fallback``."""
     output = "# Review\n\n```json envelope\n" + json.dumps(envelope) + "\n```\n"
