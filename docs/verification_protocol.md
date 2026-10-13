@@ -860,7 +860,7 @@ chronological order, mirroring `.claude/skills/auto-pr/SKILL.md:88-92`.
 | Field | Type | Required | Semantics |
 |-------|------|----------|-----------|
 | `bridge_agent_ids` | `list[str]` | yes | Bridge agent IDs that returned dissent (e.g., `["codex-reviewer-xhigh", "gemini-reviewer-xhigh"]`); the per-finding agent attribution lives at the envelope level here, not on each `Finding` |
-| `findings` | `list[dict]` | yes | Aggregated blocking findings copied from the dissenting bridge envelopes; each entry round-trips into the `Finding` dataclass at `scripts/orchestrator/envelope_parser.py` — required field `severity`, required field `description`, optional fields `file_path` / `line_range` / `suggested_fix` / `rule_id`, and `blocking` (defaults to `true` when absent per the dataclass default) |
+| `findings` | `list[dict]` | yes | Aggregated blocking findings copied from the dissenting bridge envelopes; each entry round-trips into the `Finding` dataclass at `scripts/orchestrator/envelope_parser.py` — required field `severity`, required field `description`, optional fields `file_path` / `line_range` / `suggested_fix` / `rule_id` / `confidence`, and `blocking` (defaults to `true` when absent per the dataclass default) |
 | `gate_effort_tier` | `str` | yes | The effort tier in force at the gate (`xhigh` or `max`) |
 | `step` | `str` | yes | The gate step that produced the dissent (e.g., `wave-1-quality-review`, `code-diff-review`) |
 

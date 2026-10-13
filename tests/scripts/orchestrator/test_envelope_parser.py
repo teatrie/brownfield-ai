@@ -210,6 +210,136 @@ def test_blocking_field_explicit_true_preserved(
     validator.validate(envelope)
 
 
+@pytest.mark.parametrize("confidence", [1, 7, 10])
+def test_finding_confidence_in_range_accepted(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+    confidence: int,
+) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = confidence
+    validator.validate(envelope)
+
+
+@pytest.mark.parametrize("confidence", [0, 11, 5.5, "7", True, None])
+def test_finding_confidence_invalid_rejected_by_its_own_constraint(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+    confidence: Any,
+) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = confidence
+    with pytest.raises(jsonschema.ValidationError) as excinfo:
+        validator.validate(envelope)
+    assert excinfo.value.validator in {"minimum", "maximum", "type"}
+    assert list(excinfo.value.path)[-1] == "confidence"
+
+
+def test_schema_finding_keys_match_finding_dataclass_fields(schema: dict[str, Any]) -> None:
+    schema_keys = set(schema["properties"]["feedback_to_forward"]["items"]["properties"])
+    assert schema_keys == {f.name for f in dataclasses.fields(envelope_parser.Finding)}
+
+
+def test_schema_top_level_keys_match_envelope_dataclass_fields(schema: dict[str, Any]) -> None:
+    assert set(schema["properties"]) == {f.name for f in dataclasses.fields(envelope_parser.Envelope)}
+
+
+def _parse_example(envelope: dict[str, Any]) -> envelope_parser.ParseResult:
+    """Wrap ``envelope`` in a discriminated fence and run it through ``parse_or_fallback``."""
+    output = "# Review\n\n```json envelope\n" + json.dumps(envelope) + "\n```\n"
+    return envelope_parser.parse_or_fallback(
+        output,
+        agent_id=envelope["agent_id"],
+        agent_family=envelope["agent_family"],
+        cb_state=_CBStateStub(),
+        current_wave="W1",
+    )
+
+
+def test_finding_confidence_survives_parse_and_to_dict(example_b: dict[str, Any]) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = 8
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    assert result.envelope.feedback_to_forward[0].confidence == 8
+    assert result.envelope.to_dict()["feedback_to_forward"][0]["confidence"] == 8
+
+
+def test_finding_confidence_absent_parses_to_none(example_b: dict[str, Any]) -> None:
+    result = _parse_example(example_b)
+    assert result.envelope is not None
+    assert result.envelope.feedback_to_forward[0].confidence is None
+
+
+def test_finding_integral_float_confidence_parses_to_int(example_b: dict[str, Any]) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = 8.0
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    confidence = result.envelope.feedback_to_forward[0].confidence
+    assert confidence == 8
+    assert type(confidence) is int
+
+
+def test_integral_float_round_parses_to_int(example_b: dict[str, Any]) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["round"] = 2.0
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    assert result.envelope.round == 2
+    assert type(result.envelope.round) is int
+
+
+def test_finding_confidence_above_maximum_raises_parse_error(example_b: dict[str, Any]) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = 11
+    with pytest.raises(envelope_parser.EnvelopeParseError) as excinfo:
+        _parse_example(envelope)
+    cause = excinfo.value.cause
+    assert isinstance(cause, jsonschema.ValidationError)
+    assert cause.validator == "maximum"
+    assert list(cause.path)[-1] == "confidence"
+
+
+def test_to_dict_minimal_finding_round_trips_through_schema(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"] = [{"severity": "minor", "description": "Unscored finding with no location."}]
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    body = result.envelope.to_dict()
+    validator.validate(body)
+    assert body["feedback_to_forward"] == [
+        {"severity": "minor", "description": "Unscored finding with no location.", "blocking": True},
+    ]
+    assert body["recommended_next_tier"] is None
+    assert body["halt_trigger"] is None
+
+
+def test_to_dict_keeps_set_and_omits_unset_optional_finding_fields(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+) -> None:
+    envelope = json.loads(json.dumps(example_b))
+    finding = envelope["feedback_to_forward"][0]
+    finding["confidence"] = 8
+    finding["blocking"] = False
+    del finding["suggested_fix"]
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    body = result.envelope.to_dict()
+    emitted = body["feedback_to_forward"][0]
+    assert emitted["confidence"] == 8
+    assert emitted["blocking"] is False
+    assert emitted["file_path"] == finding["file_path"]
+    assert emitted["line_range"] == finding["line_range"]
+    assert emitted["rule_id"] == finding["rule_id"]
+    assert "suggested_fix" not in emitted
+    validator.validate(body)
+
+
 # ---------------------------------------------------------------------------
 # Discriminated-fence detection tests (Req-001, B-3 R2, B-4 R2 / Req-N08, Req-N05)
 # ---------------------------------------------------------------------------

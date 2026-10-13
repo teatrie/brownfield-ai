@@ -454,7 +454,8 @@ and the per-family mapping.
 > code in the repository. Flag any change that tests alone cannot
 > catch. Raise every issue you deem relevant, even if you are unsure
 > — do not self-censor. Tag each finding with a confidence score
-> (1-10, where 10 is highest certainty)."
+> (1-10, where 10 is highest certainty), in the prose and, when you
+> emit an Output Envelope, as that finding's integer `confidence` key."
 
 **Cross-reference**: The `tdd-refactor` agent
 ([tdd-refactor.md](../../agents/tdd-refactor.md), Code Quality Checklist)

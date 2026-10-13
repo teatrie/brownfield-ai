@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import Any
@@ -190,6 +190,8 @@ class Finding:
     note: "when absent, defaults to true" — the default lives in code,
     not the schema, so envelopes that omit ``blocking`` are still
     schema-valid but treated as blocking by downstream merge logic.
+    ``confidence`` is the reviewer's optional 1-10 certainty score;
+    ``None`` means the finding is unscored.
     """
 
     severity: str
@@ -199,6 +201,12 @@ class Finding:
     suggested_fix: str | None = None
     rule_id: str | None = None
     blocking: bool = True
+    confidence: int | None = None
+
+
+#: :class:`Finding` fields that default to ``None``. The schema types each
+#: as non-nullable, so :meth:`Envelope.to_dict` omits them when unset.
+_FINDING_OPTIONAL_FIELDS: frozenset[str] = frozenset(f.name for f in fields(Finding) if f.default is None)
 
 
 @dataclass(frozen=True)
@@ -251,7 +259,7 @@ class Envelope:
             if isinstance(item, Finding):
                 coerced.append(item)
             elif isinstance(item, dict):
-                coerced.append(Finding(**item))
+                coerced.append(Finding(**_normalize_finding_dict(item)))
             else:
                 msg = f"feedback_to_forward items must be Finding or dict, got {type(item).__name__}"
                 raise TypeError(msg)
@@ -272,12 +280,14 @@ class Envelope:
         """Return the envelope as a plain dict (schema-conformant shape).
 
         Tuples of :class:`Finding` are converted back to lists of dicts
-        so the result round-trips through :func:`json.dumps`. Used by
+        so the result round-trips through :func:`json.dumps`. Unset
+        optional finding fields are omitted rather than written as
+        ``None``, because the schema types them as non-nullable. Used by
         tests to assert that no ``_audit`` key has leaked onto the
         envelope.
         """
         body = asdict(self)
-        body["feedback_to_forward"] = list(body["feedback_to_forward"])
+        body["feedback_to_forward"] = [_drop_unset_optional_keys(item) for item in body["feedback_to_forward"]]
         return body
 
 
@@ -699,6 +709,29 @@ def _load_schema() -> dict[str, Any]:
     return cached
 
 
+def _integral_float_to_int(value: Any) -> Any:
+    """Return an integral ``float`` as ``int`` and any other value unchanged.
+
+    The schema's draft 2020-12 ``integer`` type accepts ``8.0``, but the
+    envelope's integer fields are typed ``int``.
+    """
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _normalize_finding_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """Return ``item`` with an integral-float ``confidence`` cast to ``int``."""
+    if "confidence" not in item:
+        return item
+    return {**item, "confidence": _integral_float_to_int(item["confidence"])}
+
+
+def _drop_unset_optional_keys(finding: dict[str, Any]) -> dict[str, Any]:
+    """Drop the unset optional keys from an ``asdict`` finding dict."""
+    return {key: value for key, value in finding.items() if not (key in _FINDING_OPTIONAL_FIELDS and value is None)}
+
+
 def _validate(body: str) -> Envelope:
     """Parse and schema-validate an envelope body, returning an Envelope.
 
@@ -726,7 +759,7 @@ def _validate(body: str) -> Envelope:
         "agent_id": parsed["agent_id"],
         "agent_family": parsed["agent_family"],
         "agent_effort_tier": parsed["agent_effort_tier"],
-        "round": parsed["round"],
+        "round": _integral_float_to_int(parsed["round"]),
         "status": parsed["status"],
         "next_action": parsed["next_action"],
         "feedback_to_forward": parsed.get("feedback_to_forward", []),
