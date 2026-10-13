@@ -84,14 +84,14 @@ _ROUND: str = "999"
 # The live-checkout paths a root escaping ``tmp_path`` would land in, relative
 # to ``WORKSPACE``. ``_no_live_checkout_artifacts`` watches them.
 #
-# The ``tmp/`` entries are only names this module can produce, so a real review
-# at any other round writing beside the suite is not reported: the round-scoped
-# output and sanitized subject at ``_ROUND`` (``gemini-review.sh``:138,
+# The literal ``tmp/`` entries are only names this module can produce, so a real
+# review at any other round writing beside the suite is not reported: the
+# round-scoped output and sanitized subject at ``_ROUND`` (``gemini-review.sh``:138,
 # ``_review-common.sh``:141-143), the wrapper's fixed-name exit signal and
 # stderr capture (``gemini-review.sh``:121, :139), and the two test-owned
-# subjects. A concurrent review still writes those fixed names and
-# ``agent-review/``, failing whichever test straddles the write; that residual
-# is accepted.
+# subjects. A concurrent review can still write those fixed names and
+# ``agent-review/``, or delete the preflight cache (``gemini-review.sh``:348),
+# failing whichever test straddles the change; that residual is accepted.
 #
 # The dotted pattern covers the single live-checkout path the wrapper DELETES —
 # the preflight cache at ``gemini-review.sh``:348. That line's
