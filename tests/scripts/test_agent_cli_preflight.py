@@ -24,14 +24,6 @@ _AGENT_CLI_DIR: Path = WORKSPACE / "scripts" / "agent-cli"
 PREFLIGHT_SCRIPT_PATH: Path = _AGENT_CLI_DIR / "preflight.sh"
 
 
-def _join_path(*entries: str | Path) -> str:
-    """Return ``entries`` joined in order into a ``PATH`` value."""
-    return os.pathsep.join(str(entry) for entry in entries)
-
-
-_SYSTEM_PATH: str = _join_path("/usr/bin", "/bin")
-
-
 def _host_path() -> str:
     """Return the host ``PATH`` with every checkout-derived entry dropped.
 
@@ -45,8 +37,9 @@ def _host_path() -> str:
     lets a spawned script execute a checkout-managed binary, and a relative
     entry additionally resolves against the scratch CWD.
     """
+    fallback = os.pathsep.join(("/usr/bin", "/bin"))
     kept: list[str] = []
-    for entry in os.environ.get("PATH", _SYSTEM_PATH).split(os.pathsep):
+    for entry in os.environ.get("PATH", fallback).split(os.pathsep):
         if not entry:
             continue
         candidate = Path(entry)
@@ -55,7 +48,7 @@ def _host_path() -> str:
         if candidate.resolve().is_relative_to(WORKSPACE):
             continue
         kept.append(entry)
-    return os.pathsep.join(kept) or _SYSTEM_PATH
+    return os.pathsep.join(kept) or fallback
 
 
 # Absolute interpreter so callers can wipe PATH down to a controlled
@@ -63,6 +56,10 @@ def _host_path() -> str:
 # the interpreter itself cannot be one of the checkout-managed binaries
 # _host_path exists to exclude.
 _BASH: str = shutil.which("bash", path=_host_path()) or "/bin/bash"
+
+
+def _join_path(*entries: str | Path) -> str:
+    return os.pathsep.join(str(entry) for entry in entries)
 
 
 def _scratch_root(tmp_path: Path) -> Path:
@@ -960,12 +957,16 @@ class TestHostPath:
 
         assert _host_path().split(os.pathsep) == [str(outside)]
 
+    # A non-POSIX separator distinguishes an os.pathsep-built fallback from a
+    # literal ':' one, which are identical while os.pathsep is ':'.
     def test_falls_back_when_every_entry_is_dropped(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("PATH", os.pathsep.join([str(WORKSPACE / "scripts"), ".venv/bin"]))
+        monkeypatch.setattr(os, "pathsep", ";")
+        monkeypatch.setenv("PATH", ";".join([str(WORKSPACE / "scripts"), ".venv/bin"]))
 
-        assert _host_path() == _join_path("/usr/bin", "/bin")
+        assert _host_path() == "/usr/bin;/bin"
 
     def test_unset_path_uses_the_system_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(os, "pathsep", ";")
         monkeypatch.delenv("PATH", raising=False)
 
-        assert _host_path() == _join_path("/usr/bin", "/bin")
+        assert _host_path() == "/usr/bin;/bin"
