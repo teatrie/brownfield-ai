@@ -73,12 +73,7 @@ SUBJECT_ARTIFACT: str = "gemini-test-subject.txt"
 EMPTY_SUBJECT_ARTIFACT: str = "empty-subject-for-gemini-test.txt"
 _SUBJECT_TEXT: str = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n"
 
-# The round ``_default_env`` binds. Every run that does not override it on argv
-# executes there, so assertions can name tmp/gemini-review-output-<ROUND>.md and
-# observe the resolved round end to end rather than restating the env entry that
-# set it; the two ``--round`` tests pass a value that wins over it and assert on
-# the rejection instead. The value itself carries no meaning — it is pinned only
-# to be distinct from the wrapper's own default.
+# A round distinct from the wrapper's default, so artifact paths prove the env value was honored.
 _ROUND: str = "999"
 
 # The live-checkout paths a root escaping ``tmp_path`` would land in, relative
