@@ -18,7 +18,7 @@ Always select the `agent_type` with the most restricted toolset capable of compl
 
 | Task Category | Recommended Agent Type | Permissions |
 | :--- | :--- | :--- |
-| **Research / Search** | `explore` | **Read-Only**: `Read`, `Grep`, `Glob`. No execution, no network. |
+| **Research / Search** | `explore` | **Read-Only**: `Read`, `Grep`, `Glob`. No execution. |
 | **Deep Context Analysis** | `deep-researcher` | **Execution**: Script execution for API/cache management. No code modification. |
 | **Architecture / Triage** | `planner` | **Read-Only**: Analysis, blueprinting, plan generation. No code modification. |
 | **Management / Routing** | `orchestrator` | **System**: Sub-agent delegation, synthesis, PR creation. |
