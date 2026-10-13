@@ -318,8 +318,10 @@ On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only, or
 On `CODEX_ERROR` or any non-zero exit, return the alias's exit status
 and stderr, plus the contents of `tmp/codex-exit.json` if the file
 exists (read it with the Read tool). The wrapper clears that file
-before it writes any signal, so when stderr shows the wrapper never started (e.g. a
-`cli-args-to-env:` rejection), any file present is from an earlier
+before it writes any signal, so when stderr shows the wrapper stopped
+before clearing that file (e.g. a `cli-args-to-env:` rejection, or a
+`FATAL:` from the wrapper's `tmp/` checks at the top of
+`scripts/agent-cli/codex-review.sh`), any file present is from an earlier
 run — say so rather than presenting it as this run's reason.
 Do not return partial review output alongside error signals.
 
