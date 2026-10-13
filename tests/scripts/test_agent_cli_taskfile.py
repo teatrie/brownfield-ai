@@ -341,6 +341,10 @@ def test_codex_review_tasks_do_not_mask_the_wrapper_exit_status() -> None:
     when its cmd exits non-zero, so the recipe must be the bare shim
     invocation: an ``ignore_error``, a trailing ``; true`` or ``|| true``, or
     a further cmd after it would turn a failed review into a pass.
+
+    Baseline: this reads the recipe text only, so it passes whatever the
+    wrapper exits; pairs with ``test_exit_status_guard_rejects_masking_recipes``
+    and ``test_codex_review.py::TestShimPassesTheWrappersFailure``.
     """
     offenders = _exit_status_masking_offenders(_load_taskfile()["tasks"])
     assert not offenders, "Codex review aliases must not mask a failed wrapper run: " + "; ".join(offenders)

@@ -270,7 +270,12 @@ means no review was produced, and the reason is in
 `tmp/codex-exit.json`. `CODEX_UNAVAILABLE` exits 0 — it is the
 documented "bridge unavailable" outcome, not a failed review — so
 after exit 0 `tmp/codex-exit.json` may still hold the wrapper's own
-`CODEX_UNAVAILABLE` (missing token).
+`CODEX_UNAVAILABLE` (missing token). A non-zero exit that happens
+before the wrapper clears `tmp/codex-exit.json` (e.g. the CLI_ARGS
+shim rejecting an argument, Task itself, or docker in container mode)
+leaves that file missing or stale from an earlier run — if it is
+missing or older than this invocation, report the command's stderr
+instead.
 
 Triggers include, e.g.:
 

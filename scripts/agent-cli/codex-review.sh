@@ -228,16 +228,24 @@ cat "$TEMPLATE_PATH" "$SANITIZED_SUBJECT" > "$COMBINED_PROMPT"
 EXIT_CODE=0
 RETRIED=false
 
-# A zero exit that leaves -o empty produced no review, so it is reported as
-# CODEX_ERROR rather than as a success.
+# Writes CODEX_ERROR with the current EXIT_CODE and RETRIED, then exits 1.
+# Usage: write_codex_error <error_class> <stderr_excerpt>
+write_codex_error() {
+  jq -n --argjson exit_code "$EXIT_CODE" \
+        --argjson retried "$RETRIED" \
+        --arg error_class "$1" \
+        --arg stderr_excerpt "$2" \
+        '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:$error_class,stderr_excerpt:$stderr_excerpt}' \
+        > tmp/codex-exit.json
+  exit 1
+}
+
+# A zero exit that leaves -o missing, empty or whitespace-only produced no
+# review, so it is reported as CODEX_ERROR rather than as a success.
 require_review_output() {
-  if [ ! -s "${OUTPUT_FILE}" ]; then
+  if ! grep -qs '[^[:space:]]' "${OUTPUT_FILE}"; then
     echo "Error: Codex produced empty output" >&2
-    jq -n --argjson exit_code "$EXIT_CODE" \
-          --argjson retried "$RETRIED" \
-          '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"empty_output",stderr_excerpt:"codex exited without writing the review output artifact"}' \
-          > tmp/codex-exit.json
-    exit 1
+    write_codex_error empty_output "codex exited without writing the review output artifact"
   fi
 }
 
@@ -251,8 +259,10 @@ run_codex() {
   # any call can reach this line.
   if ! rm -f "${OUTPUT_FILE}"; then
     echo "FATAL: cannot clear ${OUTPUT_FILE}" >&2
-    printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"output_clear_failed","stderr_excerpt":"cannot clear the review output artifact"}\n' > tmp/codex-exit.json
-    exit 1
+    # This attempt never reached the CLI, so the wrapper's own exit status is
+    # recorded rather than an earlier attempt's.
+    EXIT_CODE=1
+    write_codex_error output_clear_failed "cannot clear the review output artifact"
   fi
 
   # --sandbox danger-full-access disables Codex's internal sandbox layer
@@ -304,22 +314,32 @@ read_stderr_excerpt() {
   fi
 }
 
+# A numeric code counts only when the characters on both sides of it are
+# non-alphanumeric or a line edge, so a digit run inside an id such as
+# abc401def or 0199b6a5-401c is not read as a code. Every code match below
+# is built from this pair.
+_CODE_PRE='(^|[^[:alnum:]])'
+_CODE_POST='([^[:alnum:]]|$)'
+
 # Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth.
-# 401/403 match only as whole digit runs, so an id containing them is not auth.
 # NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
 # excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
 # `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
 # where the codex binary was uninstalled while the preflight cache was
 # still asserting `mode: local` — same invalidation path as auth errors,
 # since both indicate the cached verdict is wrong.
-_AUTH_PATTERN='authenticat|(^|[^0-9])(401|403)([^0-9]|$)|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory'
+_AUTH_PATTERN="authenticat|${_CODE_PRE}(401|403)${_CODE_POST}|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory"
+
+# An OS-level denial carries an OS marker; a bare "permission denied" can come
+# from the remote API and is left to the other classes.
+_OS_DENIAL_PATTERN="operation not permitted|os error (1|13)${_CODE_POST}"
 
 # Writes the signal and exits 1 when STDERR_EXCERPT is an auth failure or an
 # OS-level denial; returns otherwise. Every failed attempt, first or retry,
 # goes through here so a terminal cause is never reported under a retry class.
 # Auth is checked first so its cache invalidation runs even when the message
-# also says "permission denied". A denial (e.g. a sandbox blocking a syscall)
-# fails identically on every attempt, so it is never retried.
+# also carries an OS-denial marker. An OS-level denial (e.g. a sandbox
+# blocking a syscall) is not retried.
 exit_if_terminal_failure() {
   local error_class
   if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_AUTH_PATTERN"; then
@@ -327,18 +347,12 @@ exit_if_terminal_failure() {
     # Make the next preflight re-check rather than serve the stale `local`
     # verdict that led here.
     rm -f "${PREFLIGHT_CACHE_FILE:-tmp/.codex-preflight-cache.json}" 2>/dev/null || true
-  elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "operation not permitted|permission denied|os error 1([^0-9]|$)"; then
+  elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_OS_DENIAL_PATTERN"; then
     error_class="sandbox_denied"
   else
     return 0
   fi
-  jq -n --argjson exit_code "$EXIT_CODE" \
-        --argjson retried "$RETRIED" \
-        --arg error_class "$error_class" \
-        --arg stderr_excerpt "$STDERR_EXCERPT" \
-        '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:$error_class,stderr_excerpt:$stderr_excerpt}' \
-        > tmp/codex-exit.json
-  exit 1
+  write_codex_error "$error_class" "$STDERR_EXCERPT"
 }
 
 set +e
@@ -373,7 +387,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
   _NETWORK_TOKENS='connection.*refused|network.*error|unexpected.*end.*of.*stream|socket.*hang.*up|reset.*by.*peer|broken.*pipe|tls.*handshake|dns.*lookup|no.*route.*to.*host|upstream.*connect.*error'
   IS_4XX_5XX_RETRY=0
   if [ -n "${MODEL:-}" ] && [ "${MODEL}" != "gpt-5.3-codex" ] \
-      && printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "(^|[^0-9])(429|502|503|504)([^0-9]|$)|rate.*limit|too.*many.*requests|service.*unavailable|connection.*timeout|timed.?out|i/o.*timeout|deadline.*exceeded|${_NETWORK_TOKENS}"; then
+      && printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "${_CODE_PRE}(429|502|503|504)${_CODE_POST}|rate.*limit|too.*many.*requests|service.*unavailable|connection.*timeout|timed.?out|i/o.*timeout|deadline.*exceeded|${_NETWORK_TOKENS}"; then
     IS_4XX_5XX_RETRY=1
   fi
 
@@ -382,9 +396,9 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     # branch because stderr like "504 Gateway Timeout" matches both — the
     # 5xx classification is canonically more informative than timeout.
     _status_hit="429"
-    if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "(^|[^0-9])503([^0-9]|$)|service.*unavailable"; then
+    if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "${_CODE_PRE}503${_CODE_POST}|service.*unavailable"; then
       _status_hit="503"
-    elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "(^|[^0-9])(502|504)([^0-9]|$)"; then
+    elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "${_CODE_PRE}(502|504)${_CODE_POST}"; then
       _status_hit="5xx"
     elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "connection.*timeout|timed.?out|i/o.*timeout|deadline.*exceeded"; then
       _status_hit="timeout"
@@ -403,12 +417,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     if [ "$EXIT_CODE" -ne 0 ]; then
       read_stderr_excerpt
       exit_if_terminal_failure
-      jq -n --argjson exit_code "$EXIT_CODE" \
-            --argjson retried "$RETRIED" \
-            --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"high_tier_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
-            > tmp/codex-exit.json
-      exit 1
+      write_codex_error high_tier_fallback_failed "$STDERR_EXCERPT"
     fi
     # Fallback succeeded — skip remaining error handling
     require_review_output
@@ -440,22 +449,13 @@ if [ "$EXIT_CODE" -ne 0 ]; then
       if [ "$EXIT_CODE" -ne 0 ]; then
         read_stderr_excerpt
         exit_if_terminal_failure
-        jq -n --argjson exit_code "$EXIT_CODE" \
-              --argjson retried "$RETRIED" \
-              --arg stderr_excerpt "$STDERR_EXCERPT" \
-              '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"xhigh_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
-              > tmp/codex-exit.json
-        exit 1
+        write_codex_error xhigh_fallback_failed "$STDERR_EXCERPT"
       fi
       # Fallback retry succeeded — skip the transient retry path and continue.
     else
       # Fail-closed: xhigh rejected and no opt-in. Non-zero exit, diagnostic stderr.
       echo "Error: Codex rejected EFFORT=xhigh. Set EFFORT_FALLBACK_ON_REJECT=1 to opt into a one-shot retry with EFFORT=high." >&2
-      jq -n --argjson exit_code "$EXIT_CODE" \
-            --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"xhigh_rejected",stderr_excerpt:$stderr_excerpt}' \
-            > tmp/codex-exit.json
-      exit 1
+      write_codex_error xhigh_rejected "$STDERR_EXCERPT"
     fi
   else
     # Transient — retry once after a short delay
@@ -469,12 +469,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     if [ "$EXIT_CODE" -ne 0 ]; then
       read_stderr_excerpt
       exit_if_terminal_failure
-      jq -n --argjson exit_code "$EXIT_CODE" \
-            --argjson retried "$RETRIED" \
-            --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"transient",stderr_excerpt:$stderr_excerpt}' \
-            > tmp/codex-exit.json
-      exit 1
+      write_codex_error transient "$STDERR_EXCERPT"
     fi
   fi
 fi
