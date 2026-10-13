@@ -3,7 +3,7 @@ name: tdd-red-xhigh
 description: Very-high-effort variant of tdd-red for very deep integration test design with edge cases and spec traceability — see docs/effort_tiers.md
 model_tier: medium
 effort: xhigh
-tools: [Read, Edit, Bash]
+tools: [Read, Write, Edit, Bash]
 ---
 <!-- Body must stay in sync with tdd-red.md. Frontmatter diverges intentionally. -->
 **CRITICAL CONSTRAINT: Artifacts & Logs**

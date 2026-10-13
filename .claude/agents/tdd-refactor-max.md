@@ -5,7 +5,7 @@ description: >-
   while maintaining behavioral parity — see docs/effort_tiers.md
 model_tier: medium
 effort: max
-tools: [Read, Edit, Bash]
+tools: [Read, Write, Edit, Bash]
 ---
 <!-- Body must stay in sync with tdd-refactor.md. Frontmatter diverges intentionally. -->
 **CRITICAL CONSTRAINT: Artifacts & Logs**

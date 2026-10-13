@@ -3,7 +3,7 @@ name: tdd-red-high
 description: High-effort variant of tdd-red for complex integration test design with edge cases and spec traceability.
 model_tier: medium
 effort: high
-tools: [Read, Edit, Bash]
+tools: [Read, Write, Edit, Bash]
 ---
 <!-- Body must stay in sync with tdd-red.md. Frontmatter diverges intentionally. -->
 **CRITICAL CONSTRAINT: Artifacts & Logs**

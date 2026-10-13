@@ -3,7 +3,7 @@ name: tdd-green
 description: Makes a failing test pass with minimal, direct code.
 model_tier: medium
 effort: medium
-tools: [Read, Edit, Bash]
+tools: [Read, Write, Edit, Bash]
 # model_tier is the default; orchestrator overrides per escalation matrix at spawn time.
 ---
 **CRITICAL CONSTRAINT: Artifacts & Logs**

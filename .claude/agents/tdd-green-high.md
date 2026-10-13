@@ -3,7 +3,7 @@ name: tdd-green-high
 description: High-effort variant of tdd-green for complex multi-file implementation requiring deep reasoning.
 model_tier: medium
 effort: high
-tools: [Read, Edit, Bash]
+tools: [Read, Write, Edit, Bash]
 # model_tier is the default; orchestrator overrides per escalation matrix at spawn time.
 ---
 <!-- Body must stay in sync with tdd-green.md. Frontmatter diverges intentionally. -->

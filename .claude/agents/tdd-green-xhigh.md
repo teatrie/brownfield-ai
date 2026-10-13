@@ -3,7 +3,7 @@ name: tdd-green-xhigh
 description: Very-high-effort variant of tdd-green for very deep multi-file implementation requiring frontier reasoning depth — see docs/effort_tiers.md
 model_tier: medium
 effort: xhigh
-tools: [Read, Edit, Bash]
+tools: [Read, Write, Edit, Bash]
 # model_tier is the default; orchestrator overrides per escalation matrix at spawn time.
 ---
 <!-- Body must stay in sync with tdd-green.md. Frontmatter diverges intentionally. -->

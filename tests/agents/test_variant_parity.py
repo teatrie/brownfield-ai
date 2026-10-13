@@ -16,10 +16,19 @@ author explicitly mirrors them, so the test fails loudly when the base
 moves and the variants stay still — exactly the signal the sync comment
 (`<!-- Body must stay in sync with <base>.md ... -->`) is meant to
 generate.
+
+The module also guards every agent's declared `tools:` list against the
+docs that describe it: no agent may declare `SendMessage` (CLAUDE.md
+Principle 18 rests on that) or `Search` (not a Claude Code tool), and the
+union of all declared tools must stay within the "restricted to subsets
+of ..." clause that Principle 18 and `docs/delegation_protocol.md` §3 both
+state. The guards live here so the `.claude/agents/` test routing runs
+them on every agent edit.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +37,11 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
+CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
+DELEGATION_PROTOCOL = REPO_ROOT / "docs" / "delegation_protocol.md"
+
+TOOLS_CLAUSE_MARKER = "restricted to subsets of "
+TOOL_NAME_PATTERN = re.compile(r"[A-Z][A-Za-z]*")
 
 VARIANT_SUFFIXES = ("-high", "-xhigh", "-max")
 VARIANT_EFFORT_BY_SUFFIX = {
@@ -139,6 +153,48 @@ def _discover_variants() -> list[Path]:
     return out
 
 
+def _declared_tools() -> dict[str, list[str]]:
+    """Map each `.claude/agents/*.md` file name to its frontmatter `tools:` list.
+
+    Raises:
+        ValueError: if an agent omits `tools:` or does not declare it as a list
+            of strings. An agent without `tools:` inherits every tool, so it is
+            rejected rather than read as empty.
+    """
+    out: dict[str, list[str]] = {}
+    for path in sorted(AGENTS_DIR.glob("*.md")):
+        meta, _ = _split_frontmatter(path.read_text())
+        tools = meta.get("tools")
+        if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+            raise ValueError(f"{path.name}: `tools:` must be a list of tool names, got {tools!r}")
+        out[path.name] = tools
+    return out
+
+
+def _documented_tools(doc_path: Path) -> frozenset[str]:
+    """Return the tool names listed in `doc_path`'s "restricted to subsets of ..." clause.
+
+    The clause runs from the marker to the next `.` and separates names with
+    commas and/or "and".
+
+    Raises:
+        ValueError: if the marker does not occur exactly once, has no
+            sentence end, or yields a token that is not a bare tool name.
+    """
+    text = doc_path.read_text()
+    if text.count(TOOLS_CLAUSE_MARKER) != 1:
+        raise ValueError(f"{doc_path.name}: expected exactly one {TOOLS_CLAUSE_MARKER!r} clause")
+    remainder = text.split(TOOLS_CLAUSE_MARKER, 1)[1]
+    sentence_end = remainder.find(".")
+    if sentence_end == -1:
+        raise ValueError(f"{doc_path.name}: {TOOLS_CLAUSE_MARKER!r} clause has no sentence end")
+    tokens = re.split(r",\s*(?:and\s+)?|\s+and\s+", remainder[:sentence_end].strip())
+    bad = [t for t in tokens if not TOOL_NAME_PATTERN.fullmatch(t)]
+    if bad:
+        raise ValueError(f"{doc_path.name}: unparseable tool names in clause: {bad!r}")
+    return frozenset(tokens)
+
+
 @pytest.fixture(scope="module")
 def variant_paths() -> list[Path]:
     """Discover all in-scope variant files under `.claude/agents/`."""
@@ -219,3 +275,27 @@ def test_variant_body_matches_base_modulo_sync_comment(variant_paths: list[Path]
         if stripped != b_body:
             failures.append(f"{variant.name}: body diverges from base after stripping sync comment")
     assert not failures, "variant body drift:\n  " + "\n  ".join(failures)
+
+
+@pytest.mark.parametrize("forbidden_tool", ["SendMessage", "Search"])
+def test_no_agent_declares_forbidden_tool(forbidden_tool: str) -> None:
+    """No agent may declare `SendMessage` (Principle 18) or `Search` (not a Claude Code tool)."""
+    offenders = sorted(name for name, tools in _declared_tools().items() if forbidden_tool in tools)
+    assert not offenders, f"agents declaring {forbidden_tool!r}: {offenders}"
+
+
+def test_declared_tools_are_documented_in_principle_18() -> None:
+    """Every tool any agent declares must appear in CLAUDE.md Principle 18's tool clause."""
+    declared = {tool for tools in _declared_tools().values() for tool in tools}
+    undocumented = declared - _documented_tools(CLAUDE_MD)
+    assert not undocumented, f"agent tools missing from CLAUDE.md {TOOLS_CLAUSE_MARKER!r} clause: {sorted(undocumented)}"
+
+
+def test_principle_18_tool_clause_matches_delegation_protocol() -> None:
+    """The CLAUDE.md and `docs/delegation_protocol.md` tool clauses must name the same tools."""
+    claude_tools = _documented_tools(CLAUDE_MD)
+    protocol_tools = _documented_tools(DELEGATION_PROTOCOL)
+    assert claude_tools == protocol_tools, (
+        f"tool clause drift: CLAUDE.md only {sorted(claude_tools - protocol_tools)}, "
+        f"delegation_protocol.md only {sorted(protocol_tools - claude_tools)}"
+    )

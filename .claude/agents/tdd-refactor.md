@@ -5,7 +5,7 @@ description: >-
   readability, and documentation quality while maintaining behavioral parity.
 model_tier: medium
 effort: medium
-tools: [Read, Edit, Bash]
+tools: [Read, Write, Edit, Bash]
 ---
 **CRITICAL CONSTRAINT: Artifacts & Logs**
 NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections, or terminal outputs. ALWAYS route these strictly to the workspace-relative `tmp/` directory (e.g., `> tmp/output.log`). Using `/tmp/` causes permission blocks that break the autopilot execution loop.
