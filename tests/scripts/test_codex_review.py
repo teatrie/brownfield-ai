@@ -241,8 +241,9 @@ def _run_review_via_task_alias(
 ) -> subprocess.CompletedProcess[str]:
     """Execute the command ``agent:review:codex:local`` runs, minus Task itself.
 
-    The alias execs ``cli-args-to-env.sh codex-review.sh {{.CLI_ARGS}}``, so
-    its exit status is whatever that pair returns; ``cli_args`` stands in for
+    The alias runs ``cli-args-to-env.sh codex-review.sh {{.CLI_ARGS}}`` as its
+    only cmd, so the alias fails when that pair exits non-zero; Task reports
+    its own code for a failed cmd, not the pair's. ``cli_args`` stands in for
     the ``KEY=value`` tokens Task would expand there.
     """
     return subprocess.run(
@@ -257,7 +258,11 @@ def _run_review_via_task_alias(
 
 
 def _isolated_env(tmp_path: Path, env_overrides: dict[str, str]) -> dict[str, str]:
-    """Build the wrapper's whole environment from ``env_overrides`` alone."""
+    """Build the wrapper's environment without inheriting the parent process environment.
+
+    Seeds ``PATH``, a throwaway ``HOME`` and a ``tmp_path``-scoped
+    ``PREFLIGHT_CACHE_FILE``, then overlays ``env_overrides``.
+    """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     env: dict[str, str] = {
@@ -1431,6 +1436,17 @@ class TestHighTier429_503Fallback:
             f"the auth path is terminal, so the single call it spent must be reported as unretried; got {exit_json!r}"
         )
 
+    def test_401_inside_an_id_is_not_auth(self, tmp_path: Path) -> None:
+        """A 401 digit run inside a longer id is not a status code; the fallback token decides."""
+        result, records = self._run_sequence(
+            tmp_path,
+            exit_codes=[1, 0],
+            stderr_texts=["request id: 7f3a14015c2e request failed: connection timeout", ""],
+        )
+        assert result.returncode == 0, result.stderr
+        assert len(records) == 2, "the connection timeout must route to the HIGH-tier fallback"
+        assert _read_exit_json(tmp_path).get("error_class") != "auth"
+
     def test_auth_error_invalidates_preflight_cache(self, tmp_path: Path) -> None:
         """Auth failure at execution time MUST delete the preflight cache."""
         cache_file = tmp_path / "codex-preflight-cache.json"
@@ -1475,7 +1491,9 @@ class TestSandboxDenialIsTerminal:
         [
             ("Error: sandbox_apply: Operation not permitted (os error 1)", {}),
             ("Error: failed to open session file: Permission denied (os error 13)", {}),
-            ("Error: sandbox_apply: Operation not permitted (os error 1)", {"MODEL": "gpt-5.4"}),
+            # Carries a HIGH-tier fallback token, so it pins the denial check
+            # ahead of the fallback rather than only ahead of the transient retry.
+            ("Error: Operation not permitted (os error 1): connection timeout", {"MODEL": "gpt-5.4"}),
         ],
         ids=["os_error_1", "permission_denied", "os_error_1_with_high_tier_model"],
     )
@@ -1638,12 +1656,13 @@ class TestEmptyOutputIsAFailedReview:
         assert exit_json.get("retried") is False
 
 
-class TestTaskAliasPropagatesTheWrappersExitStatus:
+class TestTaskAliasFailsWhenTheWrapperFails:
     """``agent:review:codex:local`` must fail when the wrapper fails.
 
-    A caller gating on the alias sees only the status of
-    ``cli-args-to-env.sh codex-review.sh``; anything between the two that
-    swallowed it would score a missing review as a pass.
+    The alias fails when ``cli-args-to-env.sh codex-review.sh`` exits
+    non-zero, so the pair itself must exit non-zero on a failed review; a
+    shim that swallowed the wrapper's status would score a missing review
+    as a pass.
     """
 
     _CLI_ARGS: tuple[str, ...] = ("ROUND=1", "EFFORT=high", "REVIEW_TYPE=diff", "DIFF_FILE=tmp/qa-diff.txt")

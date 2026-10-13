@@ -134,7 +134,7 @@ HIGH-tier invocation (EFFORT in {high,xhigh,max} or MODEL override = HIGH)
           │     │
           │     ├─ success → done (NOTICE on stderr); empty output is a CODEX_ERROR
           │     └─ failure → CODEX_ERROR (e.g. high_tier_fallback_failed;
-          │                  see .claude/agents/codex-reviewer.md)
+          │                  class names in scripts/agent-cli/codex-review.sh)
           │
           ├─ Gemini (wrapper-level): gemini-3.1-pro-<e> → gemini-3-flash-high
           │     │

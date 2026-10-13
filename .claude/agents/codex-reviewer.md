@@ -278,8 +278,8 @@ Triggers include, e.g.:
   — no retry and no downgrade
 - OS-level denial (e.g. `Operation not permitted`): fails the same
   way on every attempt, so it is not retried
-- Transient failure: timeout, non-zero exit without auth message
-  — retry once, then emit `CODEX_ERROR`
+- Transient failure: timeout, non-zero exit without an auth or
+  OS-denial message — retry once, then emit `CODEX_ERROR`
 - CLI crash: non-zero exit with unrecognized error — classify as
   transient, retry once
 - Empty output: the CLI exited 0 but wrote no review

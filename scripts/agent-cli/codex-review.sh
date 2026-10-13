@@ -304,14 +304,15 @@ read_stderr_excerpt() {
   fi
 }
 
-# Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth
+# Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth.
+# 401/403 match only as whole digit runs, so an id containing them is not auth.
 # NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
 # excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
 # `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
 # where the codex binary was uninstalled while the preflight cache was
 # still asserting `mode: local` — same invalidation path as auth errors,
 # since both indicate the cached verdict is wrong.
-_AUTH_PATTERN='authenticat|401|403|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory'
+_AUTH_PATTERN='authenticat|(^|[^0-9])(401|403)([^0-9]|$)|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory'
 
 # Writes the signal and exits 1 when STDERR_EXCERPT is an auth failure or an
 # OS-level denial; returns otherwise. Every failed attempt, first or retry,
@@ -403,8 +404,9 @@ if [ "$EXIT_CODE" -ne 0 ]; then
       read_stderr_excerpt
       exit_if_terminal_failure
       jq -n --argjson exit_code "$EXIT_CODE" \
+            --argjson retried "$RETRIED" \
             --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"high_tier_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
+            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"high_tier_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
             > tmp/codex-exit.json
       exit 1
     fi
@@ -439,8 +441,9 @@ if [ "$EXIT_CODE" -ne 0 ]; then
         read_stderr_excerpt
         exit_if_terminal_failure
         jq -n --argjson exit_code "$EXIT_CODE" \
+              --argjson retried "$RETRIED" \
               --arg stderr_excerpt "$STDERR_EXCERPT" \
-              '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"xhigh_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
+              '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"xhigh_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
               > tmp/codex-exit.json
         exit 1
       fi
@@ -467,8 +470,9 @@ if [ "$EXIT_CODE" -ne 0 ]; then
       read_stderr_excerpt
       exit_if_terminal_failure
       jq -n --argjson exit_code "$EXIT_CODE" \
+            --argjson retried "$RETRIED" \
             --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"transient",stderr_excerpt:$stderr_excerpt}' \
+            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:"transient",stderr_excerpt:$stderr_excerpt}' \
             > tmp/codex-exit.json
       exit 1
     fi

@@ -25,9 +25,11 @@ Invariants preserved from the previous architecture:
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 WORKSPACE = Path(__file__).resolve().parents[2]
@@ -290,26 +292,78 @@ def test_codex_review_uses_container_wrapper() -> None:
     )
 
 
+CODEX_REVIEW_ALIAS_COMMANDS: dict[str, str] = {
+    task_name: f"{SHIM_PREFIX} {REVIEW_TASK_TARGETS[task_name]} " + "{{.CLI_ARGS}}" for task_name in ("review:codex", "review:codex:local")
+}
+
+CODEX_REVIEW_ALIAS_ALLOWED_KEYS: dict[str, frozenset[str]] = {
+    "review:codex": frozenset({"desc", "cmds"}),
+    "review:codex:local": frozenset({"desc", "env", "cmds"}),
+}
+
+
+def _exit_status_masking_offenders(tasks: dict) -> list[str]:
+    """Return why each codex review alias in ``tasks`` could pass on a failed wrapper run.
+
+    Each alias must run exactly one plain-string cmd equal, after whitespace
+    normalisation, to its shim invocation. A mapping cmd is rejected
+    outright: that is the form that carries a cmd-level ``ignore_error``.
+    Task-level keys are allowlisted: any key that could skip the cmd or mask its status is rejected.
+    """
+    offenders: list[str] = []
+    for task_name, expected in CODEX_REVIEW_ALIAS_COMMANDS.items():
+        task_body = tasks.get(task_name)
+        if not isinstance(task_body, dict):
+            offenders.append(f"{task_name} is not defined")
+            continue
+        unexpected_keys = sorted(set(task_body) - CODEX_REVIEW_ALIAS_ALLOWED_KEYS[task_name])
+        if unexpected_keys:
+            offenders.append(f"{task_name} sets keys outside its allowlist: {unexpected_keys}")
+        cmds = task_body.get("cmds")
+        if not isinstance(cmds, list) or len(cmds) != 1:
+            offenders.append(f"{task_name} must have exactly one cmd, got {cmds!r}")
+            continue
+        cmd = cmds[0]
+        if not isinstance(cmd, str):
+            offenders.append(f"{task_name} cmd must be a plain string, got {cmd!r}")
+            continue
+        normalised = re.sub(r"\s+", " ", cmd).strip()
+        if normalised != expected:
+            offenders.append(f"{task_name} cmd must be exactly {expected!r}, got {normalised!r}")
+    return offenders
+
+
 def test_codex_review_tasks_do_not_mask_the_wrapper_exit_status() -> None:
-    """The codex review aliases must exit with the wrapper's own status.
+    """The codex review aliases must fail whenever the wrapper fails.
 
     The wrapper exits non-zero whenever no review was produced, and callers
-    gate on the alias's status; an ``ignore_error`` or an ``||`` fallback in
-    the recipe would turn every failed review into a pass.
+    gate on the alias's status. Task fails the alias (with its own exit code)
+    when its cmd exits non-zero, so the recipe must be the bare shim
+    invocation: an ``ignore_error``, a trailing ``; true`` or ``|| true``, or
+    a further cmd after it would turn a failed review into a pass.
     """
-    data = _load_taskfile()
-    offenders: list[str] = []
-    for task_name in ("review:codex", "review:codex:local"):
-        task_body = data["tasks"].get(task_name)
-        assert isinstance(task_body, dict), f"{task_name} must be defined"
-        if task_body.get("ignore_error"):
-            offenders.append(f"{task_name} sets ignore_error")
-        for cmd in task_body.get("cmds", []):
-            if isinstance(cmd, dict) and cmd.get("ignore_error"):
-                offenders.append(f"{task_name} has a cmd with ignore_error: {cmd!r}")
-        if "||" in _joined_cmds(task_name):
-            offenders.append(f"{task_name} cmds contain an || fallback: {_joined_cmds(task_name)!r}")
-    assert not offenders, "Codex review aliases must not mask the wrapper's exit status: " + "; ".join(offenders)
+    offenders = _exit_status_masking_offenders(_load_taskfile()["tasks"])
+    assert not offenders, "Codex review aliases must not mask a failed wrapper run: " + "; ".join(offenders)
+
+
+@pytest.mark.parametrize(
+    ("task_name", "mutation"),
+    [
+        ("review:codex", {"cmds": [CODEX_REVIEW_ALIAS_COMMANDS["review:codex"] + "; true"]}),
+        ("review:codex:local", {"cmds": [CODEX_REVIEW_ALIAS_COMMANDS["review:codex:local"] + " || true"]}),
+        ("review:codex:local", {"cmds": [CODEX_REVIEW_ALIAS_COMMANDS["review:codex:local"], "true"]}),
+        ("review:codex", {"cmds": [{"cmd": CODEX_REVIEW_ALIAS_COMMANDS["review:codex"], "ignore_error": True}]}),
+        ("review:codex", {"cmds": [CODEX_REVIEW_ALIAS_COMMANDS["review:codex"]], "ignore_error": True}),
+        ("review:codex:local", {"status": ["true"]}),
+        ("review:codex", {"platforms": ["windows"]}),
+    ],
+    ids=["semicolon_true", "or_true", "second_cmd", "cmd_ignore_error", "task_ignore_error", "task_status", "task_platforms"],
+)
+def test_exit_status_guard_rejects_masking_recipes(task_name: str, mutation: dict) -> None:
+    """The guard above must fail on each recipe shape that would mask a failed run."""
+    tasks = copy.deepcopy(_load_taskfile()["tasks"])
+    tasks[task_name].update(mutation)
+    assert _exit_status_masking_offenders(tasks), f"guard accepted a masking recipe for {task_name}: {mutation!r}"
 
 
 def test_local_tasks_preserve_execution_context_env() -> None:
