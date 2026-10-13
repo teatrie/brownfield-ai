@@ -88,9 +88,9 @@ _ROUND: str = "999"
 # review at any other round writing beside the suite is not reported: the
 # round-scoped output and sanitized subject at ``_ROUND`` (``gemini-review.sh``:138,
 # ``_review-common.sh``:141-143), the wrapper's fixed-name exit signal and
-# stderr capture (``gemini-review.sh``:121, :139), and the two test-owned
-# subjects. A concurrent review can still write those fixed names and
-# ``agent-review/``, or delete the preflight cache (``gemini-review.sh``:348),
+# stderr capture (``gemini-exit.json``, ``gemini-review-err.txt``), and the two
+# test-owned subjects. A concurrent review or preflight can still change the
+# fixed-name artifacts, the dotted preflight-cache entries and ``agent-review/``,
 # failing whichever test straddles the change; that residual is accepted.
 #
 # The dotted pattern covers the single live-checkout path the wrapper DELETES —
