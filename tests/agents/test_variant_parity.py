@@ -1,4 +1,4 @@
-"""Parity-pin contract for `.claude/agents/<name>-{high,xhigh,max}.md` variants.
+"""Parity-pin contract for `.claude/agents/<name>-{high,xhigh,max}.md` variants, plus agent-wide definition guards.
 
 For every effort-tier variant under `.claude/agents/`, this module asserts
 that the variant preserves byte-parity with its base agent's body and
@@ -9,13 +9,18 @@ silent regressions during prior diff-review runs (see the wrong-diff
 incident in the tri-family review of TODO-0092 follow-ups). This test
 catches those classes of bugs at static-analysis time.
 
-The contract is deliberately narrow: it pins only the invariants that
-make a variant *a variant of its base*, not the contents of either file.
+The parity contract is deliberately narrow: it pins only the invariants
+that make a variant *a variant of its base*, not the contents of either file.
 Edits to a base agent's body propagate to its variants only when an
 author explicitly mirrors them, so the test fails loudly when the base
 moves and the variants stay still — exactly the signal the sync comment
 (`<!-- Body must stay in sync with <base>.md ... -->`) is meant to
 generate.
+
+The module also holds agent-wide definition guards that cover every
+`.claude/agents/*.md`, bases, variants and excluded families alike — for
+example, an agent whose `tools:` hold none of Bash, Write or Edit must not
+carry the Artifacts & Logs block.
 """
 
 from __future__ import annotations
