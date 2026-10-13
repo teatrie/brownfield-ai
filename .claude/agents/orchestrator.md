@@ -18,7 +18,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 - **Scope**: Delegation, execution management, and synthesis.
 - **Restriction**: Do **NOT** write application code directly (e.g., using `create` or `edit` tools for application code). Delegate all implementation and testing to sub-agents. Have sub-agents use `Bash` for testing/linting.
-- **Hygiene Restriction (<anti-hallucination>)**: NEVER let sub-agents write shell redirections or temporary execution logs (e.g. `> output.log`, `> result.json`) to the root directory. You MUST explicitly instruct sub-agents to place all temporary files inside the `tmp/` subdirectory (e.g. `> tmp/output.log`).
+- **Hygiene Restriction (<anti-hallucination>)**: NEVER let sub-agents write shell redirections or temporary execution logs (e.g. `> output.log`, `> result.json`) to the root directory. You MUST explicitly instruct sub-agents to place all temporary files inside the `tmp/` subdirectory (e.g. `tmp/output.log`), written with the Write tool or a command's own output flag, since shell redirection is hook-denied.
 - **Allowed Actions**: Manage `plan.md` and session artifacts.
 - **Delegation**: Monitor progress, unblock sub-agents, and apply the **Verification Protocol**. Use `general-purpose` or specialized agents (e.g., `tdd-green`) to apply code changes.
 
