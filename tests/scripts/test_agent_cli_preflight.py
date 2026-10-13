@@ -970,3 +970,15 @@ class TestHostPath:
         monkeypatch.delenv("PATH", raising=False)
 
         assert _host_path() == "/usr/bin;/bin"
+
+
+# ── _join_path() harness helper ──────────────────────────────────────
+
+
+class TestJoinPath:
+    """PATH assembly, observed under a non-POSIX separator so ':' cannot pass."""
+
+    def test_joins_entries_in_order_with_os_pathsep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(os, "pathsep", ";")
+
+        assert _join_path(Path("/usr/bin"), "/bin") == "/usr/bin;/bin"
