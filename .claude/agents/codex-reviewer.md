@@ -228,7 +228,7 @@ NOTICE: <model> <effort> returned <status>; falling back to gpt-5.3-codex high (
 ```
 
 Auth-class failures (`401`, `403`, "invalid api key", etc.) are
-non-retriable: the `ERROR_CLASS="auth"` branch in
+non-retriable: the `exit_if_terminal_failure` helper in
 `scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with
 `error_class=auth` and neither retries nor downgrades the model.
 
