@@ -73,12 +73,23 @@ SUBJECT_ARTIFACT: str = "gemini-test-subject.txt"
 EMPTY_SUBJECT_ARTIFACT: str = "empty-subject-for-gemini-test.txt"
 _SUBJECT_TEXT: str = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n"
 
-# The live-checkout paths a root escaping ``tmp_path`` would land in, as globs
-# relative to ``WORKSPACE``. ``_no_live_checkout_artifacts`` watches them.
+# A round distinct from the wrapper's default, so artifact paths prove the env value was honored.
+_ROUND: str = "999"
+
+# The live-checkout paths a root escaping ``tmp_path`` would land in, relative
+# to ``WORKSPACE``. ``_no_live_checkout_artifacts`` watches them.
 #
-# The dotted pattern is separate because a leading dot is not matched by the
-# undotted one, and the single live-checkout path the wrapper DELETES — the
-# preflight cache at ``gemini-review.sh``:348 — carries one. That line's
+# The literal ``tmp/`` entries are only names this module can produce, so
+# another round's round-scoped writes are not reported: the round-scoped output
+# and sanitized subject at ``_ROUND`` (``gemini-review.sh``:138,
+# ``_review-common.sh``:141-143), the wrapper's fixed-name exit signal and
+# stderr capture (``gemini-exit.json``, ``gemini-review-err.txt``), and the two
+# test-owned subjects. A concurrent review or preflight can still change the
+# fixed-name artifacts, the dotted preflight-cache entries and ``agent-review/``,
+# failing whichever test straddles the change; that residual is accepted.
+#
+# The dotted pattern covers the single live-checkout path the wrapper DELETES —
+# the preflight cache at ``gemini-review.sh``:348. That line's
 # ``PREFLIGHT_CACHE_FILE`` override can name any path at all and is therefore
 # outside the watch set by construction; the two tests that set it point it into
 # their own ``tmp_path``, so what is watched is the default the rest of the
@@ -92,22 +103,16 @@ _SUBJECT_TEXT: str = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-a\n+b\n"
 # concurrent operator or sibling-bridge write, which the fixture's message
 # already declines to attribute. The pattern is non-recursive, so the wrapper's
 # own ``mkdir -p`` creating an empty ``agent-review/`` contributes no entry.
-# The empty subject is test-owned rather than wrapper-written and shares a
-# prefix with neither ``gemini-`` pattern, so it is named outright.
 _LIVE_ARTIFACT_GLOBS: tuple[str, ...] = (
-    "tmp/gemini-*",
+    f"tmp/gemini-review-output-{_ROUND}.md",
+    f"tmp/gemini-subject-sanitized-{_ROUND}.txt",
+    "tmp/gemini-exit.json",
+    "tmp/gemini-review-err.txt",
     "tmp/.gemini-*",
+    f"tmp/{SUBJECT_ARTIFACT}",
     f"tmp/{EMPTY_SUBJECT_ARTIFACT}",
     "agent-review/*",
 )
-
-# The round ``_default_env`` binds. Every run that does not override it on argv
-# executes there, so assertions can name tmp/gemini-review-output-<ROUND>.md and
-# observe the resolved round end to end rather than restating the env entry that
-# set it; the two ``--round`` tests pass a value that wins over it and assert on
-# the rejection instead. The value itself carries no meaning — it is pinned only
-# to be distinct from the wrapper's own default.
-_ROUND: str = "999"
 
 
 @pytest.fixture(autouse=True)
@@ -2089,11 +2094,11 @@ class TestLiveCheckoutArtifactGuard:
     def test_the_watch_set_covers_every_tmp_path_the_wrappers_name(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Every ``tmp/`` path read out of the wrapper sources is watched.
 
-        This is the mechanical half of the guard: the watch set is a handful of
-        globs, and a wrapper that starts writing a new ``tmp/`` name would
-        otherwise leave the blast radius quietly narrower than the prose claims.
-        The paths are created and put through ``_live_artifact_snapshot`` rather
-        than matched against the patterns by hand, so the assertion runs the
+        This is the mechanical half of the guard: the watch set names the
+        wrapper's ``tmp/`` artifacts one by one, so a wrapper that starts writing
+        a new ``tmp/`` name would otherwise leave it unwatched with nothing
+        failing. The paths are created and put through ``_live_artifact_snapshot``
+        rather than matched against the entries by hand, so the assertion runs the
         same matcher the fixture does.
 
         The derivation is pinned first, for the reason
@@ -2114,9 +2119,7 @@ class TestLiveCheckoutArtifactGuard:
         """Both subject names this module writes are watched.
 
         Neither is wrapper-named, so the mechanical guard above does not reach
-        them. ``SUBJECT_ARTIFACT`` happens to share the ``gemini-`` prefix; the
-        empty one shares a prefix with no wrapper path at all and is the reason
-        the watch set carries a literal name alongside its globs.
+        them and each needs its own entry in the watch set.
         """
         live_tmp = self._relocate_workspace(tmp_path, monkeypatch)
         (live_tmp / SUBJECT_ARTIFACT).write_text(_SUBJECT_TEXT)
@@ -2124,10 +2127,10 @@ class TestLiveCheckoutArtifactGuard:
         assert set(_live_artifact_snapshot()) == {f"tmp/{SUBJECT_ARTIFACT}", f"tmp/{EMPTY_SUBJECT_ARTIFACT}"}
 
     def test_the_watch_set_ignores_a_tmp_file_neither_wrapper_names(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A ``tmp/`` file outside the watched prefixes is not reported.
+        """A ``tmp/`` file outside the watched names is not reported.
 
         Every other test here relocates ``WORKSPACE`` onto a directory holding
-        only its own files, so widening a glob to ``tmp/*`` satisfies all of
+        only its own files, so widening the watch set to ``tmp/*`` satisfies all of
         them. This is the case that separates the watched set from the whole of
         ``tmp/``: the real checkout's ``tmp/`` also carries junit XML, pytest
         caches and the other bridges' review outputs, and reporting a concurrent
@@ -2138,14 +2141,23 @@ class TestLiveCheckoutArtifactGuard:
         (live_tmp / "codex-review-output-1.md").write_text("another bridge's output\n")
         assert _live_artifact_snapshot() == {}
 
+    def test_the_watch_set_ignores_another_rounds_artifacts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        live_tmp = self._relocate_workspace(tmp_path, monkeypatch)
+        for round_ in (_ROUND, "1", str(int(_ROUND) + 1)):
+            (live_tmp / f"gemini-review-output-{round_}.md").write_text("review output\n")
+            (live_tmp / f"gemini-subject-sanitized-{round_}.txt").write_text(_SUBJECT_TEXT)
+        assert set(_live_artifact_snapshot()) == {
+            f"tmp/gemini-review-output-{_ROUND}.md",
+            f"tmp/gemini-subject-sanitized-{_ROUND}.txt",
+        }
+
     def test_the_watch_set_spans_both_directories_and_keys_on_the_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """``agent-review/`` is watched too, and a shared basename stays two entries.
 
         ``wrapper_tmp_paths`` reads ``tmp/`` names only, so the container branch's
         output directory is outside the mechanical guard above and is named here
-        instead. The routed name carries no ``gemini-`` prefix — the wrapper
-        builds it from ``${WORKSPACE}`` first — which is what a watch pattern
-        borrowed from the ``tmp/`` side would miss.
+        instead. The routed name starts with ``${WORKSPACE}`` and ends with the
+        session id, so no name watched on the ``tmp/`` side would match it.
         """
         live_tmp = self._relocate_workspace(tmp_path, monkeypatch)
         agent_review = tmp_path / "agent-review"
@@ -2199,14 +2211,21 @@ class TestLiveCheckoutArtifactGuard:
     def test_the_snapshot_tolerates_an_entry_it_cannot_stat(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """An unstattable entry is recorded absent instead of raising out of teardown.
 
-        A dangling symlink reproduces what a delete landing between the glob and
-        the ``stat`` produces. Letting that escape would replace the fixture's
-        named assertion with an error attributed to teardown, on a test that may
-        have done nothing wrong.
+        A dangling symlink at a watched name reproduces what a delete landing
+        between the glob and the ``stat`` produces. Letting that escape would
+        replace the fixture's named assertion with an error attributed to
+        teardown, on a test that may have done nothing wrong.
+
+        The watch set's globs are checked to yield the symlink first; otherwise
+        the entry would be missing from the snapshot without the ``stat`` ever
+        failing.
         """
         live_tmp = self._relocate_workspace(tmp_path, monkeypatch)
         (live_tmp / "gemini-review-err.txt").write_text("kept\n")
-        (live_tmp / "gemini-dangling.md").symlink_to(tmp_path / "no_such_target")
+        dangling = live_tmp / f"gemini-review-output-{_ROUND}.md"
+        dangling.symlink_to(tmp_path / "no_such_target")
+        globbed = [entry for pattern in _LIVE_ARTIFACT_GLOBS for entry in tmp_path.glob(pattern)]
+        assert dangling in globbed, "the watch set does not yield the dangling entry, so its stat never runs"
         assert set(_live_artifact_snapshot()) == {"tmp/gemini-review-err.txt"}
 
     def test_the_fixture_is_autouse(self) -> None:
