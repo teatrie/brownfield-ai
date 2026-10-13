@@ -12,6 +12,7 @@
 #     reviewer template + DIFF_FILE prompt on stdin as the sole subject.
 #   Output written to tmp/codex-review-output-<ROUND>.md.
 #   Signals written to tmp/codex-exit.json on unavailability or error.
+#   Exit status is non-zero on every CODEX_ERROR; CODEX_UNAVAILABLE exits 0.
 
 set -euo pipefail
 
@@ -225,6 +226,28 @@ cat "$TEMPLATE_PATH" "$SANITIZED_SUBJECT" > "$COMBINED_PROMPT"
 # Invoke Codex CLI — output captured to tmp files, never piped into eval.
 # ---------------------------------------------------------------------------
 EXIT_CODE=0
+RETRIED=false
+
+# Writes CODEX_ERROR with the current EXIT_CODE and RETRIED, then exits 1.
+# Usage: write_codex_error <error_class> <stderr_excerpt>
+write_codex_error() {
+  jq -n --argjson exit_code "$EXIT_CODE" \
+        --argjson retried "$RETRIED" \
+        --arg error_class "$1" \
+        --arg stderr_excerpt "$2" \
+        '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:$retried,error_class:$error_class,stderr_excerpt:$stderr_excerpt}' \
+        > tmp/codex-exit.json
+  exit 1
+}
+
+# A zero exit that leaves -o missing, empty or whitespace-only produced no
+# review, so it is reported as CODEX_ERROR rather than as a success.
+require_review_output() {
+  if ! grep -qs '[^[:space:]]' "${OUTPUT_FILE}"; then
+    echo "Error: Codex produced empty output" >&2
+    write_codex_error empty_output "codex exited 0 but the review output artifact is missing or blank"
+  fi
+}
 
 run_codex() {
   # Clear the output artifact before EVERY attempt. The path is reused across
@@ -235,9 +258,11 @@ run_codex() {
   # destructive step behind the template-existence guard, which aborts before
   # any call can reach this line.
   if ! rm -f "${OUTPUT_FILE}"; then
-    echo "FATAL: cannot clear ${OUTPUT_FILE} - its directory is not writable" >&2
-    printf '{"signal":"CODEX_ERROR","exit_code":1,"retried":false,"error_class":"output_clear_failed","stderr_excerpt":"cannot clear the review output artifact"}\n' > tmp/codex-exit.json
-    exit 1
+    echo "FATAL: cannot clear ${OUTPUT_FILE}" >&2
+    # This attempt never reached the CLI, so the wrapper's own exit status is
+    # recorded rather than an earlier attempt's.
+    EXIT_CODE=1
+    write_codex_error output_clear_failed "cannot clear the review output artifact"
   fi
 
   # --sandbox danger-full-access disables Codex's internal sandbox layer
@@ -282,42 +307,61 @@ run_codex() {
   codex exec "${cmd_args[@]}" < "$COMBINED_PROMPT" 2>| "${ERR_FILE}"
 }
 
+read_stderr_excerpt() {
+  STDERR_EXCERPT=""
+  if [ -f "${ERR_FILE}" ]; then
+    STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
+  fi
+}
+
+# A numeric code counts only when the characters on both sides of it are
+# non-alphanumeric or a line edge, so a digit run inside an id such as
+# abc401def or 0199b6a5-401c is not read as a code.
+_CODE_PRE='(^|[^[:alnum:]])'
+_CODE_POST='([^[:alnum:]]|$)'
+
+# Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth.
+# NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
+# excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
+# `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
+# where the codex binary was uninstalled while the preflight cache was
+# still asserting `mode: local` — same invalidation path as auth errors,
+# since both indicate the cached verdict is wrong.
+_AUTH_PATTERN="authenticat|${_CODE_PRE}(401|403)${_CODE_POST}|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory"
+
+# An OS-level denial carries an OS marker; a bare "permission denied" can come
+# from the remote API and is left to the other classes.
+_OS_DENIAL_PATTERN="operation not permitted|os error (1|13)${_CODE_POST}"
+
+# Writes the signal and exits 1 when STDERR_EXCERPT is an auth failure or an
+# OS-level denial; returns otherwise. Every failed attempt, first or retry,
+# goes through here so a terminal cause is never reported under a retry class.
+# Auth is checked first so its cache invalidation runs even when the message
+# also carries an OS-denial marker. An OS-level denial (e.g. a sandbox
+# blocking a syscall) is not retried.
+exit_if_terminal_failure() {
+  local error_class
+  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_AUTH_PATTERN"; then
+    error_class="auth"
+    # Make the next preflight re-check rather than serve the stale `local`
+    # verdict that led here.
+    rm -f "${PREFLIGHT_CACHE_FILE:-tmp/.codex-preflight-cache.json}" 2>/dev/null || true
+  elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_OS_DENIAL_PATTERN"; then
+    error_class="sandbox_denied"
+  else
+    return 0
+  fi
+  write_codex_error "$error_class" "$STDERR_EXCERPT"
+}
+
 set +e
 run_codex
 EXIT_CODE=$?
 set -e
 
 if [ "$EXIT_CODE" -ne 0 ]; then
-
-  # Inspect stderr to classify the error
-  STDERR_EXCERPT=""
-  if [ -f "${ERR_FILE}" ]; then
-    STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-  fi
-
-  ERROR_CLASS="transient"
-  # Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth
-  # NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
-  # excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
-  # `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
-  # where the codex binary was uninstalled while the preflight cache was
-  # still asserting `mode: local` — same invalidation path as auth errors,
-  # since both indicate the cached verdict is wrong.
-  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "authenticat|401|403|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory"; then
-    ERROR_CLASS="auth"
-  fi
-
-  if [ "$ERROR_CLASS" = "auth" ]; then
-    # Auth errors are non-retriable. Invalidate the preflight cache so
-    # the next preflight re-checks rather than serving the stale `local`
-    # verdict that led us here.
-    rm -f "${PREFLIGHT_CACHE_FILE:-tmp/.codex-preflight-cache.json}" 2>/dev/null || true
-    jq -n --argjson exit_code "$EXIT_CODE" \
-          --arg stderr_excerpt "$STDERR_EXCERPT" \
-          '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"auth",stderr_excerpt:$stderr_excerpt}' \
-          > tmp/codex-exit.json
-    exit 0
-  fi
+  read_stderr_excerpt
+  exit_if_terminal_failure
 
   # HIGH-tier model transient failure -> MEDIUM tier fallback.
   # When MODEL is gpt-5.4 (or any non-default the orchestrator passed) and
@@ -342,7 +386,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
   _NETWORK_TOKENS='connection.*refused|network.*error|unexpected.*end.*of.*stream|socket.*hang.*up|reset.*by.*peer|broken.*pipe|tls.*handshake|dns.*lookup|no.*route.*to.*host|upstream.*connect.*error'
   IS_4XX_5XX_RETRY=0
   if [ -n "${MODEL:-}" ] && [ "${MODEL}" != "gpt-5.3-codex" ] \
-      && printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "(^|[^0-9])(429|502|503|504)([^0-9]|$)|rate.*limit|too.*many.*requests|service.*unavailable|connection.*timeout|timed.?out|i/o.*timeout|deadline.*exceeded|${_NETWORK_TOKENS}"; then
+      && printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "${_CODE_PRE}(429|502|503|504)${_CODE_POST}|rate.*limit|too.*many.*requests|service.*unavailable|connection.*timeout|timed.?out|i/o.*timeout|deadline.*exceeded|${_NETWORK_TOKENS}"; then
     IS_4XX_5XX_RETRY=1
   fi
 
@@ -351,9 +395,9 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     # branch because stderr like "504 Gateway Timeout" matches both — the
     # 5xx classification is canonically more informative than timeout.
     _status_hit="429"
-    if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "(^|[^0-9])503([^0-9]|$)|service.*unavailable"; then
+    if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "${_CODE_PRE}503${_CODE_POST}|service.*unavailable"; then
       _status_hit="503"
-    elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "(^|[^0-9])(502|504)([^0-9]|$)"; then
+    elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "${_CODE_PRE}(502|504)${_CODE_POST}"; then
       _status_hit="5xx"
     elif printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "connection.*timeout|timed.?out|i/o.*timeout|deadline.*exceeded"; then
       _status_hit="timeout"
@@ -363,26 +407,19 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     echo "NOTICE: ${MODEL} ${EFFORT:-default} returned ${_status_hit}; falling back to gpt-5.3-codex high (MEDIUM tier)." >&2
     MODEL="gpt-5.3-codex"
     EFFORT_OVERRIDE="high"
+    RETRIED=true
     set +e
     run_codex
     EXIT_CODE=$?
     set -e
     unset EFFORT_OVERRIDE
     if [ "$EXIT_CODE" -ne 0 ]; then
-      STDERR_EXCERPT=""
-      if [ -f "${ERR_FILE}" ]; then
-        STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-      fi
-      jq -n --argjson exit_code "$EXIT_CODE" \
-            --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"high_tier_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
-            > tmp/codex-exit.json
-      exit 1
+      read_stderr_excerpt
+      exit_if_terminal_failure
+      write_codex_error high_tier_fallback_failed "$STDERR_EXCERPT"
     fi
     # Fallback succeeded — skip remaining error handling
-    if [ ! -s "${OUTPUT_FILE}" ]; then
-      echo "Warning: Codex produced empty output" >&2
-    fi
+    require_review_output
     exit 0
   fi
 
@@ -402,55 +439,38 @@ if [ "$EXIT_CODE" -ne 0 ]; then
       # Opt-in: retry once with EFFORT=high. Prominent stderr notice.
       echo "NOTICE: Codex rejected EFFORT=xhigh; EFFORT_FALLBACK_ON_REJECT=1 is set — retrying once with EFFORT=high." >&2
       EFFORT_OVERRIDE="high"
+      RETRIED=true
       set +e
       run_codex
       EXIT_CODE=$?
       set -e
       unset EFFORT_OVERRIDE
       if [ "$EXIT_CODE" -ne 0 ]; then
-        STDERR_EXCERPT=""
-        if [ -f "${ERR_FILE}" ]; then
-          STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-        fi
-        jq -n --argjson exit_code "$EXIT_CODE" \
-              --arg stderr_excerpt "$STDERR_EXCERPT" \
-              '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"xhigh_fallback_failed",stderr_excerpt:$stderr_excerpt}' \
-              > tmp/codex-exit.json
-        exit 1
+        read_stderr_excerpt
+        exit_if_terminal_failure
+        write_codex_error xhigh_fallback_failed "$STDERR_EXCERPT"
       fi
       # Fallback retry succeeded — skip the transient retry path and continue.
     else
       # Fail-closed: xhigh rejected and no opt-in. Non-zero exit, diagnostic stderr.
       echo "Error: Codex rejected EFFORT=xhigh. Set EFFORT_FALLBACK_ON_REJECT=1 to opt into a one-shot retry with EFFORT=high." >&2
-      jq -n --argjson exit_code "$EXIT_CODE" \
-            --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"xhigh_rejected",stderr_excerpt:$stderr_excerpt}' \
-            > tmp/codex-exit.json
-      exit 1
+      write_codex_error xhigh_rejected "$STDERR_EXCERPT"
     fi
   else
     # Transient — retry once after a short delay
     sleep 5
 
+    RETRIED=true
     set +e
     run_codex
     EXIT_CODE=$?
     set -e
     if [ "$EXIT_CODE" -ne 0 ]; then
-      STDERR_EXCERPT=""
-      if [ -f "${ERR_FILE}" ]; then
-        STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
-      fi
-      jq -n --argjson exit_code "$EXIT_CODE" \
-            --arg stderr_excerpt "$STDERR_EXCERPT" \
-            '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:true,error_class:"transient",stderr_excerpt:$stderr_excerpt}' \
-            > tmp/codex-exit.json
-      exit 0
+      read_stderr_excerpt
+      exit_if_terminal_failure
+      write_codex_error transient "$STDERR_EXCERPT"
     fi
   fi
 fi
 
-# Guard against silent success with no output
-if [ ! -s "${OUTPUT_FILE}" ]; then
-  echo "Warning: Codex produced empty output" >&2
-fi
+require_review_output

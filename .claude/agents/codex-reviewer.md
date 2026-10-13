@@ -228,11 +228,9 @@ NOTICE: <model> <effort> returned <status>; falling back to gpt-5.3-codex high (
 ```
 
 Auth-class failures (`401`, `403`, "invalid api key", etc.) are
-non-retriable: the `ERROR_CLASS="auth"` branch in
+non-retriable: the `exit_if_terminal_failure` helper in
 `scripts/agent-cli/codex-review.sh` emits `CODEX_ERROR` with
-`error_class=auth`, neither retries nor downgrades the model, and
-**exits 0**. The process exit status is therefore not a failure
-signal on this path — read `tmp/codex-exit.json` to detect it.
+`error_class=auth` and neither retries nor downgrades the model.
 
 If `MODEL` is unset the wrapper passes no `-m` at all, so there is no
 caller-selected model to step down from and the fallback is a no-op —
@@ -257,22 +255,34 @@ from the gate without treating it as an infrastructure failure.
 Triggers:
 
 - `OPENAI_API_KEY` env var missing (non-OAuth path)
-- `codex` CLI binary absent
+- no local `codex` CLI and no `OPENAI_API_KEY` at pre-flight
+  (`mode: none`, see
+  `scripts/agent-cli/codex-preflight-tiered.sh`); a binary missing
+  once the wrapper runs is a `CODEX_ERROR`
 
 ### CODEX_ERROR
 
 Infrastructure failure signal. The calling agent degrades to the
 standard Dual-Model Review Gate, excluding the Codex verdict.
 
-Triggers:
+The wrapper exits non-zero on every `CODEX_ERROR`: a non-zero exit
+means no review was produced; see the Output Contract for what to
+return. `CODEX_UNAVAILABLE` exits 0 — it is the
+documented "bridge unavailable" outcome, not a failed review — so
+after exit 0 `tmp/codex-exit.json` may still hold the wrapper's own
+`CODEX_UNAVAILABLE` (missing token).
+
+Triggers include, e.g.:
 
 - Auth failure: HTTP 401/403 or stderr contains auth errors
-  — no retry and no downgrade; the wrapper exits 0, so
-  `tmp/codex-exit.json` is the only outcome signal
-- Transient failure: timeout, non-zero exit without auth message
-  — retry once, then emit `CODEX_ERROR`
+  — no retry and no downgrade
+- OS-level denial (e.g. `Operation not permitted`): fails the same
+  way on every attempt, so it is not retried
+- Transient failure: timeout, non-zero exit without an auth or
+  OS-denial message — retry once, then emit `CODEX_ERROR`
 - CLI crash: non-zero exit with unrecognized error — classify as
   transient, retry once
+- Empty output: the CLI exited 0 but wrote no review
 
 ### Exit Artifact
 
@@ -288,6 +298,12 @@ On failure, `tmp/codex-exit.json` contains:
 }
 ```
 
+`exit_code` is the shell status of the attempted CLI invocation (0
+for `empty_output`; e.g. 127 if the binary is missing); failures
+raised before any invocation (e.g. argument validation,
+`output_clear_failed`) record 1 — see the classes in
+`scripts/agent-cli/codex-review.sh`.
+
 ---
 
 ## Output Contract
@@ -297,8 +313,16 @@ On success, return raw text from `tmp/codex-review-output-<N>.md`
 Do NOT summarize, filter, or interpret. The calling agent extracts
 the verdict.
 
-On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only.
-On `CODEX_ERROR`, return `tmp/codex-exit.json` only.
+On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only, or
+`tmp/codex-exit.json` when the wrapper raised it.
+On `CODEX_ERROR` or any non-zero exit, return the alias's exit status
+and stderr, plus the contents of `tmp/codex-exit.json` if the file
+exists (read it with the Read tool). The wrapper clears that file
+before it writes any signal, so when stderr shows the wrapper stopped
+before clearing that file (e.g. a `cli-args-to-env:` rejection, or a
+`FATAL:` from the wrapper's `tmp/` checks at the top of
+`scripts/agent-cli/codex-review.sh`), any file present is from an earlier
+run — say so rather than presenting it as this run's reason.
 Do not return partial review output alongside error signals.
 
 All artifacts written during a run:
@@ -312,7 +336,7 @@ All artifacts written during a run:
 | `agent-review/<WS>-codex-review-output-<ID>.md` | Raw output from Codex CLI (container mode) |
 | `tmp/codex-review-err.txt` | Stderr from Codex CLI (local mode) |
 | `agent-review/<WS>-codex-review-err-<ID>.txt` | Stderr from Codex CLI (container mode) |
-| `tmp/codex-exit.json` | Structured exit signal on error |
+| `tmp/codex-exit.json` | Structured exit signal on error, or the wrapper's `CODEX_UNAVAILABLE` |
 
 ---
 
