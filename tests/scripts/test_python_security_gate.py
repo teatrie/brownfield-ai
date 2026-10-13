@@ -5,18 +5,21 @@ before Docker container invocation, including mode validation, path safety,
 git-tracking checks, and artifact generation.
 
 Every run executes a copy of the gate placed at ``GATE_SCRIPT`` under a scratch
-root in the test's ``tmp_path``. The gate derives ``WORKSPACE_ROOT`` from its
-own location, not from the CWD, so the copy writes its nonce under the scratch
-root and resolves and git-checks paths against it. The scratch root is its own
-git repo indexing the paths the tests pass as tracked. ``run_gate`` takes the
-root as a required argument, so no run falls back to the real checkout.
+root: a uniquely named per-test directory inside the workspace ``tmp/``, removed
+at teardown. The gate derives ``WORKSPACE_ROOT`` from its own location, not from
+the CWD, so the copy writes its nonce under the scratch root and resolves and
+git-checks paths against it. The scratch root is its own git repo indexing the
+paths the tests pass as tracked. ``run_gate`` takes the root as a required
+argument, so no run falls back to the real checkout.
 """
 
 import hashlib
 import re
 import shutil
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import git
@@ -71,17 +74,22 @@ def run_gate(
 
 
 @pytest.fixture()
-def gate_root(tmp_path: Path) -> Path:
-    """Build a scratch git repo holding a copy of the gate and the tracked paths."""
-    root = tmp_path.resolve()
-    gate = root / GATE_SCRIPT
-    gate.parent.mkdir(parents=True)
-    shutil.copy2(GATE_SOURCE, gate)
-    for rel in _TRACKED_PATHS:
-        (root / rel).parent.mkdir(parents=True, exist_ok=True)
-        (root / rel).touch()
-    git.Repo.init(root).index.add([str(root / rel) for rel in _TRACKED_PATHS])
-    return root
+def gate_root() -> Iterator[Path]:
+    """Build a scratch git repo under the workspace tmp/ holding a copy of the gate and the tracked paths."""
+    scratch_parent = WORKSPACE / "tmp"
+    scratch_parent.mkdir(exist_ok=True)
+    root = Path(tempfile.mkdtemp(dir=scratch_parent, prefix="python-gate-test-")).resolve()
+    try:
+        gate = root / GATE_SCRIPT
+        gate.parent.mkdir(parents=True)
+        shutil.copy2(GATE_SOURCE, gate)
+        for rel in _TRACKED_PATHS:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).touch()
+        git.Repo.init(root).index.add([str(root / rel) for rel in _TRACKED_PATHS])
+        yield root
+    finally:
+        shutil.rmtree(root)
 
 
 @pytest.fixture()
