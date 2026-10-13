@@ -64,6 +64,7 @@ EXCLUDED_BASES = frozenset({
 
 READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob"})
 ARTIFACTS_BLOCK_HEADING_LINE = "**CRITICAL CONSTRAINT: Artifacts & Logs**"
+ARTIFACTS_BLOCK_INSTRUCTION_PREFIX = "NEVER use the OS absolute `/tmp/` directory for scratch files"
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -239,14 +240,17 @@ def test_read_only_agents_omit_artifacts_block(agent_paths: list[Path]) -> None:
     offenders: list[str] = []
     for agent in agent_paths:
         meta, body = _split_frontmatter(agent.read_text())
-        # Read-only = an explicit tools: list within READ_ONLY_TOOLS and no memory: key; other agents are outside this guard.
         if "tools" not in meta or "memory" in meta:
             continue
         tools = meta["tools"]
         tool_names = {t.strip() for t in tools.split(",")} if isinstance(tools, str) else set(tools)
         if not tool_names <= READ_ONLY_TOOLS:
             continue
-        if any(line.strip() == ARTIFACTS_BLOCK_HEADING_LINE for line in body.splitlines()):
+        lines = [line.strip() for line in body.splitlines()]
+        if any(line == ARTIFACTS_BLOCK_HEADING_LINE or line.startswith(ARTIFACTS_BLOCK_INSTRUCTION_PREFIX) for line in lines):
             offenders.append(f"{agent.name}: tools={tools!r}")
-    header = f"read-only agents (tools within {sorted(READ_ONLY_TOOLS)}, no memory:) carry the {ARTIFACTS_BLOCK_HEADING_LINE!r} block:"
+    header = (
+        f"read-only agents (tools within {sorted(READ_ONLY_TOOLS)}, no memory:) "
+        "carry the Artifacts & Logs block (heading or instruction line):"
+    )
     assert not offenders, header + "\n  " + "\n  ".join(offenders)
