@@ -37,8 +37,9 @@ def _host_path() -> str:
     lets a spawned script execute a checkout-managed binary, and a relative
     entry additionally resolves against the scratch CWD.
     """
+    fallback = os.pathsep.join(("/usr/bin", "/bin"))
     kept: list[str] = []
-    for entry in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep):
+    for entry in os.environ.get("PATH", fallback).split(os.pathsep):
         if not entry:
             continue
         candidate = Path(entry)
@@ -47,7 +48,7 @@ def _host_path() -> str:
         if candidate.resolve().is_relative_to(WORKSPACE):
             continue
         kept.append(entry)
-    return os.pathsep.join(kept) or "/usr/bin:/bin"
+    return os.pathsep.join(kept) or fallback
 
 
 # Absolute interpreter so callers can wipe PATH down to a controlled
@@ -55,6 +56,10 @@ def _host_path() -> str:
 # the interpreter itself cannot be one of the checkout-managed binaries
 # _host_path exists to exclude.
 _BASH: str = shutil.which("bash", path=_host_path()) or "/bin/bash"
+
+
+def _join_path(*entries: str | Path) -> str:
+    return os.pathsep.join(str(entry) for entry in entries)
 
 
 def _scratch_root(tmp_path: Path) -> Path:
@@ -162,7 +167,7 @@ def test_all_available(tmp_path: Path) -> None:
 
     env = _preflight_env(
         tmp_path,
-        path=f"{tmp_path}:{_host_path()}",
+        path=_join_path(tmp_path, _host_path()),
         tokens={"COPILOT_GITHUB_TOKEN": "mock-token", "GEMINI_API_KEY": "mock-key"},
     )
 
@@ -195,7 +200,7 @@ def test_missing_copilot_cli(tmp_path: Path) -> None:
 
     env = _preflight_env(
         tmp_path,
-        path=f"{tmp_path}:{iso_bin}",
+        path=_join_path(tmp_path, iso_bin),
         tokens={"COPILOT_GITHUB_TOKEN": "mock-token", "GEMINI_API_KEY": "mock-key"},
     )
 
@@ -217,7 +222,7 @@ def test_missing_copilot_cli(tmp_path: Path) -> None:
 def test_missing_token(tmp_path: Path) -> None:
     _create_mock_cli(tmp_path, "copilot")
 
-    env = _preflight_env(tmp_path, path=f"{tmp_path}:{_host_path()}", tokens={})
+    env = _preflight_env(tmp_path, path=_join_path(tmp_path, _host_path()), tokens={})
 
     result = subprocess.run(
         [_BASH, str(PREFLIGHT_SCRIPT_PATH)],
@@ -268,7 +273,7 @@ def test_partial_availability(tmp_path: Path) -> None:
 
     env = _preflight_env(
         tmp_path,
-        path=f"{tmp_path}:{iso_bin}",
+        path=_join_path(tmp_path, iso_bin),
         tokens={"GEMINI_API_KEY": "mock-key"},
     )
 
@@ -327,7 +332,7 @@ def _run_preflight(
         "PREFLIGHT_FORCE": "1",
     }
     if mock_gemini_bin is not None:
-        env["PATH"] = f"{mock_gemini_bin}:{env['PATH']}"
+        env["PATH"] = _join_path(mock_gemini_bin, env["PATH"])
     if env_override:
         env.update(env_override)
     return subprocess.run(
@@ -701,7 +706,7 @@ class TestTokenGuardHostContext:
         result = _run_review_script(
             tmp_path,
             env_override={
-                "PATH": f"{bin_dir}:{_host_path()}",
+                "PATH": _join_path(bin_dir, _host_path()),
                 "GEMINI_EXECUTION_CONTEXT": "host",
                 "REVIEW_TYPE": "diff",
                 "DIFF_FILE": "tmp/qa-diff.txt",
@@ -803,7 +808,7 @@ class TestFallbackSignal:
         result = _run_review_script(
             tmp_path,
             env_override={
-                "PATH": f"{bin_dir}:{_host_path()}",
+                "PATH": _join_path(bin_dir, _host_path()),
                 "GEMINI_EXECUTION_CONTEXT": "host",
                 "GEMINI_MODEL": "gemini-3.1-pro-preview",
                 "GEMINI_TIMEOUT": "10",
@@ -831,7 +836,7 @@ class TestFallbackSignal:
         result = _run_review_script(
             tmp_path,
             env_override={
-                "PATH": f"{bin_dir}:{_host_path()}",
+                "PATH": _join_path(bin_dir, _host_path()),
                 "GEMINI_EXECUTION_CONTEXT": "host",
                 "GEMINI_MODEL": "gemini-3.1-pro-preview",
                 "GEMINI_TIMEOUT": "10",
@@ -857,7 +862,7 @@ class TestFallbackSignal:
         result = _run_review_script(
             tmp_path,
             env_override={
-                "PATH": f"{bin_dir}:{_host_path()}",
+                "PATH": _join_path(bin_dir, _host_path()),
                 "GEMINI_EXECUTION_CONTEXT": "host",
                 "GEMINI_MODEL": "gemini-3-flash-preview",
                 "GEMINI_TIMEOUT": "10",
@@ -882,7 +887,7 @@ class TestFallbackSignal:
         result = _run_review_script(
             tmp_path,
             env_override={
-                "PATH": f"{bin_dir}:{_host_path()}",
+                "PATH": _join_path(bin_dir, _host_path()),
                 "GEMINI_EXECUTION_CONTEXT": "host",
                 "GEMINI_TIMEOUT": "0",
                 "REVIEW_TYPE": "diff",
@@ -907,7 +912,7 @@ class TestFallbackSignal:
         result = _run_review_script(
             tmp_path,
             env_override={
-                "PATH": f"{bin_dir}:{_host_path()}",
+                "PATH": _join_path(bin_dir, _host_path()),
                 "GEMINI_EXECUTION_CONTEXT": "host",
                 "GEMINI_TIMEOUT": "0",
                 "REVIEW_TYPE": "diff",
@@ -952,12 +957,46 @@ class TestHostPath:
 
         assert _host_path().split(os.pathsep) == [str(outside)]
 
+    # A non-POSIX separator distinguishes an os.pathsep-built fallback from a
+    # literal ':' one, which are identical while os.pathsep is ':'.
     def test_falls_back_when_every_entry_is_dropped(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("PATH", os.pathsep.join([str(WORKSPACE / "scripts"), ".venv/bin"]))
+        monkeypatch.setattr(os, "pathsep", ";")
+        monkeypatch.setenv("PATH", ";".join([str(WORKSPACE / "scripts"), ".venv/bin"]))
 
-        assert _host_path() == "/usr/bin:/bin"
+        assert _host_path() == "/usr/bin;/bin"
 
     def test_unset_path_uses_the_system_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(os, "pathsep", ";")
         monkeypatch.delenv("PATH", raising=False)
 
-        assert _host_path() == "/usr/bin:/bin"
+        assert _host_path() == "/usr/bin;/bin"
+
+
+# ── PATH assembly harness helpers ─────────────────────────────────────
+# Observed under a non-POSIX separator so a literal ':' join cannot pass.
+
+
+def test_join_path_uses_os_pathsep(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "pathsep", ";")
+
+    assert _join_path(Path("/usr/bin"), "/bin") == "/usr/bin;/bin"
+
+
+def test_run_preflight_prepends_mock_bin_with_os_pathsep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def _record(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(os, "pathsep", ";")
+    monkeypatch.setenv("PATH", "/usr/bin;/bin")
+    monkeypatch.setattr(subprocess, "run", _record)
+    mock_bin = tmp_path / "bin"
+
+    _run_preflight(tmp_path, mock_gemini_bin=mock_bin)
+
+    assert captured["PATH"] == f"{mock_bin};/usr/bin;/bin"
