@@ -59,12 +59,7 @@ def run_gate(
 
 @pytest.fixture()
 def gate_root(tmp_path: Path) -> Path:
-    """Build a scratch git repo holding a copy of the gate and the tracked paths.
-
-    Resolved so the gate's ``realpath`` output and its own root share one
-    spelling; otherwise a symlinked ``tmp_path`` puts every existing path
-    outside the workspace.
-    """
+    """Build a scratch git repo holding a copy of the gate and the tracked paths."""
     root = tmp_path.resolve()
     gate = root / GATE_SCRIPT
     gate.parent.mkdir(parents=True)
@@ -143,7 +138,9 @@ class TestRejections:
 
     def test_run_mode_rejects_relative_traversal(self, gate_root: Path) -> None:
         """[Req-006] run mode with relative path traversal must be rejected."""
-        result = run_gate(gate_root, "run", "scripts/../../../etc/passwd")
+        # One ``..`` undoes scripts/ and one more per component below /, so the
+        # path names the real /etc/passwd and the gate resolves an existing file.
+        result = run_gate(gate_root, "run", "scripts/" + "../" * len(gate_root.parts) + "etc/passwd")
         assert result.returncode != 0, f"Expected non-zero exit for traversal path, got {result.returncode}"
         assert "path resolves outside workspace" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
@@ -229,6 +226,12 @@ class TestEdgeCases:
             "ci/detect_bypasses.py",
         )
         assert result.returncode == 0, f"Expected exit 0 for multiple tracked files, got {result.returncode}\nstderr: {result.stderr}"
+
+    def test_multiple_positional_paths_rejects_an_untracked_second_path(self, gate_root: Path, untracked_py_file: str) -> None:
+        """[Req-012] A path after a valid one is still validated."""
+        result = run_gate(gate_root, "run", "scripts/__init__.py", untracked_py_file)
+        assert result.returncode != 0, f"Expected non-zero exit for an untracked second path, got {result.returncode}"
+        assert f"file is not git-tracked: {untracked_py_file}" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_disallowed_lint_command_rejected(self, gate_root: Path) -> None:
         """[Req-013] lint mode with non-allowlisted command must be rejected."""
