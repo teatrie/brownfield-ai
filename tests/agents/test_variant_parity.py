@@ -22,8 +22,8 @@ docs that describe it: no agent may declare `SendMessage` (CLAUDE.md
 Principle 18 rests on that) or `Search` (not a Claude Code tool), the
 union of all declared tools must equal the "restricted to subsets of ..."
 clause that Principle 18 and `docs/delegation_protocol.md` §3 both state,
-and each family in `PINNED_FAMILY_TOOLS` must declare exactly its pinned
-list. The guards live here so the `.claude/agents/` test routing runs
+and every agent file must belong to a family in `PINNED_FAMILY_TOOLS` and
+declare exactly that family's pinned list. The guards live here so the `.claude/agents/` test routing runs
 them on every agent edit.
 """
 
@@ -72,13 +72,25 @@ EXCLUDED_BASES = frozenset({
     "qa-standards",
 })
 
-# Exact `tools:` list per implementation family, pinned so a grant cannot be
-# silently removed. These agents create files, and CLAUDE.md §10 requires the
-# Write tool for that (heredocs and Bash redirection are rejected).
+# Exact `tools:` list per agent family (a base and its effort-tier variants),
+# so a grant cannot be silently added or removed. The families holding Write
+# create files, which CLAUDE.md §10 requires the Write tool for.
 PINNED_FAMILY_TOOLS: dict[str, list[str]] = {
+    "code-review": ["Read"],
+    "codex-reviewer": ["Read", "Bash"],
+    "copilot-reviewer": ["Read", "Bash"],
+    "deep-researcher": ["Bash", "Read", "Edit"],
+    "explore": ["Read", "Grep", "Glob"],
+    "gemini-reviewer": ["Read", "Bash"],
     "general-purpose": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
-    "tdd-red": ["Read", "Write", "Edit", "Bash"],
+    "orchestrator": ["Read", "Edit"],
+    "planner": ["Read", "Edit"],
+    "qa-lint": ["Read", "Bash"],
+    "qa-standards": ["Read"],
+    "qa-test": ["Read", "Bash"],
+    "task": ["Read", "Bash"],
     "tdd-green": ["Read", "Write", "Edit", "Bash"],
+    "tdd-red": ["Read", "Write", "Edit", "Bash"],
     "tdd-refactor": ["Read", "Write", "Edit", "Bash"],
 }
 
@@ -162,6 +174,15 @@ def _discover_variants() -> list[Path]:
             continue
         out.append(path)
     return out
+
+
+def _family_of(file_name: str) -> str:
+    """Return the agent family of `file_name`: its stem without any effort-tier suffix."""
+    stem = Path(file_name).stem
+    for suffix in VARIANT_SUFFIXES:
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
 
 
 def _declared_tools() -> dict[str, list[str]]:
@@ -300,11 +321,16 @@ def test_pinned_family_declares_exact_tools(family: str) -> None:
     """Every file of a pinned family (base and each variant) must declare exactly its pinned `tools:` list."""
     expected = PINNED_FAMILY_TOOLS[family]
     declared = _declared_tools()
-    family_files = [f"{family}.md", *(f"{family}{suffix}.md" for suffix in VARIANT_SUFFIXES)]
-    missing = [name for name in family_files if name not in declared]
-    assert not missing, f"{family}: pinned family files not found: {missing}"
+    assert f"{family}.md" in declared, f"{family}: pinned family has no base file {family}.md"
+    family_files = sorted(name for name in declared if _family_of(name) == family)
     offenders = [f"{name}: {declared[name]!r}" for name in family_files if declared[name] != expected]
     assert not offenders, f"{family}: expected tools {expected!r}, got:\n  " + "\n  ".join(offenders)
+
+
+def test_every_agent_belongs_to_pinned_family() -> None:
+    """Every `.claude/agents/*.md` file must belong to a family in `PINNED_FAMILY_TOOLS`."""
+    unpinned = sorted(name for name in _declared_tools() if _family_of(name) not in PINNED_FAMILY_TOOLS)
+    assert not unpinned, f"agent files with no pinned family in PINNED_FAMILY_TOOLS: {unpinned}"
 
 
 def test_declared_tools_match_principle_18() -> None:

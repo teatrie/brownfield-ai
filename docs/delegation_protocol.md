@@ -30,7 +30,7 @@ Always select the `agent_type` with the most restricted toolset capable of compl
 | **TDD (Failing Tests)** | `tdd-red` | **Code Modification**: Only adds failing tests. No implementation. |
 | **TDD (Implementation)** | `tdd-green` | **Code Modification**: Implements fixes strictly to pass tests. |
 | **TDD (Code Cleanup)** | `tdd-refactor` | **Code Modification**: Reformats/cleans passing code. No behavior changes. |
-| **General Implementation** | `general-purpose` | **Implementation**: `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`. Use *only* when necessary for complex edits. |
+| **General Implementation** | `general-purpose` | **Implementation**: the agent's `tools:` list. Use *only* when necessary for complex edits. |
 
 High-effort variants (e.g., `code-review-high` [effort: high], `code-review-xhigh` [effort: xhigh], `code-review-max` [effort: max], `tdd-red-high`, `tdd-green-xhigh`, `tdd-green-max`) inherit the same permissions as their base agent. The `-high`, `-xhigh`, and `-max` suffixes control effort depth (reasoning intensity), not the model tier declared in the agent's frontmatter. The model tier used at runtime is determined by the escalation matrix — the orchestrator selects the concrete model when spawning each matrix point. Select the initial variant by domain complexity per [planning_protocol.md](planning_protocol.md) §3. The canonical 4-level ladder (`medium → high → xhigh → max`) is defined in [docs/effort_tiers.md](effort_tiers.md).
 

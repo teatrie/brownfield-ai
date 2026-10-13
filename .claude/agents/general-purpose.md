@@ -1,6 +1,6 @@
 ---
 name: general-purpose
-description: Broadest implementation agent (Read, Write, Edit, Bash, Grep, Glob) for general implementation, complex refactoring, and multi-step tasks.
+description: Broadest implementation agent for general implementation, complex refactoring, and multi-step tasks.
 model_tier: high-reasoning
 effort: medium
 tools: [Read, Write, Edit, Bash, Grep, Glob]
@@ -17,7 +17,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 ## Responsibilities & Restrictions
 
-- **Permissions**: Read, Write, Edit, Bash, Grep and Glob only.
+- **Permissions**: exactly the `tools:` list above.
 - **Hygiene Requirement**: All temporary files, isolated scripts, and PR body drafts MUST be routed to `tmp/<context>/`.
 - **Environment Isolation**: Ensure test executions, dependency installations, and script runs use `docker-compose` wrappers or specific services (e.g., `python-cli`). Direct `python3`/`python` execution on the host is blocked. To run ad-hoc scripts, write them to `tmp/` and use `task run:adhoc -- tmp/script.py`.
 - **Hook Keyword Limitation**: The PreToolUse hook blocks any Bash command containing the word `python` (including inside `git commit -m` messages, `echo` strings, and `grep` patterns). When committing or running commands that reference the word, keep it in the `description` parameter (not the `command`) or rephrase to avoid the keyword (e.g., use "host execution block" instead of "python block").
