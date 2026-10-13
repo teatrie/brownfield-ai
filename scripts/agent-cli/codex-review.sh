@@ -311,11 +311,21 @@ if [ "$EXIT_CODE" -ne 0 ]; then
     STDERR_EXCERPT=$(head -c 500 "${ERR_FILE}")
   fi
 
+  # Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth
+  # NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
+  # excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
+  # `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
+  # where the codex binary was uninstalled while the preflight cache was
+  # still asserting `mode: local` — same invalidation path as auth errors,
+  # since both indicate the cached verdict is wrong.
+  _AUTH_PATTERN='authenticat|401|403|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory'
+
   # An OS-level denial (e.g. a sandbox blocking a syscall) fails identically
-  # on every attempt, so it is terminal and never retried. An HTTP 401/403
-  # that happens to say "permission denied" is left to the auth check below.
+  # on every attempt, so it is terminal and never retried. Any stderr the auth
+  # pattern matches is left to the auth check below, so its cache
+  # invalidation runs even when the message also says "permission denied".
   if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "operation not permitted|permission denied|os error 1([^0-9]|$)" \
-      && ! printf "%s\n" "$STDERR_EXCERPT" | grep -qE "(^|[^0-9])(401|403)([^0-9]|$)"; then
+      && ! printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_AUTH_PATTERN"; then
     jq -n --argjson exit_code "$EXIT_CODE" \
           --arg stderr_excerpt "$STDERR_EXCERPT" \
           '{signal:"CODEX_ERROR",exit_code:$exit_code,retried:false,error_class:"sandbox_denied",stderr_excerpt:$stderr_excerpt}' \
@@ -324,14 +334,7 @@ if [ "$EXIT_CODE" -ne 0 ]; then
   fi
 
   ERROR_CLASS="transient"
-  # Note: 429 (rate-limit) must NOT match this regex — it is transient, not auth
-  # NB2: `printf "%s\n" "$var" | grep` avoids mis-interpretation when the
-  # excerpt starts with `-n`/`-e` (which `echo` would treat as flags).
-  # `command.*not.*found` and `no.*such.*file.*or.*directory` cover the case
-  # where the codex binary was uninstalled while the preflight cache was
-  # still asserting `mode: local` — same invalidation path as auth errors,
-  # since both indicate the cached verdict is wrong.
-  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "authenticat|401|403|invalid.*api.*key|incorrect.*api.*key|unauthorized|no.*api.*key|command.*not.*found|no.*such.*file.*or.*directory"; then
+  if printf "%s\n" "$STDERR_EXCERPT" | grep -qiE "$_AUTH_PATTERN"; then
     ERROR_CLASS="auth"
   fi
 

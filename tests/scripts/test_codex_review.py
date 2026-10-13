@@ -1507,6 +1507,30 @@ class TestSandboxDenialIsTerminal:
             "an API-level 403 is a credential problem, not a local denial; it must keep the auth class and its cache invalidation"
         )
 
+    @pytest.mark.parametrize(
+        "stderr_text",
+        [
+            "Error: invalid API key: Permission denied",
+            "unauthorized: operation not permitted",
+            "Error: authentication failed: Operation not permitted (os error 1)",
+        ],
+        ids=["invalid_api_key", "unauthorized", "authentication"],
+    )
+    def test_auth_wording_with_denial_wording_stays_auth(self, tmp_path: Path, stderr_text: str) -> None:
+        log = tmp_path / "calls.log"
+        cache_file = tmp_path / "codex-preflight-cache.json"
+        cache_file.write_text('{"mode":"local","codex":{"cli":true}}\n')
+        bin_dir = _install_shim(tmp_path, exit_code=1, stderr_text=stderr_text, log_path=log)
+        env = _default_env(bin_dir, tmp_path)
+        env["PREFLIGHT_CACHE_FILE"] = str(cache_file)
+        result = _run_review(tmp_path, env_overrides=env)
+        assert result.returncode != 0
+        assert len(_read_shim_log(log)) == 1
+        assert _read_exit_json(tmp_path).get("error_class") == "auth", (
+            "stderr the auth classifier recognizes is a credential problem even when it also reads as a denial"
+        )
+        assert not cache_file.exists(), "the auth class must invalidate the preflight cache"
+
 
 class TestEmptyOutputIsAFailedReview:
     """A zero exit that writes nothing to ``-o`` is not a review."""
