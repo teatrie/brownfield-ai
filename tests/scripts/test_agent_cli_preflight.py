@@ -972,13 +972,31 @@ class TestHostPath:
         assert _host_path() == "/usr/bin;/bin"
 
 
-# ── _join_path() harness helper ──────────────────────────────────────
+# ── PATH assembly harness helpers ─────────────────────────────────────
+# Observed under a non-POSIX separator so a literal ':' join cannot pass.
 
 
-class TestJoinPath:
-    """PATH assembly, observed under a non-POSIX separator so ':' cannot pass."""
+def test_join_path_uses_os_pathsep(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "pathsep", ";")
 
-    def test_joins_entries_in_order_with_os_pathsep(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(os, "pathsep", ";")
+    assert _join_path(Path("/usr/bin"), "/bin") == "/usr/bin;/bin"
 
-        assert _join_path(Path("/usr/bin"), "/bin") == "/usr/bin;/bin"
+
+def test_run_preflight_prepends_mock_bin_with_os_pathsep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def _record(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs["env"])
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(os, "pathsep", ";")
+    monkeypatch.setenv("PATH", "/usr/bin;/bin")
+    monkeypatch.setattr(subprocess, "run", _record)
+    mock_bin = tmp_path / "bin"
+
+    _run_preflight(tmp_path, mock_gemini_bin=mock_bin)
+
+    assert captured["PATH"] == f"{mock_bin};/usr/bin;/bin"
