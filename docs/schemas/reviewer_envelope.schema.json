@@ -68,6 +68,12 @@
           "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
           "suggested_fix": { "type": "string", "maxLength": 2000 },
           "rule_id": { "type": "string" },
+          "confidence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Optional reviewer certainty for this finding, 1-10 where 10 is highest. Absent means unscored."
+          },
           "blocking": {
             "type": "boolean",
             "default": true,

@@ -57,4 +57,6 @@ Example envelope body (operator-auth-boundary HALT shape) — illustrative only;
 }
 ```
 
+A passing test run emits `status: "APPROVED"`, `next_action: "APPROVE"` and an empty `feedback_to_forward`. For any other verdict, pick a `status` × `next_action` pair from the [validity matrix](../../docs/reviewer_envelope.md#status-x-next-action-validity); the schema rejects every pair outside it.
+
 Required keys (all must appear in every envelope): `envelope_version`, `agent_id`, `agent_family`, `agent_effort_tier`, `round`, `status`, `next_action`, `feedback_to_forward`, `recommended_next_tier`, `halt_trigger`. See `docs/reviewer_envelope.md` for the `status` × `next_action` validity matrix and the optional `spillover_findings_path` key.

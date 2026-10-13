@@ -210,6 +210,110 @@ def test_blocking_field_explicit_true_preserved(
     validator.validate(envelope)
 
 
+@pytest.mark.parametrize("confidence", [1, 7, 10])
+def test_finding_confidence_in_range_accepted(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+    confidence: int,
+) -> None:
+    """A finding's optional integer ``confidence`` in 1-10 validates."""
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = confidence
+    validator.validate(envelope)
+
+
+def test_finding_confidence_absent_accepted(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+) -> None:
+    """A finding without ``confidence`` stays valid; the key is optional."""
+    assert "confidence" not in example_b["feedback_to_forward"][0]
+    validator.validate(example_b)
+
+
+@pytest.mark.parametrize("confidence", [0, 11, 5.5, "7", True, None])
+def test_finding_confidence_invalid_rejected(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+    confidence: Any,
+) -> None:
+    """``confidence`` outside 1-10, non-integer, string, boolean or null fails validation."""
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = confidence
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(envelope)
+
+
+def _parse_example(envelope: dict[str, Any]) -> Any:
+    """Wrap ``envelope`` in a discriminated fence and run it through ``parse_or_fallback``."""
+    output = "# Review\n\n```json envelope\n" + json.dumps(envelope) + "\n```\n"
+    return envelope_parser.parse_or_fallback(
+        output,
+        agent_id=envelope["agent_id"],
+        agent_family=envelope["agent_family"],
+        cb_state=_CBStateStub(),
+        current_wave="W1",
+    )
+
+
+def test_finding_confidence_propagates_through_parser(example_b: dict[str, Any]) -> None:
+    """A scored finding parses, exposes ``confidence``, and keeps it through ``to_dict``."""
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = 8
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    assert result.envelope.feedback_to_forward[0].confidence == 8
+    assert result.envelope.to_dict()["feedback_to_forward"][0]["confidence"] == 8
+
+
+def test_finding_confidence_absent_parses_to_none(example_b: dict[str, Any]) -> None:
+    """An unscored finding parses with ``confidence is None``."""
+    result = _parse_example(example_b)
+    assert result.envelope is not None
+    assert result.envelope.feedback_to_forward[0].confidence is None
+
+
+def test_finding_confidence_out_of_range_raises_parse_error(example_b: dict[str, Any]) -> None:
+    """An out-of-range ``confidence`` makes the parser raise ``EnvelopeParseError``."""
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = 11
+    with pytest.raises(envelope_parser.EnvelopeParseError):
+        _parse_example(envelope)
+
+
+def test_to_dict_minimal_finding_round_trips_through_schema(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+) -> None:
+    """A finding with only required keys survives parse -> ``to_dict`` -> schema validation."""
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"] = [{"severity": "minor", "description": "Unscored finding with no location."}]
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    body = result.envelope.to_dict()
+    validator.validate(body)
+    assert body["feedback_to_forward"] == [
+        {"severity": "minor", "description": "Unscored finding with no location.", "blocking": True},
+    ]
+    assert body["recommended_next_tier"] is None
+    assert body["halt_trigger"] is None
+
+
+def test_to_dict_emits_set_optional_finding_fields(
+    validator: jsonschema.Draft202012Validator,
+    example_b: dict[str, Any],
+) -> None:
+    """Optional finding fields that carry a value are kept by ``to_dict``."""
+    envelope = json.loads(json.dumps(example_b))
+    envelope["feedback_to_forward"][0]["confidence"] = 8
+    envelope["feedback_to_forward"][0]["blocking"] = False
+    result = _parse_example(envelope)
+    assert result.envelope is not None
+    body = result.envelope.to_dict()
+    validator.validate(body)
+    assert body["feedback_to_forward"] == [envelope["feedback_to_forward"][0]]
+
+
 # ---------------------------------------------------------------------------
 # Discriminated-fence detection tests (Req-001, B-3 R2, B-4 R2 / Req-N08, Req-N05)
 # ---------------------------------------------------------------------------

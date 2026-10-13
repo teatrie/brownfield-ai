@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import Any
@@ -190,6 +190,8 @@ class Finding:
     note: "when absent, defaults to true" — the default lives in code,
     not the schema, so envelopes that omit ``blocking`` are still
     schema-valid but treated as blocking by downstream merge logic.
+    ``confidence`` is the reviewer's optional 1-10 certainty score;
+    ``None`` means the finding is unscored.
     """
 
     severity: str
@@ -199,6 +201,12 @@ class Finding:
     suggested_fix: str | None = None
     rule_id: str | None = None
     blocking: bool = True
+    confidence: int | None = None
+
+
+#: :class:`Finding` fields that default to ``None``. The schema types each
+#: as non-nullable, so :meth:`Envelope.to_dict` omits them when unset.
+_FINDING_OPTIONAL_FIELDS: frozenset[str] = frozenset(f.name for f in fields(Finding) if f.default is None)
 
 
 @dataclass(frozen=True)
@@ -272,13 +280,20 @@ class Envelope:
         """Return the envelope as a plain dict (schema-conformant shape).
 
         Tuples of :class:`Finding` are converted back to lists of dicts
-        so the result round-trips through :func:`json.dumps`. Used by
+        so the result round-trips through :func:`json.dumps`. Unset
+        optional finding fields are omitted rather than written as
+        ``None``, because the schema types them as non-nullable. Used by
         tests to assert that no ``_audit`` key has leaked onto the
         envelope.
         """
         body = asdict(self)
-        body["feedback_to_forward"] = list(body["feedback_to_forward"])
+        body["feedback_to_forward"] = [_finding_to_dict(item) for item in body["feedback_to_forward"]]
         return body
+
+
+def _finding_to_dict(finding: dict[str, Any]) -> dict[str, Any]:
+    """Drop the unset optional keys from an ``asdict`` finding dict."""
+    return {key: value for key, value in finding.items() if not (key in _FINDING_OPTIONAL_FIELDS and value is None)}
 
 
 @dataclass(frozen=True)

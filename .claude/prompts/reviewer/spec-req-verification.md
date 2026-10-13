@@ -43,6 +43,7 @@ The Orchestrator will delegate experimentation to a task agent
 using `tmp/` or worktrees. DO NOT modify existing code in the
 repository. Raise every issue you deem relevant, even if you are
 unsure — do not self-censor. Tag each finding with a confidence
-score (1-10, where 10 is highest certainty). Save your review
-output as structured markdown.
+score (1-10, where 10 is highest certainty), in the prose and, when
+you emit an Output Envelope, as that finding's integer `confidence`
+key. Save your review output as structured markdown.
 <!-- INVARIANT:adversarial-rigor end -->
