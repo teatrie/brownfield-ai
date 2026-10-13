@@ -362,13 +362,10 @@ Instead, proceed to the next fallback chain step.
 On `GEMINI_UNAVAILABLE` from pre-flight, report it inline as the
 Pre-flight Sequence describes; when the wrapper raised it, return
 `tmp/gemini-exit.json` only.
-On `GEMINI_ERROR`, return `tmp/gemini-exit.json` only.
-The wrapper does not clear that file, so a file left by an earlier run
-can survive this one. Trust it only when it was written by this
-invocation, e.g. its mtime is newer than the invocation (see the
-timestamp comparison in
-[docs/delegation_protocol.md](../../docs/delegation_protocol.md)
-§"Recovering a Stranded Bridge Review").
+On `GEMINI_ERROR`, return the alias's exit status with the contents of
+`tmp/gemini-exit.json`, and say the file may be from an earlier run
+because the wrapper does not clear it; the calling agent judges whether
+it is this run's reason.
 Do not return partial review output alongside error signals.
 
 All artifacts written during a run:

@@ -63,7 +63,7 @@ EXCLUDED_BASES = frozenset({
 })
 
 # A body may name the Write tool only when its `tools:` list declares Write.
-WRITE_TOOL_CLAIM = "write tool"
+WRITE_TOOL_CLAIM = re.compile(r"\bwrite tool\b|`write`", re.IGNORECASE)
 PREFLIGHT_FILE_PATTERN = re.compile(r"\S*-preflight\.json")
 
 
@@ -242,30 +242,24 @@ def test_variant_body_matches_base_modulo_sync_comment(variant_paths: list[Path]
 
 
 def test_agent_discovery_finds_bridge_reviewers(agent_paths: list[Path]) -> None:
-    """Sanity: the all-agents walk includes the bridge reviewers that variant discovery excludes."""
     names = {p.name for p in agent_paths}
     expected = {"codex-reviewer.md", "gemini-reviewer.md", "copilot-reviewer.md"}
     assert expected <= names, f"bridge reviewers missing from discovery: {sorted(expected - names)}"
 
 
 def test_write_tool_claim_requires_write_in_tools(agent_paths: list[Path]) -> None:
-    """A body naming the Write tool (any case) must belong to an agent that declares `Write`.
-
-    Agents with no `tools:` key inherit every tool, so they are skipped.
-    """
     offenders: list[str] = []
     for path in agent_paths:
         meta, body = _split_frontmatter(path.read_text())
-        if "tools" not in meta:
+        if "tools" not in meta:  # no `tools:` key inherits every tool
             continue
         tools = meta["tools"] or []
-        if WRITE_TOOL_CLAIM in body.lower() and "Write" not in tools:
+        if WRITE_TOOL_CLAIM.search(body) and "Write" not in tools:
             offenders.append(f"{path.name} (tools: {tools})")
     assert not offenders, "agent bodies name the Write tool but lack Write in tools:\n  " + "\n  ".join(offenders)
 
 
 def test_no_preflight_contract_file_named(agent_paths: list[Path]) -> None:
-    """No agent body may name a `*-preflight.json` file; pre-flight results are reported inline."""
     offenders: list[str] = []
     for path in agent_paths:
         _, body = _split_frontmatter(path.read_text())

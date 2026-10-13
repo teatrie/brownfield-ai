@@ -86,9 +86,9 @@ because Steps 1-2 (token check + CLI presence) already confirm the
 environment is structurally capable — auth failure is an infrastructure
 error, not a clean absence signal.
 
-The pre-flight result is the JSON that `task agent:preflight:copilot`
-prints to stdout (see `scripts/agent-cli/preflight.sh`); no pre-flight
-file is written.
+The JSON that `task agent:preflight:copilot` prints to stdout is the
+environment check (Steps 1-2; see `scripts/agent-cli/preflight.sh`).
+Pre-flight is complete only once Step 3 has also selected a model.
 
 If `tmp/.copilot-models.json` exists (user-populated fallback), use it instead of running live discovery.
 This file is intentionally ephemeral and takes precedence over live discovery output.
@@ -113,7 +113,8 @@ rule is: highest-tier non-Claude model from the table above, with
 
 ## Review Invocation
 
-After a successful pre-flight (`copilot.cli` and `copilot.token` both `true`), dispatch the review via the task alias.
+After pre-flight finds Copilot available, including Step 3 selecting a cross-family model (see Pre-flight Sequence),
+dispatch the review via the task alias.
 
 ## Caller Contract
 
@@ -197,12 +198,9 @@ If the retry exit code is also non-zero, emit `COPILOT_ERROR` and stop. Auth err
 
 The wrapper writes `tmp/copilot-exit.json` when a review fails or copilot is unavailable (see
 `scripts/agent-cli/copilot-review.sh`). Read it; do not write it.
-The wrapper does not clear that file, and it exits 0 on some failures,
-so a file left by an earlier run can sit beside this run's review.
-Trust it only when it was written by this invocation, e.g. its mtime is
-newer than the invocation (see the timestamp comparison in
-[docs/delegation_protocol.md](../../docs/delegation_protocol.md)
-§"Recovering a Stranded Bridge Review").
+Return the alias's exit status with the file's contents, and say the
+file may be from an earlier run because the wrapper does not clear it;
+the calling agent judges whether it is this run's reason.
 
 ---
 
@@ -217,7 +215,7 @@ Pre-flight Sequence describes; when the wrapper raised it, return
 `tmp/copilot-exit.json` only.
 
 On a `COPILOT_ERROR` signal (runtime failures: auth failure during review, transient failure after retry),
-return the structured JSON from `tmp/copilot-exit.json` only.
+return the alias's exit status and `tmp/copilot-exit.json` as Exit Artifact describes.
 
 Do not return partial review output alongside any error signal.
 
