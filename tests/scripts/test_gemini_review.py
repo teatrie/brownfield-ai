@@ -84,9 +84,9 @@ _ROUND: str = "999"
 # The live-checkout paths a root escaping ``tmp_path`` would land in, relative
 # to ``WORKSPACE``. ``_no_live_checkout_artifacts`` watches them.
 #
-# The literal ``tmp/`` entries are only names this module can produce, so a real
-# review at any other round writing beside the suite is not reported: the
-# round-scoped output and sanitized subject at ``_ROUND`` (``gemini-review.sh``:138,
+# The literal ``tmp/`` entries are only names this module can produce, so
+# another round's round-scoped writes are not reported: the round-scoped output
+# and sanitized subject at ``_ROUND`` (``gemini-review.sh``:138,
 # ``_review-common.sh``:141-143), the wrapper's fixed-name exit signal and
 # stderr capture (``gemini-exit.json``, ``gemini-review-err.txt``), and the two
 # test-owned subjects. A concurrent review or preflight can still change the
@@ -2147,16 +2147,8 @@ class TestLiveCheckoutArtifactGuard:
         assert _live_artifact_snapshot() == {}
 
     def test_the_watch_set_ignores_another_rounds_artifacts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Round-scoped wrapper names at any round but ``_ROUND`` are not reported.
-
-        A real review at another round writes these names beside the suite, and
-        no test here can produce them. The same names at ``_ROUND`` are written
-        alongside, so the assertion also shows the matcher still sees the
-        watched round rather than passing on an empty snapshot.
-        """
         live_tmp = self._relocate_workspace(tmp_path, monkeypatch)
-        other_round = str(int(_ROUND) + 1)
-        for round_ in (_ROUND, other_round):
+        for round_ in (_ROUND, "1", str(int(_ROUND) + 1)):
             (live_tmp / f"gemini-review-output-{round_}.md").write_text("review output\n")
             (live_tmp / f"gemini-subject-sanitized-{round_}.txt").write_text(_SUBJECT_TEXT)
         assert set(_live_artifact_snapshot()) == {
