@@ -266,12 +266,11 @@ Infrastructure failure signal. The calling agent degrades to the
 standard Dual-Model Review Gate, excluding the Codex verdict.
 
 The wrapper exits non-zero on every `CODEX_ERROR`: a non-zero exit
-means no review was produced, and the reason is in
-`tmp/codex-exit.json`. `CODEX_UNAVAILABLE` exits 0 — it is the
+means no review was produced; see the Output Contract for what to
+return. `CODEX_UNAVAILABLE` exits 0 — it is the
 documented "bridge unavailable" outcome, not a failed review — so
 after exit 0 `tmp/codex-exit.json` may still hold the wrapper's own
-`CODEX_UNAVAILABLE` (missing token). A non-zero exit can also come
-before the wrapper clears that file; see the Output Contract.
+`CODEX_UNAVAILABLE` (missing token).
 
 Triggers include, e.g.:
 
@@ -316,13 +315,12 @@ the verdict.
 
 On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only, or
 `tmp/codex-exit.json` when the wrapper raised it.
-On `CODEX_ERROR` or any non-zero exit, return `tmp/codex-exit.json`
-— the wrapper clears it as its first step, so it is this run's —
-unless the alias's stderr shows the run stopped before that step
-(e.g. a `cli-args-to-env:` rejection, a Task error, a docker failure
-in container mode, or the wrapper's own `FATAL` about `tmp/`). Then
-return the stderr and exit status and do not read the file; it is
-left from an earlier run.
+On `CODEX_ERROR` or any non-zero exit, return the alias's exit status
+and stderr, plus the contents of `tmp/codex-exit.json` if the file
+exists (read it with the Read tool). The wrapper clears that file
+before it writes any signal, so when stderr shows the wrapper never started (e.g. a
+`cli-args-to-env:` rejection), any file present is from an earlier
+run — say so rather than presenting it as this run's reason.
 Do not return partial review output alongside error signals.
 
 All artifacts written during a run:

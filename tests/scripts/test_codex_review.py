@@ -1526,11 +1526,8 @@ class TestHighTier429_503Fallback:
 # ---------------------------------------------------------------------------
 
 
-# An OS-level denial is its own class: never retried, never ``transient``. Its
-# wording matches neither the auth nor the retry patterns, so without a class
-# of its own it falls through to the transient retry — a 5s sleep and a second
-# call that fails identically — and is reported as a transient outage, inviting
-# a re-dispatch into the same denial.
+# An OS-level denial fails identically on every attempt, so one call proves it
+# skipped the transient retry.
 
 
 @pytest.mark.parametrize(
