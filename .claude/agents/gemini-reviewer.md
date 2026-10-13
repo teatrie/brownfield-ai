@@ -359,9 +359,16 @@ the verdict.
 
 On `GEMINI_FALLBACK` (exit code 3), do NOT return output.
 Instead, proceed to the next fallback chain step.
-On `GEMINI_UNAVAILABLE`, report it inline as the Pre-flight Sequence
-describes.
+On `GEMINI_UNAVAILABLE` from pre-flight, report it inline as the
+Pre-flight Sequence describes; when the wrapper raised it, return
+`tmp/gemini-exit.json` only.
 On `GEMINI_ERROR`, return `tmp/gemini-exit.json` only.
+The wrapper does not clear that file, so a file left by an earlier run
+can survive this one. Trust it only when it was written by this
+invocation, e.g. its mtime is newer than the invocation (see the
+timestamp comparison in
+[docs/delegation_protocol.md](../../docs/delegation_protocol.md)
+§"Recovering a Stranded Bridge Review").
 Do not return partial review output alongside error signals.
 
 All artifacts written during a run:
@@ -373,7 +380,7 @@ All artifacts written during a run:
 | `agent-review/<WS>-gemini-review-output-<ID>.md` | Raw stdout from Gemini CLI (container mode) |
 | `tmp/gemini-review-err.txt` | Stderr from Gemini CLI (local mode) |
 | `agent-review/<WS>-gemini-review-err-<ID>.txt` | Stderr from Gemini CLI (container mode) |
-| `tmp/gemini-exit.json` | Structured exit signal on error |
+| `tmp/gemini-exit.json` | Structured exit signal on error, or the wrapper's `GEMINI_UNAVAILABLE` |
 
 ---
 

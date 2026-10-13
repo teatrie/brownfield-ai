@@ -50,10 +50,11 @@ The script checks token presence (`COPILOT_GITHUB_TOKEN`) and CLI
 availability, then outputs structured JSON to stdout.
 
 Parse the JSON output. If `copilot.cli` and `copilot.token` are
-both `true`, proceed to model discovery. Otherwise, report
-`COPILOT_UNAVAILABLE` inline in your final message, with the
-pre-flight's stdout and exit status, and stop — the calling agent
-degrades to 2-of-2 review.
+both `true`, proceed to model discovery. Whenever pre-flight finds
+Copilot unavailable (e.g. a false `cli` or `token`, or Step 3 finding
+no cross-family model), report `COPILOT_UNAVAILABLE` inline in your
+final message, with the pre-flight's stdout and exit status and the
+reason, and stop — the calling agent degrades to 2-of-2 review.
 
 ### Step 3 — Model Discovery (Auth Validation + Model Listing)
 
@@ -196,6 +197,12 @@ If the retry exit code is also non-zero, emit `COPILOT_ERROR` and stop. Auth err
 
 The wrapper writes `tmp/copilot-exit.json` when a review fails or copilot is unavailable (see
 `scripts/agent-cli/copilot-review.sh`). Read it; do not write it.
+The wrapper does not clear that file, and it exits 0 on some failures,
+so a file left by an earlier run can sit beside this run's review.
+Trust it only when it was written by this invocation, e.g. its mtime is
+newer than the invocation (see the timestamp comparison in
+[docs/delegation_protocol.md](../../docs/delegation_protocol.md)
+§"Recovering a Stranded Bridge Review").
 
 ---
 

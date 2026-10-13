@@ -298,7 +298,7 @@ task agent:review:gemini:local -- ROUND=1 EFFORT=xhigh GEMINI_MODEL=gemini-3.1-p
 ```
 
 For the full bridge-reviewer invocation contract (pre-flight, session
-UUID, prompt construction, exit artifacts), see
+UUID, caller contract, exit artifacts), see
 [.claude/agents/codex-reviewer.md](../.claude/agents/codex-reviewer.md)
 and [.claude/agents/gemini-reviewer.md](../.claude/agents/gemini-reviewer.md).
 

@@ -62,10 +62,9 @@ EXCLUDED_BASES = frozenset({
     "qa-standards",
 })
 
-# Without `Write` in `tools:` an agent has no route to create a file: the hooks
-# deny every Bash path that writes one (`docs/learnings.md` §"No Bash Path Writes a File").
-WRITE_TOOL_CLAIM = "Write tool"
-PREFLIGHT_FILE_PATTERN = re.compile(r"[\w.-]+-preflight\.json")
+# A body may name the Write tool only when its `tools:` list declares Write.
+WRITE_TOOL_CLAIM = "write tool"
+PREFLIGHT_FILE_PATTERN = re.compile(r"\S*-preflight\.json")
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -250,14 +249,19 @@ def test_agent_discovery_finds_bridge_reviewers(agent_paths: list[Path]) -> None
 
 
 def test_write_tool_claim_requires_write_in_tools(agent_paths: list[Path]) -> None:
-    """A body naming the Write tool must belong to an agent that declares `Write`."""
+    """A body naming the Write tool (any case) must belong to an agent that declares `Write`.
+
+    Agents with no `tools:` key inherit every tool, so they are skipped.
+    """
     offenders: list[str] = []
     for path in agent_paths:
         meta, body = _split_frontmatter(path.read_text())
-        tools = meta.get("tools") or []
-        if WRITE_TOOL_CLAIM in body and "Write" not in tools:
+        if "tools" not in meta:
+            continue
+        tools = meta["tools"] or []
+        if WRITE_TOOL_CLAIM in body.lower() and "Write" not in tools:
             offenders.append(f"{path.name} (tools: {tools})")
-    assert not offenders, f"agent bodies name the {WRITE_TOOL_CLAIM!r} but lack Write in tools:\n  " + "\n  ".join(offenders)
+    assert not offenders, "agent bodies name the Write tool but lack Write in tools:\n  " + "\n  ".join(offenders)
 
 
 def test_no_preflight_contract_file_named(agent_paths: list[Path]) -> None:
