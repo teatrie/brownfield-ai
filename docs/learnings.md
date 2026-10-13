@@ -136,7 +136,7 @@ This document captures low-level "gotchas" and edge cases encountered while deve
 See [docs/maintenance_guidelines.md](maintenance_guidelines.md) for full workspace protocols regarding environment resets and tmp file management.
 
 * **Root Directory Pollution via Bash Redirection**: When debugging or capturing command outputs (especially from Docker wrappers or shell scripts), agents frequently use native bash redirection (e.g., `> output.txt`), defaulting to the workspace root. This violates Principle 10 (Artifacts).
-  * **Solution**: The Orchestrator or delegating agent must proactively instruct sub-agents to route all transient outputs to the `tmp/` directory (e.g., `tmp/debug_logs/output.txt`), written with the Write tool or a command's own output flag (see §PreToolUse Hook Gotchas). Treat the root directory as strictly read-only for temporary artifacts.
+  * **Solution**: The Orchestrator or delegating agent must proactively instruct sub-agents to route all transient outputs to the `tmp/` directory (e.g., `tmp/debug_logs/output.txt`); §PreToolUse Hook Gotchas covers how to write them. Treat the root directory as strictly read-only for temporary artifacts.
 
 ## Pytest & LocalStack Mocking
 
