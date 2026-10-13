@@ -74,9 +74,10 @@ Parse the JSON output and branch on `mode`:
   treated identically.
 - `container`: no local `codex`; `OPENAI_API_KEY` is set. Proceed
   via the container path (`task agent:review:codex`).
-- `none`: no local CLI and no API key. Write a `CODEX_UNAVAILABLE`
-  contract to `tmp/codex-preflight.json` and exit cleanly — the
-  calling agent excludes this reviewer from the gate.
+- `none`: no local CLI and no API key. Report `CODEX_UNAVAILABLE`
+  inline in your final message, with the pre-flight's stdout and exit
+  status, and stop — the calling agent excludes this reviewer from
+  the gate.
 
 ---
 
@@ -313,8 +314,9 @@ On success, return raw text from `tmp/codex-review-output-<N>.md`
 Do NOT summarize, filter, or interpret. The calling agent extracts
 the verdict.
 
-On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only, or
-`tmp/codex-exit.json` when the wrapper raised it.
+On `CODEX_UNAVAILABLE` from pre-flight, report it inline as the
+Pre-flight Sequence describes; when the wrapper raised it, return
+`tmp/codex-exit.json` only.
 On `CODEX_ERROR` or any non-zero exit, return the alias's exit status
 and stderr, plus the contents of `tmp/codex-exit.json` if the file
 exists (read it with the Read tool). The wrapper clears that file
@@ -329,7 +331,6 @@ All artifacts written during a run:
 
 | File | Purpose |
 |---|---|
-| `tmp/codex-preflight.json` | Pre-flight contract |
 | `tmp/codex-subject-sanitized-<ROUND>.txt` | Wrapper-produced sanitized subject (ANSI/null/control chars stripped) |
 | `tmp/codex-combined-prompt-<ROUND>.txt` | Wrapper-produced combined template+subject prompt piped to Codex stdin |
 | `tmp/codex-review-output-<N>.md` | Raw output from Codex CLI (local mode) |

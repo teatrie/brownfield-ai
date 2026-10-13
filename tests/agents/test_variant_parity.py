@@ -16,10 +16,15 @@ author explicitly mirrors them, so the test fails loudly when the base
 moves and the variants stay still — exactly the signal the sync comment
 (`<!-- Body must stay in sync with <base>.md ... -->`) is meant to
 generate.
+
+The module also guards every agent body against claims its frontmatter
+`tools:` cannot back: a body may name the Write tool only when `Write` is
+declared, and no body may name a `*-preflight.json` contract file.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +61,11 @@ EXCLUDED_BASES = frozenset({
     "copilot-reviewer",
     "qa-standards",
 })
+
+# Without `Write` in `tools:` an agent has no route to create a file: the hooks
+# deny every Bash path that writes one (`docs/learnings.md` §"No Bash Path Writes a File").
+WRITE_TOOL_CLAIM = "Write tool"
+PREFLIGHT_FILE_PATTERN = re.compile(r"[\w.-]+-preflight\.json")
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -139,10 +149,21 @@ def _discover_variants() -> list[Path]:
     return out
 
 
+def _discover_agents() -> list[Path]:
+    """Return every agent definition under `.claude/agents/`, bases and variants alike."""
+    return sorted(AGENTS_DIR.glob("*.md"))
+
+
 @pytest.fixture(scope="module")
 def variant_paths() -> list[Path]:
     """Discover all in-scope variant files under `.claude/agents/`."""
     return _discover_variants()
+
+
+@pytest.fixture(scope="module")
+def agent_paths() -> list[Path]:
+    """Discover every agent file under `.claude/agents/`."""
+    return _discover_agents()
 
 
 def test_variant_discovery_finds_known_xhigh_files(variant_paths: list[Path]) -> None:
@@ -219,3 +240,32 @@ def test_variant_body_matches_base_modulo_sync_comment(variant_paths: list[Path]
         if stripped != b_body:
             failures.append(f"{variant.name}: body diverges from base after stripping sync comment")
     assert not failures, "variant body drift:\n  " + "\n  ".join(failures)
+
+
+def test_agent_discovery_finds_bridge_reviewers(agent_paths: list[Path]) -> None:
+    """Sanity: the all-agents walk includes the bridge reviewers that variant discovery excludes."""
+    names = {p.name for p in agent_paths}
+    expected = {"codex-reviewer.md", "gemini-reviewer.md", "copilot-reviewer.md"}
+    assert expected <= names, f"bridge reviewers missing from discovery: {sorted(expected - names)}"
+
+
+def test_write_tool_claim_requires_write_in_tools(agent_paths: list[Path]) -> None:
+    """A body naming the Write tool must belong to an agent that declares `Write`."""
+    offenders: list[str] = []
+    for path in agent_paths:
+        meta, body = _split_frontmatter(path.read_text())
+        tools = meta.get("tools") or []
+        if WRITE_TOOL_CLAIM in body and "Write" not in tools:
+            offenders.append(f"{path.name} (tools: {tools})")
+    assert not offenders, f"agent bodies name the {WRITE_TOOL_CLAIM!r} but lack Write in tools:\n  " + "\n  ".join(offenders)
+
+
+def test_no_preflight_contract_file_named(agent_paths: list[Path]) -> None:
+    """No agent body may name a `*-preflight.json` file; pre-flight results are reported inline."""
+    offenders: list[str] = []
+    for path in agent_paths:
+        _, body = _split_frontmatter(path.read_text())
+        matches = sorted(set(PREFLIGHT_FILE_PATTERN.findall(body)))
+        if matches:
+            offenders.append(f"{path.name}: {', '.join(matches)}")
+    assert not offenders, "agent bodies name a pre-flight contract file:\n  " + "\n  ".join(offenders)
