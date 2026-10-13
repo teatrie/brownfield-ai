@@ -19,8 +19,8 @@ generate.
 
 The module also holds agent-wide definition guards that cover every
 `.claude/agents/*.md`, bases, variants and excluded families alike — for
-example, an agent whose `tools:` hold none of Bash, Write or Edit must not
-carry the Artifacts & Logs block.
+example, a read-only agent (an explicit `tools:` list within Read, Grep and
+Glob, and no `memory:` key) must not carry the Artifacts & Logs block.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ EXCLUDED_BASES = frozenset({
     "qa-standards",
 })
 
-FILE_WRITING_TOOLS = frozenset({"Bash", "Write", "Edit"})
+READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob"})
 ARTIFACTS_BLOCK_HEADING_LINE = "**CRITICAL CONSTRAINT: Artifacts & Logs**"
 
 
@@ -235,17 +235,18 @@ def test_variant_body_matches_base_modulo_sync_comment(variant_paths: list[Path]
     assert not failures, "variant body drift:\n  " + "\n  ".join(failures)
 
 
-def test_agents_without_file_writing_tools_omit_artifacts_block(agent_paths: list[Path]) -> None:
+def test_read_only_agents_omit_artifacts_block(agent_paths: list[Path]) -> None:
     offenders: list[str] = []
     for agent in agent_paths:
         meta, body = _split_frontmatter(agent.read_text())
-        # No `tools:` key inherits every tool available to subagents (Write included): https://code.claude.com/docs/en/sub-agents
-        if "tools" not in meta:
+        # Read-only = an explicit tools: list within READ_ONLY_TOOLS and no memory: key; other agents are outside this guard.
+        if "tools" not in meta or "memory" in meta:
             continue
         tools = meta["tools"]
         tool_names = {t.strip() for t in tools.split(",")} if isinstance(tools, str) else set(tools)
-        carries_block = any(line.strip() == ARTIFACTS_BLOCK_HEADING_LINE for line in body.splitlines())
-        if tool_names.isdisjoint(FILE_WRITING_TOOLS) and carries_block:
+        if not tool_names <= READ_ONLY_TOOLS:
+            continue
+        if any(line.strip() == ARTIFACTS_BLOCK_HEADING_LINE for line in body.splitlines()):
             offenders.append(f"{agent.name}: tools={tools!r}")
-    header = f"agents with none of {sorted(FILE_WRITING_TOOLS)} carry the {ARTIFACTS_BLOCK_HEADING_LINE!r} block:"
+    header = f"read-only agents (tools within {sorted(READ_ONLY_TOOLS)}, no memory:) carry the {ARTIFACTS_BLOCK_HEADING_LINE!r} block:"
     assert not offenders, header + "\n  " + "\n  ".join(offenders)
