@@ -291,29 +291,6 @@ class Envelope:
         return body
 
 
-def _integral_float_to_int(value: Any) -> Any:
-    """Return an integral ``float`` as ``int`` and any other value unchanged.
-
-    The schema's draft 2020-12 ``integer`` type accepts ``8.0``, but the
-    envelope's integer fields are typed ``int``.
-    """
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
-
-
-def _normalize_finding_dict(item: dict[str, Any]) -> dict[str, Any]:
-    """Return ``item`` with an integral-float ``confidence`` cast to ``int``."""
-    if "confidence" not in item:
-        return item
-    return {**item, "confidence": _integral_float_to_int(item["confidence"])}
-
-
-def _drop_unset_optional_keys(finding: dict[str, Any]) -> dict[str, Any]:
-    """Drop the unset optional keys from an ``asdict`` finding dict."""
-    return {key: value for key, value in finding.items() if not (key in _FINDING_OPTIONAL_FIELDS and value is None)}
-
-
 @dataclass(frozen=True)
 class RerouteAudit:
     """Out-of-band reroute audit produced by :func:`_reroute_at_ceiling`.
@@ -730,6 +707,29 @@ def _load_schema() -> dict[str, Any]:
         cached = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
         _SCHEMA_CACHE = cached
     return cached
+
+
+def _integral_float_to_int(value: Any) -> Any:
+    """Return an integral ``float`` as ``int`` and any other value unchanged.
+
+    The schema's draft 2020-12 ``integer`` type accepts ``8.0``, but the
+    envelope's integer fields are typed ``int``.
+    """
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _normalize_finding_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """Return ``item`` with an integral-float ``confidence`` cast to ``int``."""
+    if "confidence" not in item:
+        return item
+    return {**item, "confidence": _integral_float_to_int(item["confidence"])}
+
+
+def _drop_unset_optional_keys(finding: dict[str, Any]) -> dict[str, Any]:
+    """Drop the unset optional keys from an ``asdict`` finding dict."""
+    return {key: value for key, value in finding.items() if not (key in _FINDING_OPTIONAL_FIELDS and value is None)}
 
 
 def _validate(body: str) -> Envelope:
