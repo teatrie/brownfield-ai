@@ -31,7 +31,20 @@ def run_gate(
     mode: str,
     *args: str,
 ) -> subprocess.CompletedProcess[str]:
-    """Invoke the gate copy under ``root`` with the given mode and arguments."""
+    """Invoke the gate copy under ``root`` with the given mode and arguments.
+
+    Args:
+        root: scratch root holding the gate copy at ``GATE_SCRIPT``; also the CWD.
+        mode: the gate's mode argument; the gate accepts ``lint`` and ``fix``.
+        args: the command to validate, passed through unchanged.
+
+    Returns:
+        The completed gate process; callers read ``returncode`` and ``stderr``.
+
+    Raises:
+        subprocess.TimeoutExpired: if the gate runs longer than 30 seconds.
+        OSError: if the gate copy cannot be executed.
+    """
     cmd = [GATE_SCRIPT, mode, *args]
     return subprocess.run(
         cmd,

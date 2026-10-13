@@ -41,7 +41,20 @@ def run_gate(
     mode: str,
     *args: str,
 ) -> subprocess.CompletedProcess[str]:
-    """Invoke the gate copy under ``root`` with the given mode and arguments."""
+    """Invoke the gate copy under ``root`` with the given mode and arguments.
+
+    Args:
+        root: scratch root holding the gate copy at ``GATE_SCRIPT``; also the CWD.
+        mode: the gate's mode argument; the gate accepts ``run``, ``test`` and ``lint``.
+        args: the remaining gate arguments, passed through unchanged.
+
+    Returns:
+        The completed gate process; callers read ``returncode`` and ``stderr``.
+
+    Raises:
+        subprocess.TimeoutExpired: if the gate runs longer than 30 seconds.
+        OSError: if the gate copy cannot be executed.
+    """
     cmd = [GATE_SCRIPT, mode, *args]
     return subprocess.run(
         cmd,
@@ -228,7 +241,6 @@ class TestEdgeCases:
         assert result.returncode == 0, f"Expected exit 0 for multiple tracked files, got {result.returncode}\nstderr: {result.stderr}"
 
     def test_multiple_positional_paths_rejects_an_untracked_second_path(self, gate_root: Path, untracked_py_file: str) -> None:
-        """[Req-012] A path after a valid one is still validated."""
         result = run_gate(gate_root, "run", "scripts/__init__.py", untracked_py_file)
         assert result.returncode != 0, f"Expected non-zero exit for an untracked second path, got {result.returncode}"
         assert f"file is not git-tracked: {untracked_py_file}" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
