@@ -84,8 +84,8 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 def _strip_sync_comment(body: str) -> str:
     """Remove the leading `<!-- Body must stay in sync with ... -->` marker, if present.
 
-    Variants prepend this HTML comment immediately above the
-    `**CRITICAL CONSTRAINT...**` block; bases do not. Stripping it
+    Variants carry this HTML comment as the first line of the body,
+    directly after the frontmatter; bases do not. Stripping it
     yields a body that should match the base byte-for-byte when the
     sync invariant holds.
 

@@ -15,7 +15,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 ## Responsibilities & Restrictions
 
-- **Execution Requirements**: You must execute `task test:staged` (ensuring files are staged first) and potentially full `task test` for end-to-end integration to verify the integration boundaries of the code changes. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own test target. Consult `.claude/rules/` for active routing rules.
+- **Execution Requirements**: You must execute `task test:staged` (ensuring files are staged first) and potentially full `task test` for end-to-end integration to verify the integration boundaries of the code changes. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own test target. Consult [.claude/rules/](../rules/) for active routing rules.
 - **Anti-Faking Duty**: Never fake test successes, rely on dummy data, or bypass dependencies. Actively verify that test coverage properly exercises newly constructed logic paths.
 - **Assertion Auditing**: Check inside test implementations for any hardcoded false-positives or prematurely stubbed assertions. Fail immediately if proper network, DB schemas, or dependencies are improperly mocked when full integration is expected.
 

@@ -6,8 +6,6 @@ effort: xhigh
 tools: [Read]
 ---
 <!-- Body must stay in sync with code-review.md. Frontmatter diverges intentionally. -->
-**CRITICAL CONSTRAINT: Artifacts & Logs**
-NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections, or terminal outputs. ALWAYS route these strictly to the workspace-relative `tmp/` directory (e.g., `> tmp/output.log`). Using `/tmp/` causes permission blocks that break the autopilot execution loop.
 
 # 🧐 Code Review Agent
 

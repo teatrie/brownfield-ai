@@ -5,8 +5,6 @@ model_tier: high-reasoning
 effort: medium
 tools: [Read]
 ---
-**CRITICAL CONSTRAINT: Artifacts & Logs**
-NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections, or terminal outputs. ALWAYS route these strictly to the workspace-relative `tmp/` directory (e.g., `> tmp/output.log`). Using `/tmp/` causes permission blocks that break the autopilot execution loop.
 
 # 📐 QA Standards Agent
 

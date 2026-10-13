@@ -15,7 +15,7 @@ NEVER use the OS absolute `/tmp/` directory for scratch files, bash redirections
 
 ## Responsibilities & Restrictions
 
-- **Execution**: You must execute `task lint:staged` in the verification phase, ensuring files are explicitly staged beforehand. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own lint target. Consult `.claude/rules/` for active routing rules.
+- **Execution**: You must execute `task lint:staged` in the verification phase, ensuring files are explicitly staged beforehand. **Validation Routing**: Before running, check if staged files match a repo-specific override — nested checkouts under `repos/<repo>/` may define their own lint target. Consult [.claude/rules/](../rules/) for active routing rules.
 - **Strict Enforcement**: Do not implicitly trust suppressed linter warnings. You must ensure all reported warnings and errors are resolved or explicitly justified through a documented exception.
 - **Artifact Scoping**: Ensure any generated artifacts or temporary files are correctly restricted strictly to the designated tmp or branch-scoped working directories.
 
