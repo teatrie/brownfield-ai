@@ -270,12 +270,8 @@ means no review was produced, and the reason is in
 `tmp/codex-exit.json`. `CODEX_UNAVAILABLE` exits 0 — it is the
 documented "bridge unavailable" outcome, not a failed review — so
 after exit 0 `tmp/codex-exit.json` may still hold the wrapper's own
-`CODEX_UNAVAILABLE` (missing token). A non-zero exit that happens
-before the wrapper clears `tmp/codex-exit.json` (e.g. the CLI_ARGS
-shim rejecting an argument, Task itself, or docker in container mode)
-leaves that file missing or stale from an earlier run — if it is
-missing or older than this invocation, report the command's stderr
-instead.
+`CODEX_UNAVAILABLE` (missing token). A non-zero exit can also come
+before the wrapper clears that file; see the Output Contract.
 
 Triggers include, e.g.:
 
@@ -321,9 +317,12 @@ the verdict.
 On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only, or
 `tmp/codex-exit.json` when the wrapper raised it.
 On `CODEX_ERROR` or any non-zero exit, return `tmp/codex-exit.json`
-only if this invocation wrote it (e.g. it is newer than the
-invocation's start); otherwise return the command's stderr and exit
-status. Never relay a stale artifact.
+— the wrapper clears it as its first step, so it is this run's —
+unless the alias's stderr shows the run stopped before that step
+(e.g. a `cli-args-to-env:` rejection, a Task error, a docker failure
+in container mode, or the wrapper's own `FATAL` about `tmp/`). Then
+return the stderr and exit status and do not read the file; it is
+left from an earlier run.
 Do not return partial review output alongside error signals.
 
 All artifacts written during a run:

@@ -337,8 +337,8 @@ def _exit_status_masking_offenders(tasks: dict[str, object]) -> list[str]:
 def test_codex_review_tasks_do_not_mask_the_wrapper_exit_status() -> None:
     """The codex review aliases must fail whenever the wrapper fails.
 
-    The wrapper exits non-zero whenever no review was produced, and callers
-    gate on the alias's status. go-task exits non-zero (observed: 201, not
+    The wrapper exits non-zero on every CODEX_ERROR, and callers gate on
+    the alias's status. go-task exits non-zero (observed: 201, not
     the cmd's own status) when a cmd fails, including one followed by
     ``; true``, and runs no later cmd. A cmd-level ``ignore_error`` or a
     trailing ``|| true`` (both observed: exit 0) turns a failed review into
