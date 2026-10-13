@@ -316,8 +316,7 @@ read_stderr_excerpt() {
 
 # A numeric code counts only when the characters on both sides of it are
 # non-alphanumeric or a line edge, so a digit run inside an id such as
-# abc401def or 0199b6a5-401c is not read as a code. Every code match below
-# is built from this pair.
+# abc401def or 0199b6a5-401c is not read as a code.
 _CODE_PRE='(^|[^[:alnum:]])'
 _CODE_POST='([^[:alnum:]]|$)'
 

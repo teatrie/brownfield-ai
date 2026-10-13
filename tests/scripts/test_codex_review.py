@@ -22,9 +22,7 @@ The wrapper takes its subject as ``REVIEW_TYPE=<enum>`` +
 - Exit status: every ``CODEX_ERROR`` exits non-zero — sandbox denial, auth,
   exhausted retry and empty output included — and ``CODEX_UNAVAILABLE``
   exits 0. A failed review's status also survives the ``cli-args-to-env.sh``
-  exec in front of the wrapper. Task is not run here: that the alias recipe
-  is that bare pair is pinned by the static guard in
-  ``tests/scripts/test_agent_cli_taskfile.py``.
+  exec in front of the wrapper.
 
 All tests use a PATH-prepended fake ``codex`` shim that captures argv plus
 stdin to a log file and, unless scripted otherwise, writes a review to the
@@ -1759,7 +1757,7 @@ def test_output_clear_failed_on_the_retry_reports_retried(tmp_path: Path) -> Non
     # partial file there and locks the directory, so the retry's clear fails.
     bin_dir = _install_shim(
         tmp_path,
-        exit_code=1,
+        exit_code=2,
         stderr_text="Error: connection timeout",
         log_path=log,
         output_payload="partial verdict",
@@ -1781,10 +1779,7 @@ def test_output_clear_failed_on_the_retry_reports_retried(tmp_path: Path) -> Non
 
 
 # ``cli-args-to-env.sh codex-review.sh`` must exit non-zero when the wrapper
-# does. These run the shim + wrapper pair directly, not Task. A shim that
-# swallowed the wrapper's status would score a missing review as a pass; that
-# the ``agent:review:codex:local`` recipe is this bare pair is pinned by the
-# static guard in ``test_agent_cli_taskfile.py``.
+# does.
 
 _ALIAS_CLI_ARGS: tuple[str, ...] = ("ROUND=1", "EFFORT=high", "REVIEW_TYPE=diff", "DIFF_FILE=tmp/qa-diff.txt")
 

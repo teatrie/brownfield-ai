@@ -303,11 +303,11 @@ On failure, `tmp/codex-exit.json` contains:
 }
 ```
 
-`exit_code` is the exit status of the `codex exec` call that ended
-the run (0 for `empty_output`), except for failures raised before
-that attempt's call ran — `output_clear_failed` (on a first attempt
-or a retry), `arg_validation`, `template_missing`, `secrets_guard` —
-which record the wrapper's own 1.
+`exit_code` is the shell status of the attempted CLI invocation (0
+for `empty_output`; e.g. 127 if the binary is missing); failures
+raised before any invocation (e.g. argument validation,
+`output_clear_failed`) record 1 — see the classes in
+`scripts/agent-cli/codex-review.sh`.
 
 ---
 
@@ -320,7 +320,10 @@ the verdict.
 
 On `CODEX_UNAVAILABLE`, return `tmp/codex-preflight.json` only, or
 `tmp/codex-exit.json` when the wrapper raised it.
-On `CODEX_ERROR`, return `tmp/codex-exit.json` only.
+On `CODEX_ERROR` or any non-zero exit, return `tmp/codex-exit.json`
+only if this invocation wrote it (e.g. it is newer than the
+invocation's start); otherwise return the command's stderr and exit
+status. Never relay a stale artifact.
 Do not return partial review output alongside error signals.
 
 All artifacts written during a run:
