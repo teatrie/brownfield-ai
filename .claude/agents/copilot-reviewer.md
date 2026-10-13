@@ -212,7 +212,7 @@ Do NOT summarize, filter, or interpret the content. The calling agent is respons
 
 On `COPILOT_UNAVAILABLE` from pre-flight, report it inline as the
 Pre-flight Sequence describes; when the wrapper raised it, return
-`tmp/copilot-exit.json` only.
+`tmp/copilot-exit.json` as Exit Artifact describes.
 
 On a `COPILOT_ERROR` signal (runtime failures: auth failure during review, transient failure after retry),
 return the alias's exit status and `tmp/copilot-exit.json` as Exit Artifact describes.

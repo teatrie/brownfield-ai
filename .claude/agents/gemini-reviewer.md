@@ -360,10 +360,12 @@ the verdict.
 On `GEMINI_FALLBACK` (exit code 3), do NOT return output.
 Instead, proceed to the next fallback chain step.
 On `GEMINI_UNAVAILABLE` from pre-flight, report it inline as the
-Pre-flight Sequence describes; when the wrapper raised it, return
-`tmp/gemini-exit.json` only.
-On `GEMINI_ERROR`, return the alias's exit status with the contents of
-`tmp/gemini-exit.json`, and say the file may be from an earlier run
+Pre-flight Sequence describes.
+On `GEMINI_ERROR`, report `GEMINI_ERROR` itself as the terminal signal;
+any `tmp/gemini-exit.json` contents you include are diagnostic context only.
+Whenever you return `tmp/gemini-exit.json`, whether the wrapper raised
+`GEMINI_UNAVAILABLE` or as `GEMINI_ERROR` context, return it with the
+alias's exit status, and say the file may be from an earlier run
 because the wrapper does not clear it; the calling agent judges whether
 it is this run's reason.
 Do not return partial review output alongside error signals.
