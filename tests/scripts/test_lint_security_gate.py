@@ -7,35 +7,23 @@ allowlist enforcement, helm subcommand validation, and artifact generation.
 Every run executes a copy of the gate placed at ``GATE_SCRIPT`` under a scratch
 root in the test's ``tmp_path``. The gate derives ``WORKSPACE_ROOT`` from its
 own location, not from the CWD, so the copy writes its nonces under the scratch
-root. The gate runs no path or git checks, so the root holds only the copy. The
-autouse ``_no_real_checkout_gate_artifacts`` fixture watches the real
-checkout's nonces a run escaping the scratch root would touch.
+root. The gate runs no path or git checks, so the root holds only the copy.
+``run_gate`` takes the root as a required argument, so no run falls back to the
+real checkout.
 """
 
 import hashlib
-import os
 import re
 import shutil
 import subprocess
-import sys
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from helpers.wrapper_sources import wrapper_tmp_paths
 
 GATE_SCRIPT = "docker/shared/lint-security-gate.sh"
 WORKSPACE = Path(__file__).resolve().parents[2]
-# Bound at import so a test that relocates WORKSPACE still reads the real gate.
 GATE_SOURCE = WORKSPACE / GATE_SCRIPT
-
-# Real-checkout nonces, relative to WORKSPACE, that the gate writes when a run
-# escapes its scratch root.
-_WATCHED_PATHS: tuple[str, ...] = (
-    "tmp/.lint-gate-pass",
-    "tmp/.lint-fix-gate-pass",
-)
 
 
 def run_gate(
@@ -57,40 +45,6 @@ def run_gate(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _no_real_checkout_gate_artifacts() -> Iterator[None]:
-    """Fail the test across which a watched real-checkout nonce changed.
-
-    A test that rewrites or deletes a real nonce races whichever gated lint
-    command is in flight. A concurrent gated lint run against this checkout
-    reports identically.
-    """
-    before = _watched_snapshot()
-    yield
-    after = _watched_snapshot()
-    assert after == before, (
-        f"watched gate artifacts under {WORKSPACE} differ across this test: {sorted(set(after.items()) ^ set(before.items()))}. "
-        "A gate run that escaped its scratch root is what this guard exists for; a gated task run against this checkout "
-        "concurrently reports identically."
-    )
-
-
-def _watched_snapshot() -> dict[str, tuple[int, int]]:
-    """Map each present watched path to the size and mtime that identify it.
-
-    A path that vanishes mid-snapshot is recorded absent: a concurrent delete is
-    a difference to report, not a teardown error.
-    """
-    snapshot: dict[str, tuple[int, int]] = {}
-    for rel in _WATCHED_PATHS:
-        try:
-            info = (WORKSPACE / rel).lstat()
-        except FileNotFoundError:
-            continue
-        snapshot[rel] = (info.st_size, info.st_mtime_ns)
-    return snapshot
 
 
 @pytest.fixture()
@@ -129,37 +83,44 @@ class TestRejections:
             cwd=str(gate_root),
         )
         assert result.returncode != 0, f"Expected non-zero exit for missing mode, got {result.returncode}"
+        assert "mode argument required" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_unknown_mode_rejected(self, gate_root: Path) -> None:
         """Gate must reject unknown modes."""
         result = run_gate(gate_root, "run", "shellcheck", "scripts/")
         assert result.returncode != 0, f"Expected non-zero exit for unknown mode, got {result.returncode}"
+        assert "unknown mode 'run'" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_lint_mode_rejects_disallowed_command(self, gate_root: Path) -> None:
         """Lint mode must reject commands not in the allowlist."""
         result = run_gate(gate_root, "lint", "rm", "-rf", "/")
         assert result.returncode != 0, f"Expected non-zero exit for disallowed lint command, got {result.returncode}"
         assert "not in allowlist" in result.stderr.lower() or "allowlist" in result.stderr.lower()
+        assert "command not in allowlist" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_lint_mode_rejects_bash(self, gate_root: Path) -> None:
         """Lint mode must reject bash (not a lint tool)."""
         result = run_gate(gate_root, "lint", "bash", "-c", "echo pwned")
         assert result.returncode != 0, f"Expected non-zero exit for bash in lint gate, got {result.returncode}"
+        assert "command not in allowlist" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_fix_mode_rejects_disallowed_command(self, gate_root: Path) -> None:
         """Fix mode must reject commands not in the allowlist."""
         result = run_gate(gate_root, "fix", "pip", "install", "malicious")
         assert result.returncode != 0, f"Expected non-zero exit for disallowed fix command, got {result.returncode}"
+        assert "command not in allowlist" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_lint_mode_rejects_empty_command(self, gate_root: Path) -> None:
         """Lint mode must reject invocation with no command arguments."""
         result = run_gate(gate_root, "lint")
         assert result.returncode != 0, f"Expected non-zero exit for empty lint command, got {result.returncode}"
+        assert "command argument required after mode" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_fix_mode_rejects_empty_command(self, gate_root: Path) -> None:
         """Fix mode must reject invocation with no command arguments."""
         result = run_gate(gate_root, "fix")
         assert result.returncode != 0, f"Expected non-zero exit for empty fix command, got {result.returncode}"
+        assert "command argument required after mode" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -234,21 +195,25 @@ class TestHelmSubcommand:
         """Lint mode must reject helm install."""
         result = run_gate(gate_root, "lint", "helm", "install", "release", "chart")
         assert result.returncode != 0, f"Expected non-zero exit for helm install, got {result.returncode}"
+        assert "helm subcommand not allowed" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_lint_rejects_helm_delete(self, gate_root: Path) -> None:
         """Lint mode must reject helm delete."""
         result = run_gate(gate_root, "lint", "helm", "delete", "release")
         assert result.returncode != 0, f"Expected non-zero exit for helm delete, got {result.returncode}"
+        assert "helm subcommand not allowed" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_lint_rejects_helm_upgrade(self, gate_root: Path) -> None:
         """Lint mode must reject helm upgrade."""
         result = run_gate(gate_root, "lint", "helm", "upgrade", "release", "chart")
         assert result.returncode != 0, f"Expected non-zero exit for helm upgrade, got {result.returncode}"
+        assert "helm subcommand not allowed" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
     def test_lint_rejects_helm_bare(self, gate_root: Path) -> None:
         """Lint mode must reject bare helm with no subcommand."""
         result = run_gate(gate_root, "lint", "helm")
         assert result.returncode != 0, f"Expected non-zero exit for bare helm, got {result.returncode}"
+        assert "helm subcommand not allowed" in result.stderr, f"Rejected by another branch: {result.stderr!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -345,13 +310,13 @@ class TestCommandAllowlistBoundary:
         assert result.returncode == 0, f"Expected exit 0 for {cmd_args}, got {result.returncode}\nstderr: {result.stderr}"
 
     @pytest.mark.parametrize(
-        "cmd_args",
+        ("cmd_args", "branch_phrase"),
         [
-            ("bash", "-c", "echo pwned"),
-            ("sh", "-c", "echo pwned"),
-            ("pip", "install", "malicious"),
-            ("helm", "install", "release", "chart"),
-            ("helm", "upgrade", "release", "chart"),
+            (("bash", "-c", "echo pwned"), "command not in allowlist"),
+            (("sh", "-c", "echo pwned"), "command not in allowlist"),
+            (("pip", "install", "malicious"), "command not in allowlist"),
+            (("helm", "install", "release", "chart"), "helm subcommand not allowed"),
+            (("helm", "upgrade", "release", "chart"), "helm subcommand not allowed"),
         ],
         ids=[
             "bash-injection",
@@ -361,86 +326,8 @@ class TestCommandAllowlistBoundary:
             "helm-upgrade",
         ],
     )
-    def test_lint_rejects_dangerous_commands(self, gate_root: Path, cmd_args: tuple[str, ...]) -> None:
+    def test_lint_rejects_dangerous_commands(self, gate_root: Path, cmd_args: tuple[str, ...], branch_phrase: str) -> None:
         """Lint mode must reject commands not in the allowlist."""
         result = run_gate(gate_root, "lint", *cmd_args)
         assert result.returncode != 0, f"Expected non-zero exit for {cmd_args}, got {result.returncode}"
-
-
-# ---------------------------------------------------------------------------
-# The real-checkout gate artifact guard.
-#
-# Nothing above observes _no_real_checkout_gate_artifacts: drop autouse=True
-# and every test above still passes. These tests lock its watch set and its
-# comparison. Each monkeypatches WORKSPACE to its own tmp_path; pytest sets an
-# autouse fixture up before requested fixtures and tears it down after them, so
-# the guard's own snapshots bracket the monkeypatch and read the real checkout.
-# ---------------------------------------------------------------------------
-
-
-class TestRealCheckoutGateArtifactGuard:
-    """The watch set covers the nonces the gate writes, and the comparison fires."""
-
-    @staticmethod
-    def _relocate_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        """Point ``WORKSPACE`` at ``tmp_path`` and return its ``tmp/`` directory."""
-        monkeypatch.setattr(sys.modules[__name__], "WORKSPACE", tmp_path)
-        live_tmp = tmp_path / "tmp"
-        live_tmp.mkdir()
-        return live_tmp
-
-    def test_the_watch_set_covers_every_tmp_path_the_gate_names(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        named = wrapper_tmp_paths([GATE_SOURCE], {})
-        assert named == {".lint-gate-pass", ".lint-fix-gate-pass"}, (
-            "the gate now names another tmp/ path; watch it or argue its exemption here"
-        )
-        live_tmp = self._relocate_workspace(tmp_path, monkeypatch)
-        for name in named:
-            (live_tmp / name).write_text("GATE_PASS=0:x\n")
-        assert set(_watched_snapshot()) == {f"tmp/{name}" for name in named}
-
-    def test_the_fixture_fails_a_test_that_deleted_a_watched_nonce(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Driving the fixture's generator by hand shows the comparison firing.
-
-        pytest leaves the undecorated generator at ``__wrapped__``; advancing it
-        observes a guard whose job is to fail its own test without a nested
-        pytest session.
-        """
-        nonce = self._relocate_workspace(tmp_path, monkeypatch) / ".lint-fix-gate-pass"
-        nonce.write_text("GATE_PASS=0:x\n")
-        guard = globals()["_no_real_checkout_gate_artifacts"].__wrapped__()
-        next(guard)
-        nonce.unlink()
-        with pytest.raises(AssertionError, match="watched gate artifacts under .* differ across this test"):
-            next(guard)
-
-    def test_the_fixture_fails_a_test_that_rewrote_a_watched_nonce_at_the_same_length(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The gate's nonce is fixed-length, so the mtime alone must carry a rewrite.
-
-        The mtime is backdated first so the rewrite cannot land in the same tick.
-        """
-        nonce = self._relocate_workspace(tmp_path, monkeypatch) / ".lint-gate-pass"
-        nonce.write_text(f"GATE_PASS=1000000000:{'a' * 64}\n")
-        backdated = nonce.stat().st_mtime_ns - 1_000_000_000
-        os.utime(nonce, ns=(backdated, backdated))
-        size = nonce.stat().st_size
-        guard = globals()["_no_real_checkout_gate_artifacts"].__wrapped__()
-        next(guard)
-        nonce.write_text(f"GATE_PASS=1000000001:{'b' * 64}\n")
-        assert nonce.stat().st_size == size, "the rewrite changed length, so this no longer isolates the mtime component"
-        with pytest.raises(AssertionError, match="watched gate artifacts under .* differ across this test"):
-            next(guard)
-
-    def test_the_fixture_passes_a_test_that_changed_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        (self._relocate_workspace(tmp_path, monkeypatch) / ".lint-gate-pass").write_text("GATE_PASS=0:x\n")
-        guard = globals()["_no_real_checkout_gate_artifacts"].__wrapped__()
-        next(guard)
-        with pytest.raises(StopIteration):
-            next(guard)
-
-    def test_the_fixture_is_autouse(self) -> None:
-        marker = getattr(globals()["_no_real_checkout_gate_artifacts"], "_fixture_function_marker", None)
-        assert marker is not None, "pytest no longer exposes the fixture marker here — update this assertion"
-        assert marker.autouse
+        assert branch_phrase in result.stderr, f"Rejected by another branch: {result.stderr!r}"
