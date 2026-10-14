@@ -1050,17 +1050,17 @@ MUST check whether the PR branch needs rebasing against `main`. A CI
 pass on a stale branch is unreliable — new changes in `main` may
 introduce conflicts or break assumptions the PR code depends on.
 
-**Detection** (fetch and rev-list MUST run as a single sequential
-sequence — the rev-list depends on the fetch having updated the
+**Detection** (fetch and log MUST run as a single sequential
+sequence — the log depends on the fetch having updated the
 local `origin/main` ref):
 
 ```bash
 task git:fetch -- origin main
-BEHIND_COUNT=$(task git:run -- rev-list --count HEAD..origin/main)
+task git:log -- --oneline HEAD..origin/main
 ```
 
-If `BEHIND_COUNT > 0`, the branch is behind `main` and must be
-rebased before CI results can be trusted.
+If the log prints any commits, the branch is behind `main` and must
+be rebased before CI results can be trusted.
 
 **Rebase procedure** (when branch is behind):
 
@@ -1117,8 +1117,8 @@ rebased before CI results can be trusted.
    | 2 | REBASE — branch was behind main by 3 commits | Rebased onto origin/main, force-pushed, re-ran verification |
    ```
 
-   The `BEHIND_COUNT` and any local verification re-run results
-   are included in the log entry.
+   The number of commits the detection log printed and any local
+   verification re-run results are included in the log entry.
 
 **Rebase loop bound**: If the branch falls behind `main` again
 while waiting for CI (e.g., a fast-moving `main`), repeat the
@@ -1149,11 +1149,11 @@ merge decision when CI is GREEN and the branch is current with
 ### Merge Decision
 
 **If CI passes and branch is current**: Ask the user to review or
-merge. If user approves, check merge state:
+merge. If user approves, check merge state and read the printed
+state:
 
 ```bash
-STATUS=$(task gh:pr -- view <number> --json mergeStateStatus \
-  --jq .mergeStateStatus)
+task gh:pr -- view <number> --json mergeStateStatus --jq .mergeStateStatus
 ```
 
 - `BEHIND`: This should not occur if the Branch Freshness Check
@@ -1224,8 +1224,9 @@ the pre-fix diff.
 new inline code markers (`TODO`, `HACK`, `FIXME`, `XXX`) introduced
 by the fix:
 
-1. **Before delegating the fix**: Record the current commit SHA
-   (`PRE_FIX_SHA=$(task git:run -- rev-parse HEAD)`).
+1. **Before delegating the fix**: Run
+   `task git:run -- rev-parse HEAD` and record the printed SHA as
+   `PRE_FIX_SHA`.
 2. **After the fix is committed and local verification passes**:
    Generate the incremental diff:
    `task git:diff -- <PRE_FIX_SHA>..HEAD`.
