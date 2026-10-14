@@ -9,12 +9,25 @@ Gate 3: audits uncommitted changes to security files for suspicious patterns.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
-HOOK = str(Path(__file__).resolve().parents[2] / ".claude" / "hooks" / "block-docker-build-escape.sh")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+HOOK = str(REPO_ROOT / ".claude" / "hooks" / "block-docker-build-escape.sh")
+
+# pytest-cli runs as the image's system user `agent`, whose uid does not own the
+# mounted checkout on a Linux runner. Git's ownership check then fails every
+# call the hook makes, and Gate 1 reports tracked Dockerfiles as untracked.
+# GIT_CONFIG_* entries are command scope, which safe.directory honours.
+_HOOK_ENV = {
+    **os.environ,
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "safe.directory",
+    "GIT_CONFIG_VALUE_0": str(REPO_ROOT),
+}
 
 
 def _run_hook(command: str) -> subprocess.CompletedProcess[str]:
@@ -26,6 +39,8 @@ def _run_hook(command: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         timeout=10,
+        cwd=REPO_ROOT,
+        env=_HOOK_ENV,
     )
 
 
