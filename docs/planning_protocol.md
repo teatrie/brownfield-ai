@@ -168,8 +168,8 @@ To prevent context loss and provide shared visibility across sessions, project t
       recent upstream activity. Use the `task gh:api` path as the
       canonical method for commit counting — it directly supports
       the numeric threshold:
-      - `task gh:api -- 'repos/<Upstream_Repo>/commits?path=<service_path>&since=<guide_date_iso>&per_page=100'`
-      - If the API returns a full page (100 items), the count
+      - `task gh:api -- 'repos/<Upstream_Repo>/commits?path=<service_path>&since=<guide_date_iso>&per_page=100' --jq length`
+      - If the API returns a full page (prints 100), the count
         exceeds the threshold — no pagination required.
       - **Degraded signal**: If the API path fails, record the
         failure in the Domain Research Summary and treat the
