@@ -7,7 +7,7 @@ To ensure high-quality architecture and prevent bias, the [Planner](../.claude/a
 ### Planner Role
 
 - **Scope**: Requirements analysis, architectural design, and drafting the plan.
-- **Pre-requisite (Environment Consistency)**: Before analyzing existing code or structural paths (especially under `repos/*`), the Planner MUST establish a clean environment. The Planner must either spawn an executor to run `task repos:reset` or rely on remote sources (e.g., executing `gh search` or `gh repo view`) rather than assuming the local [repos/](../repos) directories are up-to-date and clean.
+- **Pre-requisite (Environment Consistency)**: Before analyzing existing code or structural paths (especially under `repos/*`), the Planner MUST establish a clean environment. The Planner must either spawn an executor to run `task repos:reset` or rely on remote sources (e.g., executing `task gh:search` or `task gh:repo -- view <owner>/<repo>`) rather than assuming the local [repos/](../repos) directories are up-to-date and clean.
 - **Restriction**: Do **NOT** write code directly (e.g., using `create` or `edit` tools for application code). Delegate all implementation to sub-agents.
 - **Allowed**: You may manage `plan.md` and session artifacts, but application code changes must be delegated.
 
@@ -168,17 +168,10 @@ To prevent context loss and provide shared visibility across sessions, project t
       recent upstream activity. Use the `task gh:api` path as the
       canonical method for commit counting — it directly supports
       the numeric threshold:
-      - `task gh:api -- repos/<Upstream_Repo>/commits?path=<service_path>&since=<guide_date_iso>&per_page=100`
-      - If the API returns a full page (100 items), the count
+      - `task gh:api -- 'repos/<Upstream_Repo>/commits?path=<service_path>&since=<guide_date_iso>&per_page=100' --jq length`
+      - If the API returns a full page (prints 100), the count
         exceeds the threshold — no pagination required.
-      - **Local checkout fallback** (if `repos/<repo>/` exists and
-        the API is unavailable): delegate
-        `task git:run -- -C repos/<repo> log --after="<guide_date>" --oneline -- <relative_service_path>/`
-        scoped to the cloned repo's git context (note: `git -C`
-        changes the working directory to the cloned repo, which
-        has the upstream git history — do NOT run this against
-        the `brownfield-ai` repo root).
-      - **Degraded signal**: If both paths fail, record the
+      - **Degraded signal**: If the API path fails, record the
         failure in the Domain Research Summary and treat the
         staleness check as inconclusive — proceed with the
         coverage assessment verdict alone.

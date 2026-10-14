@@ -134,7 +134,8 @@ tasks:
 
   run:
     desc: >-
-      Run any git subcommand via repo-cli (catch-all).
+      Run a git subcommand via repo-cli. repo-cli allows only a
+      fixed subcommand set; see docker/repo-cli/entrypoint.sh.
       Usage: task git:run -- <subcommand> [args]
     cmds:
       - >-
