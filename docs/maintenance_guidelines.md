@@ -32,7 +32,7 @@ Agents often leave repositories in detached HEAD states, with uncommitted change
 All temporary files created for intermediate steps (PR bodies, logs, diffs, plans) MUST be scoped strictly to contexts within `tmp/<feature_branch>/`.
 
 - **Bad**: `echo "desc" > pr_body.md` (Risks `git add .` picking it up)
-- **Good**: `mkdir -p tmp/my_feature && echo "desc" > tmp/my_feature/pr_body.md`
+- **Good**: the Write tool writes `tmp/my_feature/pr_body.md`
 
 **Rule**:
 

@@ -20,8 +20,6 @@ This script must be executed using the repository's `python-cli python3` Docker 
 ```bash
 # General extraction
 docker compose run --rm python-cli python3 workflows/document-utilities/skills/extract-pdf/scripts/extract_pdf.py <path_to_pdf_file.pdf>
-
-# Example: Output to a temporary text file
-mkdir -p tmp/extract-sample
-docker compose run --rm python-cli python3 workflows/document-utilities/skills/extract-pdf/scripts/extract_pdf.py docs/sample.pdf > tmp/extract-sample/sample_text.txt
 ```
+
+The script prints the extracted text to stdout and has no output-file option.

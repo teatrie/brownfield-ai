@@ -82,10 +82,11 @@ error. Do not proceed.**
    `*credentials*`, `*.pem`, or `*.key`, HALT and warn the user — these files
    must not be in the diff. Do not proceed until the diff is clean.
 3. Generate the diff and write it to `tmp/qa-diff.txt`:
-   `task git:diff -- origin/main...HEAD > tmp/qa-diff.txt` (or scoped with
-   `-- <path>` if a file scope was provided). Bridge reviewer invocations
-   (Step 2) consume this path via the `DIFF_FILE=tmp/qa-diff.txt` caller
-   contract; Claude reviewers receive the same diff inline.
+   `task git:diff -- origin/main...HEAD --output=tmp/qa-diff.txt` (or scoped
+   with `-- <path>` after `--output=` if a file scope was provided). Bridge
+   reviewer invocations (Step 2) consume this path via the
+   `DIFF_FILE=tmp/qa-diff.txt` caller contract; Claude reviewers receive the
+   same diff inline.
 4. **Diff size guard**: If the diff exceeds ~3000 lines, split the diff by
    domain or by file and run multiple parallel review passes in Step 2. ALL
    splits must be reviewed — do not pass the gate on a partial or truncated diff.
