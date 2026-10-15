@@ -855,7 +855,7 @@ Emitted when `MergeDecision.cross_family_dissent` is non-null at
 `gate_effort_tier` `xhigh`/`max` (per plan §5.1 dissent test in
 `scripts/orchestrator/envelope_merge.py`). MUST be checkpointed BEFORE
 the corresponding `gate_verdict` so the audit precedes the verdict in
-chronological order, mirroring `.claude/skills/auto-pr/SKILL.md:88-92`.
+chronological order, mirroring auto-pr §"Step 2c: Code Diff Review (MANDATORY GATE)" in `.claude/skills/auto-pr/SKILL.md`.
 
 | Field | Type | Required | Semantics |
 |-------|------|----------|-----------|
@@ -936,7 +936,7 @@ at `xhigh`/`max`. Blocks PR creation until a corresponding
 `cross_family_dissent_resolved` is checkpointed. MUST be checkpointed
 BEFORE the corresponding `gate_verdict` so the block precedes the
 verdict in chronological order, mirroring the `cross_family_dissent`
-precedence at `.claude/skills/auto-pr/SKILL.md:88-92`.
+precedence in auto-pr §"Step 2c: Code Diff Review (MANDATORY GATE)" (`.claude/skills/auto-pr/SKILL.md`).
 
 | Field | Type | Required | Semantics |
 |-------|------|----------|-----------|
