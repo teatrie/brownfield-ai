@@ -51,7 +51,8 @@ ENV PYTHONPATH=/app:/app/src
 # on Docker Desktop where the socket is owned by root:root)
 RUN groupadd -r agent \
     && useradd -r -g agent -G 0 -m agent \
-    && chown agent:agent /app
+    && chown agent:agent /app \
+    && git config --system --add safe.directory /app
 
 # Restricted entrypoint (root-owned, 0755 — agent cannot overwrite)
 COPY docker/shared/python-gate-entrypoint.sh /usr/local/bin/entrypoint.sh
