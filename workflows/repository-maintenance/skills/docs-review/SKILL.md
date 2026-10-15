@@ -161,7 +161,8 @@ Step 1b prunes included:
                         "verdict": "fail", "reason":
                         "destructive docs changes require interactive approval"};
                         HALT
-  holds a cut that changes what a normative rule requires (from any step)
+  holds a change for the user (from any step): a cut that changes what a
+    normative rule requires, or a re-point Step 2 holds
                      -> leave it unapplied; auto-approve and apply the other
                         proposed changes; run the lint gate below; record
                         {"step": "docs-review-approval", "verdict": "fail",
