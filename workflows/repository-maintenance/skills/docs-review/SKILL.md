@@ -154,7 +154,7 @@ Wait for **explicit User Approval**.
 ```text
 headless (CI=true or a pipeline signal);
 "record" = a step_result checkpoint with an epic, else the run's report;
-a fail record lists any held cut(s) and every change already applied,
+a fail record lists any held change(s) and every change already applied,
 Step 1b prunes included:
   deletes a file with non-redundant content
                      -> record {"step": "docs-review-approval",
