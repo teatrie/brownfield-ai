@@ -39,7 +39,7 @@ Agents MUST proactively document any codebase flaws, confusing conventions, or r
 
 ### `docker/agent-cli/` routing asymmetry between the two gates
 
-- **Context**: the path-routing greps in `ci/test_changed.sh` and `ci/test_staged.sh`.
+- **Context**: the `CHANGED_SCRIPTS` grep (the `scripts` target) in `ci/test_changed.sh` and `ci/test_staged.sh`.
 - **Description**: The `changed` grep covers `docker/agent-cli/`; the `staged` grep does not. A change under `docker/agent-cli/` is therefore gated pre-push but not at the per-step `test:staged` checkpoint, so the failure surfaces later than it should. The current behaviour is pinned on both sides — `TestStagedRouter::test_agent_cli_paths_are_not_routed` and `TestChangedRouter::test_agent_cli_path_routes_to_prefixed_test` — so reconciling the greps means updating those two tests deliberately rather than discovering the divergence again.
 - **Proposed Fix**: Reconcile the two greps. Confirm which other prefixes diverge while doing so — this was found incidentally, so the audit is not exhaustive.
 
