@@ -165,7 +165,7 @@ Step 1b prunes included:
                      -> leave it unapplied; auto-approve and apply the other
                         proposed changes; run the lint gate below; record
                         {"step": "docs-review-approval", "verdict": "fail",
-                        "reason": "normative cut held for the user"}; HALT
+                        "reason": "change held for the user"}; HALT
                         before Step 7
   otherwise          -> record {"step": "docs-review-approval",
                         "verdict": "auto-headless"}; auto-approve; continue to
